@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-18T19:09:45Z",
+  "recordedAt": "2026-07-18T19:55:04Z",
   "source": {
     "leadershipCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
     "leadershipRepositoryModified": false,
@@ -15,7 +15,7 @@
     "prismaSchema": "passed",
     "secretScan": "passed",
     "productionBuild": "passed",
-    "unitContractTests": 28,
+    "unitContractTests": 30,
     "browserTests": {
       "total": 36,
       "passed": 28,
@@ -25,8 +25,8 @@
     },
     "database": {
       "postgresVersion": "16.12",
-      "productionMigrations": 6,
-      "localValidationMigrations": 6,
+      "productionMigrations": 7,
+      "localValidationMigrations": 7,
       "historicalUpgrade": "passed",
       "idempotentRedeploy": "passed",
       "checkoutRace": "one-winner",
@@ -154,15 +154,35 @@
     "productionMutated": true,
     "realLeadershipRemoteMutated": false
   },
+  "humanReviewProvenance": {
+    "status": "production-deployed-and-live-verified",
+    "verifiedAt": "2026-07-18T19:55:04Z",
+    "release": "20260718T195022Z",
+    "commit": "ecf18f7",
+    "proposalRendersImmutableBundleBytes": true,
+    "allBundleArtifactsInspectable": true,
+    "reviewerIdentityUniqueMapping": "tim-to-timothy-breeding",
+    "unmappedAcceptanceAccountBlocked": true,
+    "immutableChildPreparation": "passed-disposable-browser-fixture",
+    "parentMarkedStale": "passed-disposable-browser-fixture",
+    "openCommentsCarriedForward": "passed-disposable-browser-fixture",
+    "reviewerAndDateRewritten": "passed-disposable-browser-fixture",
+    "exactHashValidationCount": 4,
+    "approvalStagingPublisherFailClosed": true,
+    "productionPreparationExercised": false,
+    "productionApprovalExercised": false,
+    "productionPublicationExercised": false,
+    "leadershipArtifactBytesModified": false
+  },
   "externalBeta": {
     "originDeployed": true,
-    "release": "20260718T190654Z",
+    "release": "20260718T195022Z",
     "privateOrigin": "http://192.168.1.120:3015",
     "outerGateRegistered": true,
     "providerExecution": "openai-service-api-enabled",
     "publisherExecution": "disabled-pending-restricted-git-authority",
     "administratorBootstrapped": true,
-    "reason": "The protected TimsPrototypes route, desktop workflow, and Codex-first worker are active. A real 22-role production review completed with one validated proposal and a successful visible Check in. Approval and publication were not exercised; the publisher remains fail-closed until restricted Leadership Git and release authority are provisioned.",
+    "reason": "The protected route, desktop workflow, Codex-first worker, immutable proposal rendering, and human reviewer-provenance gate are active. A real 22-role review completed and its exact candidate is now visible. Preparation, approval, and publication were not exercised in production; the publisher remains fail-closed until restricted Leadership Git and release authority are provisioned.",
     "rp1Mutated": true
   }
 }

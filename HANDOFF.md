@@ -13,7 +13,7 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Current deployed implementation commit: `f54d9fe` (`Make AI review finalization retry-safe`).
+- Current deployed implementation commit: `ecf18f7` (`Bind approvals to exact reviewer provenance`).
 - The acceptance-report commit follows the runtime commits and records the deployed state.
 - Leadership baseline commit: `9a870e5c70fef9ae71506cb3138745b88363a190`.
 - Approved desktop UX specification: `SPEC-desktop-ui-ux-improvements.md`. The requested implementation is committed, deployed, and live-verified.
@@ -30,7 +30,7 @@ Before new work, run `git status --short`, read this file and `artifacts/reports
 - PM2 processes: `situation-studio-web` and `situation-studio-worker`.
 - Release root: `/home/admin/projects/situation-studio/releases`.
 - Active symlink: `/home/admin/projects/situation-studio/current`.
-- Current recorded release: `20260718T190654Z`.
+- Current recorded release: `20260718T195022Z`.
 - Stable launchers: `/home/admin/projects/situation-studio/current/ops/start-web.sh` and `ops/start-worker.sh`.
 - Shared environment files: `/home/admin/projects/situation-studio/shared/web.env`, `worker.env`, and `migrator.env`, mode 0600.
 
@@ -43,9 +43,10 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 - Owner/migration login: `situation_studio_migrator`.
 - Web runtime login: `situation_studio_web`.
 - `situation_studio_ai` is a login limited to five connections and has explicit worker-only privileges. `situation_studio_validator`, `situation_studio_publisher`, and `situation_studio_backup` remain reserved non-login identities.
-- Six committed migrations are applied.
+- Seven committed migrations are applied.
 - The immutable baseline contains 15 situations and 37 artifacts; import is idempotent.
 - The first human administrator, username `tim`, is active. Never place its password in arguments, environment variables, Git, documentation, logs, or chat.
+- The `tim` account is uniquely mapped to Leadership reviewer ID `timothy-breeding`. The mapping was installed as an audited deployment operation; `agent` remains unmapped and cannot prepare or approve a bundle.
 - A non-administrator acceptance account, username `agent`, is active at both the TimsPrototypes gate and Studio. It can inspect the inventory, creation form, Jobs, Capacity, and all 15 situation workspaces, but it cannot access Administration.
 - The `agent` credentials are stored only in the local macOS login Keychain. Never copy or retrieve them into source, environment files, command arguments, documentation, logs, commits, or chat.
 
@@ -66,7 +67,7 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 - Next.js/TypeScript workspace, Prisma model, migrations, role-separated components, authentication/RBAC, legacy import, checkouts/drafts, review records, validation contracts, publication saga, and operational deployment tooling are implemented.
 - The RP1 web release, database roles, migrations, explicit runtime grants, baseline import, PM2 recovery, public route, and first administrator are operational.
 - The Administration layout was repaired after real production screenshots exposed misuse of the editor grid and missing intrinsic-width containment.
-- Current local verification: formatting, lint, strict TypeScript, Prisma validation, baseline verification, secret scan, production build, 28 contract/unit tests, database invariants, and the 36-case Chromium matrix pass with 28 executed cases and 8 intentional desktop-scope skips on mobile.
+- Current local verification: formatting, lint, strict TypeScript, Prisma validation, baseline verification, secret scan, production build, 30 contract/unit tests, database invariants, and the 36-case Chromium matrix pass with 28 executed cases and 8 intentional desktop-scope skips on mobile.
 - Browser coverage includes the prior desktop/mobile Administration regression plus the desktop UX behavior at 1280×800 and 1440×900: capability-aware navigation, inventory search/filtering, immutable-brief validation, all 15 published workspaces, proposal sentinel separation, full-screen Source keyboard behavior, dependency navigation, empty-state containment, console checks, and critical/serious accessibility scans.
 - Acceptance evidence lives in `artifacts/reports/acceptance.json`.
 - A live, authenticated, read-only desktop UX audit was completed on 2026-07-18 at a representative 1440×900 viewport. The audit covered Home, Jobs, Capacity, New Situation, and all 15 imported situation workspaces.
@@ -77,19 +78,23 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 - The isolated real-provider rehearsal used workflow `leadership-review-v3` and model policy `2026-07-18-codex-first-v2`. All 22 selected runs resolved to `gpt-5.6-sol`, with zero Claude fallbacks; candidate safety, contradiction audit, and role completion passed.
 - The rehearsal also proved running-job cancellation and custody return, a publisher build rejection before preview, approval invalidation after correction, successful trusted preview/final confirmation/cutover, and durable rollback. Publication commit `01babf29268317b3ca9bbddfd61c6dbe264912fc` and rollback commit `e4057416e2627b0d02dc459f25daa66c6248cb10` exist only in the disposable remote. The rollback tree exactly matches Leadership baseline tree `340bef0d08dfababca804e3a811eb7918bb99959`.
 - Browser concurrency exposed heartbeat/check-in and parallel-checkout serialization races. Checkout acquisition, draft save, and release now use bounded serializable retries; heartbeat renewal is a single conditional update. The production-runtime browser matrix passed after the repair.
-- Production release `20260718T190654Z` runs commit `f54d9fe` with the web and worker processes online and six migrations applied. Production job `8fd6d658-8d64-4722-87dc-7699c61f7075` reviewed `repeatedly-misses-deadlines`: 22/22 durable steps and 22/22 `gpt-5.6-sol` runs succeeded, zero fallbacks were selected, one proposal bundle remains, 3/3 validations passed, and one completion audit was committed.
+- Production job `8fd6d658-8d64-4722-87dc-7699c61f7075` completed under release `20260718T190654Z`/commit `f54d9fe` and reviewed `repeatedly-misses-deadlines`: 22/22 durable steps and 22/22 `gpt-5.6-sol` runs succeeded, zero fallbacks were selected, one proposal bundle remains, 3/3 validations passed, and one completion audit was committed. Current release `20260718T195022Z`/commit `ecf18f7` runs both web and worker online with seven migrations applied.
 - That first production job exposed and verified the repair of a service-role `INSERT … RETURNING` permission gap. Finalization now has audit-event readback privilege, reuses the candidate on retry, and enforces one bundle per AI job. One unreferenced retry duplicate was removed after checking it had no approval, comments, publication, or child references; the pre-deploy mode-0600 backup is `/home/admin/projects/situation-studio/shared/predeploy-backups/20260718T184533Z.dump`.
 - The visible Check in action released the production review checkout after completion. The proposal remains in `HUMAN_REVIEW`, the situation has no active checkout, and no approval, publication request, Leadership Git mutation, or Leadership release mutation occurred.
+- Release `20260718T195022Z` fixes the human-review trust boundary. Proposal state now renders `bundle_artifacts.content`, exposes all five exact artifact bodies and candidate hashes, and labels the canonical bundle hash. A mapped reviewer must create an immutable provenance-finalized child bundle before approval; the child carries open comments, updates changed public MDX reviewer/date fields, recalculates hashes, and reruns four exact-hash validations. Approval, staging, and publisher gates require that provenance.
+- The 2026-07-18 production smoke test used the existing `agent` session read-only. It visibly rendered the revised escalation and checkpoint language from bundle `7c7379dcd992…`, showed five immutable artifacts with one changed, and displayed a disabled **Reviewer identity required** control. No preparation, comment resolution, approval, checkout, or publication occurred.
+- The verified pre-deploy backup for this release is `/home/admin/projects/situation-studio/shared/predeploy-backups/20260718T195004Z.dump`, mode 0600.
 
 ## Remaining work
 
 The protected web application and first usable AI-review beta are live. Publication is not enabled. Remaining high-priority work:
 
-1. Create a restricted publisher Git deploy key and release capability; prove production preview, final confirmation, publication, and rollback without personal credentials.
-2. Provision validator and publisher logins only when their service processes are ready to run with documented least privileges. Provision Anthropic only if the optional fallback is desired.
-3. Configure encrypted nightly `pg_dump` backups, off-host copy, retention, checksum verification, and a clean restore rehearsal.
-4. Coordinate PostgreSQL listener/firewall hardening without disrupting other RP1 applications.
-5. Perform the external friend end-to-end acceptance exercise only after publisher and recovery boundaries are ready.
+1. Have `tim` sign in, inspect all exact artifacts, use **Prepare exact bundle for my approval**, confirm the new reviewer/date bytes, and resolve the carried blocking comment only if the corrected candidate is acceptable. Do not treat preparation as approval.
+2. Create a restricted publisher Git deploy key and release capability; prove production preview, final confirmation, publication, and rollback without personal credentials.
+3. Provision validator and publisher logins only when their service processes are ready to run with documented least privileges. Provision Anthropic only if the optional fallback is desired.
+4. Configure encrypted nightly `pg_dump` backups, off-host copy, retention, checksum verification, and a clean restore rehearsal.
+5. Coordinate PostgreSQL listener/firewall hardening without disrupting other RP1 applications.
+6. Perform the external friend end-to-end acceptance exercise only after publisher and recovery boundaries are ready.
 
 Desktop UX and AI review are deployed:
 

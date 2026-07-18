@@ -8,7 +8,7 @@
 - Active symlink: `/home/admin/projects/situation-studio/current`.
 - Shared environment: `/home/admin/projects/situation-studio/shared`.
 - PM2 processes: `situation-studio-web` and `situation-studio-worker`.
-- Current recorded release: `20260718T190654Z`.
+- Current recorded release: `20260718T195022Z`.
 
 The route, first administrator, and OpenAI/Codex-first review worker are active. Publisher Git/release authority remains disabled. Backup automation and a clean restore rehearsal remain required operational work.
 

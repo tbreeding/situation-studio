@@ -11,9 +11,11 @@ The current implementation is a pnpm workspace with visible privilege boundaries
 
 ## Current production status
 
-The protected application is live at `https://situation-studio.timsprototypes.com` through the TimsPrototypes outer gate. RP1 serves it from `192.168.1.120:3015` as PM2 processes `situation-studio-web` and `situation-studio-worker`; the current recorded release is `20260718T190654Z`. PostgreSQL has six migrations applied, the 15-situation/37-artifact legacy baseline is loaded, and the first administrator is active.
+The protected application is live at `https://situation-studio.timsprototypes.com` through the TimsPrototypes outer gate. RP1 serves it from `192.168.1.120:3015` as PM2 processes `situation-studio-web` and `situation-studio-worker`; the current recorded release is `20260718T195022Z`. PostgreSQL has seven migrations applied, the 15-situation/37-artifact legacy baseline is loaded, and the first administrator is active.
 
 OpenAI service-API execution is enabled. A live review of `repeatedly-misses-deadlines` completed 22/22 roles with `gpt-5.6-sol`, zero fallbacks, one proposal bundle, and 3/3 validations; visible Check in then released the checkout without approving or publishing the proposal. Publication remains fail-closed until a restricted publisher Git identity and release authority are provisioned. Fake-provider and fake-publication behavior remain prohibited in production.
+
+Human review now displays immutable bundle artifacts instead of mutable draft bytes. Preparing approval creates a new canonical child bundle, writes the mapped human reviewer and current review date into changed public MDX, preserves open comments, and reruns deterministic exact-byte validation. Approval, staging, and the publisher reject bundles without this provenance. The live proposal remains deliberately unprepared, unapproved, and unpublished so `tim` can inspect it and cross the human boundary directly.
 
 ## Codex-first workflow
 

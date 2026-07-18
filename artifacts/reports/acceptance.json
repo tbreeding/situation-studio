@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-18T09:33:00Z",
+  "recordedAt": "2026-07-18T13:21:55Z",
   "source": {
     "leadershipCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
     "leadershipRepositoryModified": false,
@@ -17,9 +17,9 @@
     "productionBuild": "passed",
     "unitContractTests": 23,
     "browserTests": {
-      "passed": 4,
-      "desktop": 2,
-      "mobile": 2
+      "passed": 8,
+      "desktop": 4,
+      "mobile": 4
     },
     "database": {
       "postgresVersion": "16.12",
@@ -59,12 +59,12 @@
   },
   "externalBeta": {
     "originDeployed": true,
-    "release": "20260718T124844Z",
+    "release": "20260718T131848Z",
     "privateOrigin": "http://192.168.1.120:3015",
-    "outerGateRegistered": false,
+    "outerGateRegistered": true,
     "providerExecution": "disabled",
-    "administratorBootstrapped": false,
-    "reason": "The healthy private origin is ready for TimsPrototypes registration. Provider execution remains fail-closed pending qualified service credentials and the first administrator still requires an interactive human-owned password.",
+    "administratorBootstrapped": true,
+    "reason": "The protected TimsPrototypes route is registered, the first administrator is active, and the responsive Administration repair is deployed. Provider execution remains fail-closed pending qualified service credentials.",
     "rp1Mutated": true
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-studio_host="rpi1-ts"
+studio_host="${SITUATION_STUDIO_DEPLOY_HOST:-rpi1-ts}"
 studio_root="/home/admin/projects/situation-studio"
 studio_release_id="${SITUATION_STUDIO_RELEASE_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 studio_release="${studio_root}/releases/${studio_release_id}"

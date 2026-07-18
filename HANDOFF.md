@@ -13,11 +13,11 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Runtime repair commit: `083d1d1` (`Fix administration responsive layout`).
-- The acceptance-report commit follows the runtime commit and records the deployed state.
+- Current deployed implementation commit: `f54d9fe` (`Make AI review finalization retry-safe`).
+- The acceptance-report commit follows the runtime commits and records the deployed state.
 - Leadership baseline commit: `9a870e5c70fef9ae71506cb3138745b88363a190`.
-- Approved desktop UX specification: `SPEC-desktop-ui-ux-improvements.md`. The requested implementation is present in the local worktree, remains untracked until the user chooses to stage it, and has not been deployed.
-- The same unreleased worktree now contains the Codex-first worker, deterministic candidate edit application, cancellation, trusted publisher, final-confirmation cutover, and durable rollback. None of this work has been deployed.
+- Approved desktop UX specification: `SPEC-desktop-ui-ux-improvements.md`. The requested implementation is committed, deployed, and live-verified.
+- The Codex-first worker, deterministic candidate edit application, cancellation, trusted publisher, final-confirmation cutover, and durable rollback are committed and deployed. Worker execution is enabled; publisher execution remains fail-closed pending restricted Leadership Git authority.
 - No tracked published Leadership content was modified by the Studio build or deployments.
 
 Before new work, run `git status --short`, read this file and `artifacts/reports/acceptance.json`, and preserve unrelated user changes.
@@ -27,12 +27,12 @@ Before new work, run `git status --short`, read this file and `artifacts/reports
 - Public URL: `https://situation-studio.timsprototypes.com`.
 - Outer gate: TimsPrototypes, registered and enabled.
 - Private origin: `http://192.168.1.120:3015` on SSH host `rpi1-ts`.
-- PM2 process: `situation-studio-web`.
+- PM2 processes: `situation-studio-web` and `situation-studio-worker`.
 - Release root: `/home/admin/projects/situation-studio/releases`.
 - Active symlink: `/home/admin/projects/situation-studio/current`.
-- Current recorded release: `20260718T131848Z`.
-- Stable launcher: `/home/admin/projects/situation-studio/current/ops/start-web.sh`.
-- Shared environment files: `/home/admin/projects/situation-studio/shared/web.env` and `migrator.env`, mode 0600.
+- Current recorded release: `20260718T190654Z`.
+- Stable launchers: `/home/admin/projects/situation-studio/current/ops/start-web.sh` and `ops/start-worker.sh`.
+- Shared environment files: `/home/admin/projects/situation-studio/shared/web.env`, `worker.env`, and `migrator.env`, mode 0600.
 
 Direct private-IP root requests intentionally return only `{"status":"origin-ready"}`. The TimsPrototypes origin probe depends on this non-redirecting response. Requests with the configured public Host receive the Studio application behavior.
 
@@ -42,8 +42,8 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 - Database: `situation_studio`.
 - Owner/migration login: `situation_studio_migrator`.
 - Web runtime login: `situation_studio_web`.
-- Reserved non-login identities: `situation_studio_ai`, `situation_studio_validator`, `situation_studio_publisher`, and `situation_studio_backup`.
-- Four committed migrations are applied.
+- `situation_studio_ai` is a login limited to five connections and has explicit worker-only privileges. `situation_studio_validator`, `situation_studio_publisher`, and `situation_studio_backup` remain reserved non-login identities.
+- Six committed migrations are applied.
 - The immutable baseline contains 15 situations and 37 artifacts; import is idempotent.
 - The first human administrator, username `tim`, is active. Never place its password in arguments, environment variables, Git, documentation, logs, or chat.
 - A non-administrator acceptance account, username `agent`, is active at both the TimsPrototypes gate and Studio. It can inspect the inventory, creation form, Jobs, Capacity, and all 15 situation workspaces, but it cannot access Administration.
@@ -53,11 +53,11 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 
 - The TimsPrototypes gate and Studio login are separate authentication layers.
 - Studio uses secure host-only cookies, session-bound CSRF protection, exact public Host/Origin policy, Argon2id passwords, throttling, and append-only audit events.
-- Provider execution is `disabled` in production. Fake adapters are acceptance-only.
-- No production AI worker, validator, or publisher identity is enabled.
+- Provider execution is `api` in production. The separate AI worker identity is enabled; fake adapters are acceptance-only.
+- Validator and publisher identities remain disabled.
 - No restricted Git deploy key or production publication authority is provisioned.
 - Do not substitute the web process, a human administrator credential, or personal CLI credentials for missing service identities.
-- OpenAI/Codex is the required primary route. Production must use a dedicated OpenAI Responses API credential; Claude Opus is fallback-only. Personal CLI login is validation-only and the worker rejects it in production mode.
+- OpenAI/Codex is the required primary route. Production uses an OpenAI Responses API credential stored only in `shared/worker.env`; Claude Opus is fallback-only and is not configured. Personal CLI login is validation-only and the worker rejects it in production mode.
 - Activation/reset links are single-use secrets. Do not copy them into documentation, logs, commits, or task summaries.
 - RP1 PostgreSQL's broad pre-existing listener/firewall exposure still needs a coordinated host review before a wider beta.
 
@@ -77,24 +77,26 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 - The isolated real-provider rehearsal used workflow `leadership-review-v3` and model policy `2026-07-18-codex-first-v2`. All 22 selected runs resolved to `gpt-5.6-sol`, with zero Claude fallbacks; candidate safety, contradiction audit, and role completion passed.
 - The rehearsal also proved running-job cancellation and custody return, a publisher build rejection before preview, approval invalidation after correction, successful trusted preview/final confirmation/cutover, and durable rollback. Publication commit `01babf29268317b3ca9bbddfd61c6dbe264912fc` and rollback commit `e4057416e2627b0d02dc459f25daa66c6248cb10` exist only in the disposable remote. The rollback tree exactly matches Leadership baseline tree `340bef0d08dfababca804e3a811eb7918bb99959`.
 - Browser concurrency exposed heartbeat/check-in and parallel-checkout serialization races. Checkout acquisition, draft save, and release now use bounded serializable retries; heartbeat renewal is a single conditional update. The production-runtime browser matrix passed after the repair.
+- Production release `20260718T190654Z` runs commit `f54d9fe` with the web and worker processes online and six migrations applied. Production job `8fd6d658-8d64-4722-87dc-7699c61f7075` reviewed `repeatedly-misses-deadlines`: 22/22 durable steps and 22/22 `gpt-5.6-sol` runs succeeded, zero fallbacks were selected, one proposal bundle remains, 3/3 validations passed, and one completion audit was committed.
+- That first production job exposed and verified the repair of a service-role `INSERT … RETURNING` permission gap. Finalization now has audit-event readback privilege, reuses the candidate on retry, and enforces one bundle per AI job. One unreferenced retry duplicate was removed after checking it had no approval, comments, publication, or child references; the pre-deploy mode-0600 backup is `/home/admin/projects/situation-studio/shared/predeploy-backups/20260718T184533Z.dump`.
+- The visible Check in action released the production review checkout after completion. The proposal remains in `HUMAN_REVIEW`, the situation has no active checkout, and no approval, publication request, Leadership Git mutation, or Leadership release mutation occurred.
 
 ## Remaining work
 
-The protected manual web application is live. The first usable AI/publication beta is not complete. Remaining high-priority work:
+The protected web application and first usable AI-review beta are live. Publication is not enabled. Remaining high-priority work:
 
-1. Provision and qualify a dedicated OpenAI service/API credential for the primary route. Provision Anthropic only if the optional fallback is desired; otherwise leave provider execution disabled.
-2. Provision separate worker, validator, publisher, and backup login identities only with their documented least privileges.
-3. Create a restricted publisher Git deploy key and release capability; prove publication and rollback without personal credentials.
-4. Configure encrypted nightly `pg_dump` backups, off-host copy, retention, checksum verification, and a clean restore rehearsal.
-5. Coordinate PostgreSQL listener/firewall hardening without disrupting other RP1 applications.
-6. Perform the external friend end-to-end acceptance exercise only after the provider, publisher, and recovery boundaries are ready.
+1. Create a restricted publisher Git deploy key and release capability; prove production preview, final confirmation, publication, and rollback without personal credentials.
+2. Provision validator and publisher logins only when their service processes are ready to run with documented least privileges. Provision Anthropic only if the optional fallback is desired.
+3. Configure encrypted nightly `pg_dump` backups, off-host copy, retention, checksum verification, and a clean restore rehearsal.
+4. Coordinate PostgreSQL listener/firewall hardening without disrupting other RP1 applications.
+5. Perform the external friend end-to-end acceptance exercise only after publisher and recovery boundaries are ready.
 
-Desktop UX and full workflow work are implemented and locally verified but not deployed:
+Desktop UX and AI review are deployed:
 
 - The pass covers authenticated desktop operation at 1280×800 and 1440×900. Mobile, the separate TimsPrototypes gate UI, and Administration redesign remain out of scope.
 - The implementation provides rendered guidance before Source MDX, omission of unavailable Administration navigation, one structured four-section creation page, attention-first inventory search/filtering, and denser operational typography that preserves the existing visual identity.
 - It also distinguishes published bytes from draft/proposal candidate bytes in plain language and verifies the distinction with a disposable sentinel proposal fixture.
-- Do not deploy this work until the user separately approves deployment through the immutable release process.
+- The real production proposal is deliberately unapproved and unpublished so a human can inspect it before crossing the publication authority boundary.
 
 ## Safe operational commands
 
@@ -125,12 +127,12 @@ Interactive administrator bootstrap or reset must run through an attached RP1 TT
 
 ## Continuation checklist
 
-1. Confirm the worktree and `origin/main` state before editing. Expect the approved desktop UX implementation and its specification to remain unstaged until the user directs otherwise.
-2. Treat `SPEC-desktop-ui-ux-improvements.md` as implemented locally and verified, not deployed; deployment still requires separate approval.
-3. Treat `leadership-review-v3` and the durable publisher/rollback migration as locally validated but absent from the recorded production release. Do not enable production providers with personal CLI authentication.
-4. Preserve the read-only production-audit boundary. Use disposable local fixtures for any creation, checkout, archive, validation, approval, or publication verification.
-5. Confirm the active RP1 release and PM2 status before any live mutation.
-6. Treat provider, publisher, backup, gateway, database-role, firewall, and content-publication changes as separate security boundaries.
+1. Confirm the worktree and `origin/main` state before editing. The desktop UX specification and implementation are committed and deployed.
+2. Treat production AI review as enabled through the separate service API/database identity. Do not replace it with personal CLI authentication.
+3. Treat publisher Git/release authority as absent even though the publication/rollback application code and schema are deployed. Do not approve or publish the live proposal without explicit human approval and a restricted publisher identity.
+4. Use disposable local fixtures for publication/rollback verification until the production publisher boundary is provisioned. Production review mutations require explicit task scope and must leave checkouts in an intentional state.
+5. Confirm the active RP1 release and both PM2 processes before any live mutation.
+6. Treat provider fallback, publisher, backup, gateway, database-role, firewall, and content-publication changes as separate security boundaries.
 7. Keep all credentials and activation/reset links out of source, arguments, environment files, documentation, logs, commits, and chat; use the existing local Keychain entries without exposing their values.
 8. Run verification proportional to the change, including production-build browser checks at 1280×800 and 1440×900 for approved desktop UI work.
 9. Use immutable releases and preserve the last healthy symlink target for rollback.

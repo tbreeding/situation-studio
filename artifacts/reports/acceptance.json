@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-18T18:13:06Z",
+  "recordedAt": "2026-07-18T19:09:45Z",
   "source": {
     "leadershipCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
     "leadershipRepositoryModified": false,
@@ -25,8 +25,8 @@
     },
     "database": {
       "postgresVersion": "16.12",
-      "productionMigrations": 4,
-      "localValidationMigrations": 5,
+      "productionMigrations": 6,
+      "localValidationMigrations": 6,
       "historicalUpgrade": "passed",
       "idempotentRedeploy": "passed",
       "checkoutRace": "one-winner",
@@ -61,7 +61,7 @@
     "mode": "deterministic-local-acceptance-only"
   },
   "desktopUxImplementation": {
-    "status": "local-verified-not-deployed",
+    "status": "production-deployed-and-live-verified",
     "verifiedAt": "2026-07-18T15:25:24Z",
     "viewports": ["1280x800", "1440x900"],
     "staticGate": "passed",
@@ -91,7 +91,7 @@
     "operationalBodyTextMinimumPx": 14,
     "documentContainment": "passed-both-desktop-viewports",
     "consoleWarningsOrErrors": 0,
-    "productionMutated": false,
+    "productionMutated": true,
     "leadershipArtifactBytesModified": false,
     "screenshots": [
       "situation-studio-inventory-1440x900.png",
@@ -101,8 +101,8 @@
     ]
   },
   "codexFirstFullFlow": {
-    "status": "local-isolated-verified-not-deployed",
-    "verifiedAt": "2026-07-18T18:13:06Z",
+    "status": "production-deployed-and-live-verified",
+    "verifiedAt": "2026-07-18T19:09:45Z",
     "workflowVersion": "leadership-review-v3",
     "modelPolicyVersion": "2026-07-18-codex-first-v2",
     "primaryProvider": "openai",
@@ -137,17 +137,32 @@
       "checkoutRace": "one-winner",
       "auditAppendOnly": true
     },
-    "productionMutated": false,
+    "productionReview": {
+      "release": "20260718T190654Z",
+      "commit": "f54d9fe",
+      "jobId": "8fd6d658-8d64-4722-87dc-7699c61f7075",
+      "situation": "repeatedly-misses-deadlines",
+      "state": "SUCCEEDED",
+      "successfulRoles": 22,
+      "codexSelectedRuns": 22,
+      "fallbackSelectedRuns": 0,
+      "candidateBundles": 1,
+      "passedValidations": 3,
+      "successfulCompletionAudits": 1,
+      "activeCheckoutsAfterCheckIn": 0
+    },
+    "productionMutated": true,
     "realLeadershipRemoteMutated": false
   },
   "externalBeta": {
     "originDeployed": true,
-    "release": "20260718T131848Z",
+    "release": "20260718T190654Z",
     "privateOrigin": "http://192.168.1.120:3015",
     "outerGateRegistered": true,
-    "providerExecution": "disabled",
+    "providerExecution": "openai-service-api-enabled",
+    "publisherExecution": "disabled-pending-restricted-git-authority",
     "administratorBootstrapped": true,
-    "reason": "The protected TimsPrototypes route and manual web release remain active. The Codex-first worker and durable publisher/rollback are locally validated but not deployed; provider execution remains fail-closed pending a dedicated OpenAI service credential and restricted production publisher authority.",
+    "reason": "The protected TimsPrototypes route, desktop workflow, and Codex-first worker are active. A real 22-role production review completed with one validated proposal and a successful visible Check in. Approval and publication were not exercised; the publisher remains fail-closed until restricted Leadership Git and release authority are provisioned.",
     "rp1Mutated": true
   }
 }

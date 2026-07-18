@@ -7,18 +7,18 @@
 - Release root: `/home/admin/projects/situation-studio/releases`.
 - Active symlink: `/home/admin/projects/situation-studio/current`.
 - Shared environment: `/home/admin/projects/situation-studio/shared`.
-- PM2 process: `situation-studio-web`.
-- Current recorded release: `20260718T131848Z`.
+- PM2 processes: `situation-studio-web` and `situation-studio-worker`.
+- Current recorded release: `20260718T190654Z`.
 
-The route and first administrator are active. Provider execution and publisher authority remain disabled. Backup automation and a clean restore rehearsal remain required operational work.
+The route, first administrator, and OpenAI/Codex-first review worker are active. Publisher Git/release authority remains disabled. Backup automation and a clean restore rehearsal remain required operational work.
 
-## Unreleased Codex-first services
+## Codex-first services
 
-The local worktree contains a real AI worker and trusted publisher that are not part of the recorded production release. The worker policy is OpenAI/Codex first (`gpt-5.6-sol`) and Claude Opus fallback-only. Production worker mode is API-only and requires `OPENAI_API_KEY`; CLI authentication is accepted only with `STUDIO_RUNTIME_ENV=validation`. See `ops/worker.env.example`.
+The recorded production release runs the real AI worker with OpenAI/Codex first (`gpt-5.6-sol`) and Claude Opus fallback-only. Production worker mode is API-only and requires `OPENAI_API_KEY`; CLI authentication is accepted only with `STUDIO_RUNTIME_ENV=validation`. The credential and AI database password live only in mode-0600 `shared/worker.env`. See `ops/worker.env.example`.
 
 The publisher consumes immutable approvals, validates exact candidate bytes, runs trusted Leadership install/lint/typecheck/content/test/build commands, creates one structured commit, publishes an immutable preview branch/release, waits for final human confirmation, compare-and-swap advances remote `main`, atomically moves the live release link, and reconciles PostgreSQL. Rollback creates a new forward-history commit with the exact prior tree and repeats validation/build/cutover. See `ops/publisher.env.example` and `ops/grant-service-privileges.sql`.
 
-An isolated 2026-07-18 rehearsal completed 22 Codex review roles, preview, final confirmation, cutover, reconciliation, and rollback without touching the real Leadership remote or production database. This proves the application flow, not production authority. Before enabling it on RP1, apply the fifth migration, provision the separate service logins and grants, install a restricted Git deploy key, provide the protected preview/activation runtime, and complete backup/restore controls.
+An isolated 2026-07-18 rehearsal completed 22 Codex review roles, preview, final confirmation, cutover, reconciliation, and rollback without touching the real Leadership remote. Production job `8fd6d658-8d64-4722-87dc-7699c61f7075` separately completed 22/22 Codex roles, 3/3 validations, one proposal, custody return, and visible Check in on `repeatedly-misses-deadlines`. Approval and publication were deliberately not exercised. Before enabling the publisher, install a restricted Git deploy key, provide protected preview/activation authority, and complete backup/restore controls.
 
 ## Allocations
 
@@ -47,7 +47,7 @@ Database backup alone is incomplete: preserve the protected Git remote and relea
 
 Frozen install and complete local verification precede every release. The production sequence is backup, migration, compatible worker health, web symlink cutover, outer-gate check, Studio login, readiness/SSE, and one safe read. Studio rollback repoints to the prior schema-compatible release; no automatic down migration occurs.
 
-`deploy.sh` implements the versioned release, migration, explicit runtime grants, idempotent baseline import, build, symlink cutover, deterministic PM2 restart, health gate, and automatic application rollback. It deliberately does not create credentials, bootstrap a password, register an outer-gate route, enable providers, configure backups, or grant Git publication authority. Those are separate security-boundary operations.
+`deploy.sh` implements the versioned release, migration, explicit web/service grants, idempotent baseline import, build, symlink cutover, deterministic web/worker PM2 restart, health gate, and automatic application rollback. It deliberately does not create credentials, bootstrap a password, register an outer-gate route, configure backups, or grant Git publication authority. Those are separate security-boundary operations.
 
 The first administrator is created only from an interactive RP1 TTY:
 

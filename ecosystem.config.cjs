@@ -1,11 +1,12 @@
 const path = require("node:path");
+const currentRelease = "/home/admin/projects/situation-studio/current";
 
 module.exports = {
   apps: [
     {
       name: "situation-studio-web",
-      cwd: __dirname,
-      script: path.join(__dirname, "ops/start-web.sh"),
+      cwd: currentRelease,
+      script: path.join(currentRelease, "ops/start-web.sh"),
       interpreter: "/bin/bash",
       env: {
         NODE_ENV: "production",

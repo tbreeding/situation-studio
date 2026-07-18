@@ -18,6 +18,7 @@ set +a
 studio_node_version="$(tr -d '[:space:]' < "${studio_root}/.nvmrc")"
 studio_node="/home/admin/.nvm/versions/node/v${studio_node_version}/bin/node"
 studio_next="${studio_root}/apps/web/node_modules/next/dist/bin/next"
+export STUDIO_RELEASE_ID="$(basename "${studio_root}")"
 
 if [[ ! -x "${studio_node}" || ! -f "${studio_next}" ]]; then
   echo "Pinned Situation Studio runtime is incomplete." >&2

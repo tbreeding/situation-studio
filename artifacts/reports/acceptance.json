@@ -58,8 +58,13 @@
     "mode": "deterministic-local-acceptance-only"
   },
   "externalBeta": {
-    "deployed": false,
-    "reason": "Fail-closed pending non-chat interactive administrator bootstrap, role-separated service credentials, real provider qualification, restricted publisher identity, backup/restore proof, and outer-gate registration after origin health.",
-    "rp1Mutated": false
+    "originDeployed": true,
+    "release": "20260718T124844Z",
+    "privateOrigin": "http://192.168.1.120:3015",
+    "outerGateRegistered": false,
+    "providerExecution": "disabled",
+    "administratorBootstrapped": false,
+    "reason": "The healthy private origin is ready for TimsPrototypes registration. Provider execution remains fail-closed pending qualified service credentials and the first administrator still requires an interactive human-owned password.",
+    "rp1Mutated": true
   }
 }

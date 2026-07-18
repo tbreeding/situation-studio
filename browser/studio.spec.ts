@@ -759,7 +759,24 @@ test("a synthetic proposal remains unmistakably separate from the published base
     await expect(page.locator(".workspaceSummary")).toContainText(
       "Published baseline",
     );
-    const [prepareResponse] = await Promise.all([
+    const sessionCookie = (await page.context().cookies()).find(
+      (cookie) => cookie.name === "situation_studio_dev",
+    );
+    expect(sessionCookie).toBeDefined();
+    if (!sessionCookie) return;
+    const sessionTokenHash = createHash("sha256")
+      .update(sessionCookie.value)
+      .digest("hex");
+    const agedSession = await database.query(
+      `UPDATE sessions
+       SET reauthenticated_at = NOW() - INTERVAL '1 hour'
+       WHERE token_hash = $1 AND revoked_at IS NULL
+       RETURNING id`,
+      [sessionTokenHash],
+    );
+    expect(agedSession.rows).toHaveLength(1);
+
+    const [blockedPrepareResponse] = await Promise.all([
       page.waitForResponse(
         (response) =>
           response.request().method() === "POST" &&
@@ -771,6 +788,34 @@ test("a synthetic proposal remains unmistakably separate from the published base
         })
         .click(),
     ]);
+    expect(blockedPrepareResponse.status()).toBe(403);
+    await expect(
+      page.getByRole("heading", { name: "Confirm your password" }),
+    ).toBeVisible();
+    await expect(page.getByRole("dialog")).toContainText(
+      "prepare this exact bundle for approval",
+    );
+    const bundleBeforeReauthentication = await database.query(
+      "SELECT id FROM proposed_bundles WHERE parent_bundle_id = $1",
+      [bundleId],
+    );
+    expect(bundleBeforeReauthentication.rows).toHaveLength(0);
+
+    await page.getByLabel("Password", { exact: true }).fill(password);
+    const [reauthenticationResponse, prepareResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response.url().endsWith("/api/auth/reauthenticate"),
+      ),
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response.url().endsWith(`/api/bundles/${bundleId}/prepare-approval`),
+      ),
+      page.getByRole("button", { name: "Confirm and continue" }).click(),
+    ]);
+    expect(reauthenticationResponse.status()).toBe(200);
     expect(prepareResponse.status()).toBe(201);
     await page.getByRole("tab", { name: "Source MDX" }).click();
     await expect(page.getByLabel("Situation MDX")).toHaveValue(

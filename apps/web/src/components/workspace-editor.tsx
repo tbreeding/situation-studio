@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ReauthenticationDialog } from "@/components/reauthentication-dialog";
 import { RenderedGuidance } from "@/components/rendered-guidance";
 
 type Props = {
@@ -63,6 +64,10 @@ export function WorkspaceEditor(props: Props) {
   const [body, setBody] = useState(props.artifact?.body ?? "");
   const [checkInPending, setCheckInPending] = useState(false);
   const [preparationPending, setPreparationPending] = useState(false);
+  const [reauthenticationRequest, setReauthenticationRequest] = useState<{
+    actionLabel: string;
+    retry: () => Promise<void>;
+  } | null>(null);
   const hasUnsavedChanges = body !== (props.artifact?.body ?? "");
   const [status, setStatus] = useState(
     canEdit
@@ -88,6 +93,22 @@ export function WorkspaceEditor(props: Props) {
     setSourceExpanded(false);
     window.requestAnimationFrame(() => expandSourceButtonRef.current?.focus());
   }, []);
+
+  async function requestReauthentication(
+    response: Response,
+    actionLabel: string,
+    retry: () => Promise<void>,
+  ): Promise<boolean> {
+    if (response.status !== 403) return false;
+    const result = (await response
+      .clone()
+      .json()
+      .catch(() => null)) as { error?: string } | null;
+    if (result?.error !== "recent reauthentication required") return false;
+    setStatus("Confirm your password to continue this sensitive action.");
+    setReauthenticationRequest({ actionLabel, retry });
+    return true;
+  }
 
   useEffect(() => {
     if (!ownsCheckout || !props.checkout) return;
@@ -277,6 +298,14 @@ export function WorkspaceEditor(props: Props) {
       },
       body: "{}",
     });
+    if (
+      await requestReauthentication(
+        response,
+        "approve this exact bundle",
+        approve,
+      )
+    )
+      return;
     if (response.ok) location.reload();
     else
       setStatus(
@@ -299,6 +328,16 @@ export function WorkspaceEditor(props: Props) {
         body: "{}",
       },
     );
+    if (
+      await requestReauthentication(
+        response,
+        "prepare this exact bundle for approval",
+        prepareApproval,
+      )
+    ) {
+      setPreparationPending(false);
+      return;
+    }
     if (response.ok) location.reload();
     else {
       const result = (await response.json()) as { error?: string };
@@ -326,6 +365,10 @@ export function WorkspaceEditor(props: Props) {
         target: "protected-beta",
       }),
     });
+    if (
+      await requestReauthentication(response, "stage this exact bundle", stage)
+    )
+      return;
     if (response.ok) location.reload();
     else
       setStatus(
@@ -347,6 +390,14 @@ export function WorkspaceEditor(props: Props) {
         body: "{}",
       },
     );
+    if (
+      await requestReauthentication(
+        response,
+        "publish this reviewed bundle",
+        confirmPublication,
+      )
+    )
+      return;
     if (response.ok) location.reload();
     else setStatus("Final publication confirmation failed.");
   }
@@ -360,18 +411,23 @@ export function WorkspaceEditor(props: Props) {
       "RECONCILED",
     ].includes(props.publicationRequest.state);
 
-  async function changeLifecycle(action: "ARCHIVE" | "RESTORE") {
+  async function changeLifecycle(
+    action: "ARCHIVE" | "RESTORE",
+    alreadyConfirmed = false,
+  ) {
     setLifecycleAttempted(true);
     const reason = archiveReason.trim();
     if (reason.length < 8) {
       setStatus("A specific lifecycle reason is required before this action.");
       return;
     }
-    const confirmed = window.confirm(
-      action === "ARCHIVE"
-        ? "Archive this situation? It will leave the active inventory until restored."
-        : "Restore this situation to its previous lifecycle state?",
-    );
+    const confirmed =
+      alreadyConfirmed ||
+      window.confirm(
+        action === "ARCHIVE"
+          ? "Archive this situation? It will leave the active inventory until restored."
+          : "Restore this situation to its previous lifecycle state?",
+      );
     if (!confirmed) {
       setStatus("Lifecycle change cancelled. No request was sent.");
       return;
@@ -391,6 +447,14 @@ export function WorkspaceEditor(props: Props) {
         }),
       },
     );
+    if (
+      await requestReauthentication(
+        response,
+        `${action === "ARCHIVE" ? "archive" : "restore"} this situation`,
+        () => changeLifecycle(action, true),
+      )
+    )
+      return;
     if (response.ok) location.reload();
     else
       setStatus(
@@ -416,6 +480,14 @@ export function WorkspaceEditor(props: Props) {
         }),
       },
     );
+    if (
+      await requestReauthentication(
+        response,
+        "roll back to this prior release",
+        rollback,
+      )
+    )
+      return;
     if (response.ok) location.reload();
     else
       setStatus(
@@ -922,6 +994,22 @@ export function WorkspaceEditor(props: Props) {
             </div>
           )}
       </div>
+      {reauthenticationRequest && (
+        <ReauthenticationDialog
+          actionLabel={reauthenticationRequest.actionLabel}
+          csrfToken={props.csrfToken}
+          onCancel={() => {
+            setPreparationPending(false);
+            setReauthenticationRequest(null);
+            setStatus("Sensitive action cancelled. No change was made.");
+          }}
+          onReauthenticated={async () => {
+            const request = reauthenticationRequest;
+            setReauthenticationRequest(null);
+            await request.retry();
+          }}
+        />
+      )}
     </section>
   );
 }

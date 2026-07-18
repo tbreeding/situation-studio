@@ -13,7 +13,7 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Current deployed implementation commit: `a16ed8d` (`Resume sensitive actions after reauthentication`).
+- Current deployed implementation commit: `82a97ff` (`Synchronize and highlight proposal diffs`).
 - The acceptance-report commit follows the runtime commits and records the deployed state.
 - Leadership baseline commit: `9a870e5c70fef9ae71506cb3138745b88363a190`.
 - Approved desktop UX specification: `SPEC-desktop-ui-ux-improvements.md`. The requested implementation is committed, deployed, and live-verified.
@@ -30,7 +30,7 @@ Before new work, run `git status --short`, read this file and `artifacts/reports
 - PM2 processes: `situation-studio-web` and `situation-studio-worker`.
 - Release root: `/home/admin/projects/situation-studio/releases`.
 - Active symlink: `/home/admin/projects/situation-studio/current`.
-- Current recorded release: `20260718T201015Z`.
+- Current recorded release: `20260718T202708Z`.
 - Stable launchers: `/home/admin/projects/situation-studio/current/ops/start-web.sh` and `ops/start-worker.sh`.
 - Shared environment files: `/home/admin/projects/situation-studio/shared/web.env`, `worker.env`, and `migrator.env`, mode 0600.
 
@@ -67,7 +67,7 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 - Next.js/TypeScript workspace, Prisma model, migrations, role-separated components, authentication/RBAC, legacy import, checkouts/drafts, review records, validation contracts, publication saga, and operational deployment tooling are implemented.
 - The RP1 web release, database roles, migrations, explicit runtime grants, baseline import, PM2 recovery, public route, and first administrator are operational.
 - The Administration layout was repaired after real production screenshots exposed misuse of the editor grid and missing intrinsic-width containment.
-- Current local verification: formatting, lint, strict TypeScript, Prisma validation, baseline verification, secret scan, production build, 30 contract/unit tests, database invariants, and the 36-case Chromium matrix pass with 28 executed cases and 8 intentional desktop-scope skips on mobile.
+- Current local verification: formatting, lint, strict TypeScript, Prisma validation, baseline verification, secret scan, production build, 33 contract/unit tests, database invariants, and the 36-case Chromium matrix pass with 28 executed cases and 8 intentional desktop-scope skips on mobile.
 - Browser coverage includes the prior desktop/mobile Administration regression plus the desktop UX behavior at 1280×800 and 1440×900: capability-aware navigation, inventory search/filtering, immutable-brief validation, all 15 published workspaces, proposal sentinel separation, full-screen Source keyboard behavior, dependency navigation, empty-state containment, console checks, and critical/serious accessibility scans.
 - Acceptance evidence lives in `artifacts/reports/acceptance.json`.
 - A live, authenticated, read-only desktop UX audit was completed on 2026-07-18 at a representative 1440×900 viewport. The audit covered Home, Jobs, Capacity, New Situation, and all 15 imported situation workspaces.
@@ -87,6 +87,9 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 - Release `20260718T201015Z`/commit `a16ed8d` replaces the raw `recent reauthentication required` workspace error with a keyboard-contained password prompt. A successful confirmation updates the existing session and automatically resumes the exact pending preparation, approval, staging, publication confirmation, lifecycle, or rollback action. Failed attempts are throttled and audited; cancellation performs no retry.
 - The aged-session browser regression proves the initial preparation request returns 403 without creating a child bundle, the prompt appears, password confirmation succeeds, and the retried preparation returns 201. The complete 36-case browser matrix passes. The live route returns the expected unauthenticated denial, both PM2 processes are online with zero restarts, and production bundle `7c7379dcd992…` remains the sole `HUMAN_REVIEW` revision.
 - The verified pre-deploy backup for the reauthentication release is `/home/admin/projects/situation-studio/shared/predeploy-backups/20260718T201009Z.dump`, mode 0600.
+- Release `20260718T202708Z`/commit `82a97ff` replaces independent comparison blocks with an aligned line diff. It highlights removals and additions, preserves line numbers and blank counterparts, and synchronizes vertical and horizontal scrolling from either pane. Unit tests cover replacements, insertions, and final-newline fidelity; both desktop browser fixtures prove bidirectional scroll synchronization.
+- The authenticated production UI displays 4 removed and 4 added lines for the live proposal. A live safe-read check set the published pane to vertical position 260 and horizontal position 90 and observed the exact same positions in the proposal pane. No workflow mutation was made. Both PM2 processes remain online with zero restarts.
+- The verified pre-deploy backup for the synchronized-diff release is `/home/admin/projects/situation-studio/shared/predeploy-backups/20260718T202703Z.dump`, mode 0600.
 
 ## Remaining work
 

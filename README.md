@@ -11,13 +11,15 @@ The current implementation is a pnpm workspace with visible privilege boundaries
 
 ## Current production status
 
-The protected application is live at `https://situation-studio.timsprototypes.com` through the TimsPrototypes outer gate. RP1 serves it from `192.168.1.120:3015` as PM2 processes `situation-studio-web` and `situation-studio-worker`; the current recorded release is `20260718T201015Z`. PostgreSQL has seven migrations applied, the 15-situation/37-artifact legacy baseline is loaded, and the first administrator is active.
+The protected application is live at `https://situation-studio.timsprototypes.com` through the TimsPrototypes outer gate. RP1 serves it from `192.168.1.120:3015` as PM2 processes `situation-studio-web` and `situation-studio-worker`; the current recorded release is `20260718T202708Z`. PostgreSQL has seven migrations applied, the 15-situation/37-artifact legacy baseline is loaded, and the first administrator is active.
 
 OpenAI service-API execution is enabled. A live review of `repeatedly-misses-deadlines` completed 22/22 roles with `gpt-5.6-sol`, zero fallbacks, one proposal bundle, and 3/3 validations; visible Check in then released the checkout without approving or publishing the proposal. Publication remains fail-closed until a restricted publisher Git identity and release authority are provisioned. Fake-provider and fake-publication behavior remain prohibited in production.
 
 Human review now displays immutable bundle artifacts instead of mutable draft bytes. Preparing approval creates a new canonical child bundle, writes the mapped human reviewer and current review date into changed public MDX, preserves open comments, and reruns deterministic exact-byte validation. Approval, staging, and the publisher reject bundles without this provenance. The live proposal remains deliberately unprepared, unapproved, and unpublished so `tim` can inspect it and cross the human boundary directly.
 
 When the 15-minute recent-authentication window expires, sensitive workspace actions now open an in-context password confirmation and automatically resume the exact pending action after success. The confirmation endpoint keeps the existing session and CSRF boundary, throttles failures, and writes audited success or denial events. The rejected pre-fix production preparation attempt created no child bundle or other workflow mutation.
+
+The published/proposal byte comparison is a true aligned line diff. Removed lines are red, added lines are green, blank counterparts keep later lines aligned, exact line numbers remain visible, and scrolling either pane synchronizes both vertical and horizontal positions.
 
 ## Codex-first workflow
 
@@ -43,7 +45,7 @@ pnpm verify
 pnpm test:browser
 ```
 
-The 36-case browser matrix runs desktop Chromium at 1280×800 and 1440×900 plus the existing mobile regression cases. In the latest production-runtime run, 28 applicable cases passed and 8 desktop-only cases were intentionally skipped on mobile. Desktop coverage includes containment, role-aware navigation, inventory behavior, client-side creation validation with no invalid mutation, all 15 read-only published artifacts, rendered/source switching, keyboard-safe Source expansion, real dependency navigation, visible Check in with cancel/discard behavior, a disposable proposal sentinel that cannot be mistaken for published guidance, archive cancellation, console checks, and critical/serious accessibility scans.
+The 36-case browser matrix runs desktop Chromium at 1280×800 and 1440×900 plus the existing mobile regression cases. In the latest production-runtime run, 28 applicable cases passed and 8 desktop-only cases were intentionally skipped on mobile. Desktop coverage includes containment, role-aware navigation, inventory behavior, client-side creation validation with no invalid mutation, all 15 read-only published artifacts, rendered/source switching, keyboard-safe Source expansion, real dependency navigation, visible Check in with cancel/discard behavior, an aligned highlighted proposal diff with bidirectional linked scrolling, a disposable proposal sentinel that cannot be mistaken for published guidance, archive cancellation, console checks, and critical/serious accessibility scans.
 
 See `HANDOFF.md` for the exact continuation state. Read `docs/architecture.md`, `docs/data-model.md`, `docs/publication-saga.md`, `docs/operations.md`, and `docs/rp1-assessment.md` before changing production behavior.
 

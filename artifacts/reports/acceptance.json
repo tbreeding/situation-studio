@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-18T20:14:38Z",
+  "recordedAt": "2026-07-18T20:30:06Z",
   "source": {
     "leadershipCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
     "leadershipRepositoryModified": false,
@@ -192,9 +192,28 @@
     "productionHumanReauthenticationExercised": false,
     "leadershipArtifactBytesModified": false
   },
+  "synchronizedDiff": {
+    "status": "production-deployed-and-live-verified",
+    "verifiedAt": "2026-07-18T20:30:06Z",
+    "release": "20260718T202708Z",
+    "commit": "82a97ff",
+    "lineAlignment": "passed",
+    "removedHighlighting": "passed",
+    "addedHighlighting": "passed",
+    "blankCounterpartAlignment": "passed",
+    "finalNewlineFidelity": "passed",
+    "bidirectionalVerticalScroll": "passed-both-desktop-viewports",
+    "bidirectionalHorizontalScroll": "passed-both-desktop-viewports",
+    "productionRemovedLines": 4,
+    "productionAddedLines": 4,
+    "productionObservedVerticalPositions": [260, 260],
+    "productionObservedHorizontalPositions": [90, 90],
+    "productionDiffVerificationMutatedWorkflow": false,
+    "leadershipArtifactBytesModified": false
+  },
   "externalBeta": {
     "originDeployed": true,
-    "release": "20260718T201015Z",
+    "release": "20260718T202708Z",
     "privateOrigin": "http://192.168.1.120:3015",
     "outerGateRegistered": true,
     "providerExecution": "openai-service-api-enabled",

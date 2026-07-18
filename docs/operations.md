@@ -1,5 +1,17 @@
 # RP1 resource, network, backup, and recovery plan
 
+## Live service record
+
+- Public protected route: `https://situation-studio.timsprototypes.com`.
+- RP1 origin: `192.168.1.120:3015`.
+- Release root: `/home/admin/projects/situation-studio/releases`.
+- Active symlink: `/home/admin/projects/situation-studio/current`.
+- Shared environment: `/home/admin/projects/situation-studio/shared`.
+- PM2 process: `situation-studio-web`.
+- Current recorded release: `20260718T131848Z`.
+
+The route and first administrator are active. Provider execution and publisher authority remain disabled. Backup automation and a clean restore rehearsal remain required operational work.
+
 ## Allocations
 
 - Studio web: port 3015, pool maximum 8.
@@ -27,7 +39,7 @@ Database backup alone is incomplete: preserve the protected Git remote and relea
 
 Frozen install and complete local verification precede every release. The production sequence is backup, migration, compatible worker health, web symlink cutover, outer-gate check, Studio login, readiness/SSE, and one safe read. Studio rollback repoints to the prior schema-compatible release; no automatic down migration occurs.
 
-`deploy.sh` implements the versioned release, migration, build, symlink cutover, PM2 reload, health gate, and automatic application rollback. It deliberately does not create credentials, bootstrap a password, register an outer-gate route, enable providers, or grant Git publication authority. Those are separate security-boundary operations.
+`deploy.sh` implements the versioned release, migration, explicit runtime grants, idempotent baseline import, build, symlink cutover, deterministic PM2 restart, health gate, and automatic application rollback. It deliberately does not create credentials, bootstrap a password, register an outer-gate route, enable providers, configure backups, or grant Git publication authority. Those are separate security-boundary operations.
 
 The first administrator is created only from an interactive RP1 TTY:
 
@@ -36,7 +48,15 @@ cd /home/admin/projects/situation-studio/current
 set -a
 source /home/admin/projects/situation-studio/shared/web.env
 set +a
-pnpm admin:bootstrap -- --username studio-owner --display-name "Studio Owner"
+source ~/.nvm/nvm.sh
+nvm use
+corepack pnpm admin:bootstrap --username <username> --display-name "<display name>"
+```
+
+The command refuses a second active administrator and accepts the password only through its non-echoing TTY prompt. Break-glass reset revokes all sessions for the target administrator:
+
+```sh
+corepack pnpm admin:reset --username <username>
 ```
 
 See `rp1-assessment.md` for the observed host capacity, database listener risk, and concrete external-beta blockers.

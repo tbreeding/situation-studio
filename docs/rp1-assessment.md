@@ -2,6 +2,18 @@
 
 The RP1 host was inspected read-only before any deployment mutation.
 
+## Current deployment
+
+- Protected URL: `https://situation-studio.timsprototypes.com`.
+- Private origin: `http://192.168.1.120:3015`.
+- PM2 process: `situation-studio-web`.
+- Current recorded release: `20260718T131848Z`.
+- Database: `situation_studio` in PostgreSQL 16, with four committed migrations applied.
+- Baseline: 15 situations and 37 artifacts imported idempotently.
+- TimsPrototypes route: registered and enabled.
+- First administrator: bootstrapped and active; no credential is recorded in Git or documentation.
+- Provider execution: disabled.
+
 ## Confirmed capacity
 
 - Raspberry Pi 5-class ARM64 host, 4 CPU cores and 8 GB RAM; approximately 5.2 GB was available during inspection.
@@ -16,15 +28,17 @@ The existing TimsPrototypes wildcard tunnel already supports the `situation-stud
 
 PostgreSQL currently listens on all IPv4 and IPv6 interfaces. This is a pre-existing host risk, not a reason to weaken Studio credentials. Before inviting an external friend, inventory every current database consumer, then restrict host/firewall exposure without breaking those services. Until that review is complete, use SCRAM, separate roles, loopback database URLs, and no broad grants.
 
-## Release blockers that are not approval prompts
+## Prerequisite status
 
-External beta remains disabled until all of the following concrete prerequisites exist:
+The protected web beta is live, but AI execution and publication remain disabled. Current prerequisite status:
 
-1. mode-0600 `shared/web.env` and `shared/migrator.env` files with distinct credentials;
-2. an interactive TTY bootstrap of the first Studio administrator—no generated password in an argument, environment variable, file, or chat;
-3. provider service/API credentials and qualified real adapter smoke tests, or provider execution left disabled;
-4. a publisher service identity with a restricted Git deploy key and release capability, separate from the web and AI worker;
-5. an encrypted backup plus clean restore rehearsal;
-6. outer-gate registration and an external browser check only after the private origin is healthy.
+| Prerequisite                                                                           | Status                                  |
+| -------------------------------------------------------------------------------------- | --------------------------------------- |
+| Mode-0600 `shared/web.env` and `shared/migrator.env` with distinct database identities | Complete                                |
+| Interactive first-administrator bootstrap                                              | Complete                                |
+| Provider service/API credentials and qualified real-adapter smoke tests                | Pending; provider execution is disabled |
+| Restricted publisher service identity, Git deploy key, and release capability          | Pending                                 |
+| Encrypted database backup and clean restore rehearsal                                  | Pending                                 |
+| TimsPrototypes registration and protected external route                               | Complete                                |
 
-Publishing stays deterministic/fake outside protected production until items 3 and 4 are satisfied. The app must not silently substitute the web process or an administrator's personal Git/provider credentials.
+Publishing stays deterministic/fake only in isolated acceptance environments until the provider and publisher prerequisites are satisfied. Production must not silently substitute the web process or an administrator's personal Git/provider credentials.

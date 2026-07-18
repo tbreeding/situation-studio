@@ -30,11 +30,7 @@ export async function POST(
       { error: "rollback reason required" },
       { status: 400 },
     );
-  if (environment().PROVIDER_EXECUTION_MODE !== "fake")
-    return NextResponse.json(
-      { error: "rollback must be executed by the publisher service" },
-      { status: 503 },
-    );
+  const fake = environment().PROVIDER_EXECUTION_MODE === "fake";
   const { id } = await params;
   const idempotencyKey = request.headers.get("idempotency-key");
   if (!idempotencyKey || idempotencyKey.length > 120)
@@ -90,6 +86,117 @@ export async function POST(
       { error: "rollback preconditions failed" },
       { status: 409 },
     );
+  if (!fake) {
+    const existing = await database().rollbackRequest.findUnique({
+      where: {
+        requestedById_idempotencyKey: {
+          requestedById: auth.session.userId,
+          idempotencyKey,
+        },
+      },
+    });
+    if (existing) {
+      if (
+        existing.targetPublicationId !== target.id ||
+        existing.reason !== parsed.data.reason
+      )
+        return NextResponse.json(
+          { error: "idempotency key reused with different input" },
+          { status: 409 },
+        );
+      return NextResponse.json({
+        rollbackRequestId: existing.id,
+        state: existing.state,
+        reused: true,
+      });
+    }
+    let rollbackRequest;
+    try {
+      rollbackRequest = await database().$transaction(
+        async (transaction) => {
+          await transaction.$executeRaw`SELECT id FROM situations WHERE id = ${target.situationId}::uuid FOR UPDATE`;
+          const situation = await transaction.situation.findUniqueOrThrow({
+            where: { id: target.situationId },
+          });
+          if (!situation.currentPublicationId)
+            throw new Error("CURRENT_PUBLICATION_MISSING");
+          const active = await transaction.situationCheckout.findFirst({
+            where: { situationId: target.situationId, releasedAt: null },
+          });
+          if (active) throw new Error("ROLLBACK_CHECKOUT_BUSY");
+          const fenced = await transaction.situation.update({
+            where: { id: target.situationId },
+            data: { fence: { increment: 1 } },
+          });
+          const row = await transaction.rollbackRequest.create({
+            data: {
+              rollbackUuid: randomUUID(),
+              idempotencyKey,
+              targetEnvironment: "protected-beta",
+              situationId: target.situationId,
+              targetPublicationId: target.id,
+              expectedCurrentPublicationId: situation.currentPublicationId,
+              requestedById: auth.session.userId,
+              reason: parsed.data.reason,
+            },
+          });
+          const checkout = await transaction.situationCheckout.create({
+            data: {
+              situationId: target.situationId,
+              holderUserId: auth.session.userId,
+              mode: "PUBLISHING",
+              custody: "PUBLISHER",
+              custodyReference: row.id,
+              fencingToken: fenced.fence,
+              transferReason: "ROLLBACK_REQUESTED",
+              expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            },
+          });
+          await transaction.checkoutResource.create({
+            data: {
+              checkoutId: checkout.id,
+              situationId: target.situationId,
+              resourceKey: `situation:${target.situationId}`,
+              purpose: "ROLLBACK",
+            },
+          });
+          return row;
+        },
+        { isolationLevel: "Serializable" },
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        ["CURRENT_PUBLICATION_MISSING", "ROLLBACK_CHECKOUT_BUSY"].includes(
+          error.message,
+        )
+      )
+        return NextResponse.json(
+          { error: "rollback preconditions failed" },
+          { status: 409 },
+        );
+      throw error;
+    }
+    await audit({
+      actorId: auth.session.userId,
+      permissions: [...auth.session.permissions],
+      action: "publication.rollback.request",
+      targetType: "rollback_request",
+      targetId: rollbackRequest.id,
+      targetVersion: target.manifestHash,
+      outcome: "SUCCEEDED",
+      reason: parsed.data.reason,
+      after: {
+        targetPublicationId: target.id,
+        expectedCurrentPublicationId:
+          rollbackRequest.expectedCurrentPublicationId,
+      },
+    });
+    return NextResponse.json(
+      { rollbackRequestId: rollbackRequest.id, state: rollbackRequest.state },
+      { status: 202 },
+    );
+  }
   const rollbackId = randomUUID();
   const commitSha = sha256(`rollback:${rollbackId}:${target.commitSha}`).slice(
     0,

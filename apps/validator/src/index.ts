@@ -35,11 +35,46 @@ export function inspectCandidateText(
       path: candidatePath,
       message: "MDX modules are not allowed in content.",
     });
+  if (/\.mdx$/u.test(candidatePath) && /<!--[\s\S]*?-->/u.test(body))
+    findings.push({
+      code: "MDX_HTML_COMMENT",
+      path: candidatePath,
+      message: "HTML comments are invalid in MDX; use an MDX comment.",
+    });
   if (/<\s*script\b/iu.test(body))
     findings.push({
       code: "SCRIPT_ELEMENT",
       path: candidatePath,
       message: "Script elements are not allowed.",
+    });
+  if (/<\s*style\b/iu.test(body))
+    findings.push({
+      code: "STYLE_ELEMENT",
+      path: candidatePath,
+      message: "Style elements are not allowed.",
+    });
+  if (/<[^>]+\son[A-Za-z]+\s*=/u.test(body))
+    findings.push({
+      code: "EVENT_HANDLER",
+      path: candidatePath,
+      message: "HTML event handlers are not allowed.",
+    });
+  const withoutMdxComments = body.replace(/\{\/\*[\s\S]*?\*\/\}/gu, "");
+  if (/\{[^}\n]*\}/u.test(withoutMdxComments))
+    findings.push({
+      code: "MDX_EXPRESSION",
+      path: candidatePath,
+      message: "Executable MDX expressions are not allowed.",
+    });
+  if (
+    /\$\([^\n)]*\)|;\s*(?:rm|curl|wget|bash|sh)\b|```(?:sh|bash|shell)\b/iu.test(
+      body,
+    )
+  )
+    findings.push({
+      code: "SHELL_FRAGMENT",
+      path: candidatePath,
+      message: "Shell fragments are not allowed in publishable content.",
     });
   for (const match of body.matchAll(/<([A-Z][A-Za-z0-9]*)\b/gu)) {
     const component = match[1];
@@ -64,6 +99,19 @@ function resolveInside(root: string, candidate: string) {
   return absolute;
 }
 
+function hasSymlinkParent(root: string, candidate: string) {
+  let current = path.resolve(root);
+  for (const segment of candidate.split("/").slice(0, -1)) {
+    current = path.join(current, segment);
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 export function validateBundleFiles(
   root: string,
   unknownManifest: unknown,
@@ -83,6 +131,14 @@ export function validateBundleFiles(
     }
     if (artifact.changeKind === "DELETE") continue;
     const absolute = resolveInside(root, artifact.path);
+    if (hasSymlinkParent(root, artifact.path)) {
+      findings.push({
+        code: "SYMLINK_PARENT",
+        path: artifact.path,
+        message: "Candidate parent directories may not be symlinks.",
+      });
+      continue;
+    }
     let metadata: fs.Stats;
     try {
       metadata = fs.lstatSync(absolute);

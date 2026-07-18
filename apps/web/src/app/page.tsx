@@ -1,6 +1,10 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
+import matter from "gray-matter";
 import { AppShell } from "@/components/app-shell";
+import {
+  SituationInventory,
+  type InventorySituation,
+} from "@/components/situation-inventory";
 import { currentSession } from "@/server/auth/sessions";
 import { database } from "@/server/database";
 
@@ -15,13 +19,118 @@ export default async function SituationsPage() {
         include: { holder: true },
         take: 1,
       },
-      drafts: { where: { active: true }, take: 1 },
-      currentPublication: true,
+      drafts: {
+        where: { active: true },
+        take: 1,
+        include: {
+          revisions: {
+            orderBy: { revision: "desc" },
+            take: 1,
+            include: {
+              artifacts: { include: { artifact: true, content: true } },
+            },
+          },
+          bundles: {
+            where: { state: { notIn: ["STALE", "PUBLISHED"] } },
+            orderBy: { revision: "desc" },
+            take: 1,
+            include: {
+              validations: true,
+              publicationRequests: {
+                orderBy: { createdAt: "desc" },
+                take: 1,
+              },
+            },
+          },
+        },
+      },
+      currentPublication: {
+        include: {
+          version: {
+            include: {
+              artifacts: { include: { artifact: true, content: true } },
+            },
+          },
+        },
+      },
     },
   });
+  const inventory: InventorySituation[] = situations.map((situation) => {
+    const checkout = situation.checkouts[0] ?? null;
+    const draft = situation.drafts[0] ?? null;
+    const bundle = draft?.bundles[0] ?? null;
+    const logicalId = `situation:${situation.slug}`;
+    const body =
+      draft?.revisions[0]?.artifacts.find(
+        (item) => item.artifact.logicalId === logicalId,
+      )?.content.body ??
+      situation.currentPublication?.version?.artifacts.find(
+        (item) => item.artifact.logicalId === logicalId,
+      )?.content.body ??
+      "";
+    let primarySkill = "unclassified";
+    let tags: string[] = [];
+    try {
+      const metadata = matter(body).data as {
+        primarySkill?: unknown;
+        tags?: unknown;
+      };
+      if (typeof metadata.primarySkill === "string")
+        primarySkill = metadata.primarySkill;
+      if (Array.isArray(metadata.tags))
+        tags = metadata.tags.filter(
+          (tag): tag is string => typeof tag === "string",
+        );
+    } catch {
+      // Inventory remains usable if a draft contains temporarily invalid frontmatter.
+    }
+    const validationBlocked =
+      bundle?.validations.some((item) => item.state === "FAILED") ?? false;
+    const publicationPending = Boolean(
+      bundle?.publicationRequests.some(
+        (item) =>
+          !["LIVE_VERIFIED", "RECONCILED", "AUTO_ROLLED_BACK"].includes(
+            item.state,
+          ),
+      ),
+    );
+    const needsAttention = Boolean(
+      checkout ||
+      draft ||
+      situation.lifecycle === "ARCHIVED" ||
+      situation.publicationState !== "PUBLISHED" ||
+      validationBlocked ||
+      publicationPending,
+    );
+    return {
+      id: situation.id,
+      slug: situation.slug,
+      title: situation.title,
+      lifecycle: situation.lifecycle,
+      publicationState: situation.publicationState,
+      primarySkill,
+      tags,
+      checkout: checkout
+        ? {
+            mode: checkout.mode,
+            holderName: checkout.holder?.displayName ?? "a server job",
+            renewedAt: checkout.renewedAt.toISOString(),
+          }
+        : null,
+      draftState: draft?.state ?? null,
+      proposalState: bundle?.state ?? null,
+      validationBlocked,
+      publicationPending,
+      needsAttention,
+    };
+  });
   return (
-    <AppShell user={session.user} csrfToken={session.csrfToken}>
-      <section className="pageIntro">
+    <AppShell
+      user={session.user}
+      csrfToken={session.csrfToken}
+      canAccessAdministration={session.permissions.has("system.admin")}
+    >
+      <section className="pageIntro compactIntro">
         <div>
           <p className="eyebrow">Leadership content operations</p>
           <h1>One rule. Every learning surface.</h1>
@@ -40,59 +149,10 @@ export default async function SituationsPage() {
         </span>
         <span className="badge rust">Private beta</span>
       </div>
-      <div className="inventoryToolbar">
-        <div className="badges">
-          <span className="badge">{situations.length} situations</span>
-          <span className="badge gold">
-            {situations.filter((item) => item.checkouts.length).length} checked
-            out
-          </span>
-        </div>
-        {session.permissions.has("situation.create") && (
-          <Link className="button" href="/situations/new">
-            New situation
-          </Link>
-        )}
-      </div>
-      <div className="situationGrid">
-        {situations.map((situation) => {
-          const checkout = situation.checkouts[0];
-          const draft = situation.drafts[0];
-          return (
-            <Link
-              className="situationCard"
-              href={`/situations/${situation.slug}`}
-              key={situation.id}
-            >
-              <div className="badges">
-                <span className="badge ink">
-                  {situation.publicationState.replaceAll("_", " ")}
-                </span>
-                {draft && (
-                  <span className="badge gold">
-                    {draft.state.replaceAll("_", " ")}
-                  </span>
-                )}
-                {checkout && <span className="badge rust">Checked out</span>}
-              </div>
-              <h2>{situation.title}</h2>
-              <p>
-                {checkout
-                  ? `Exclusive ${checkout.mode.toLowerCase().replaceAll("_", " ")} checkout held by ${checkout.holder?.displayName ?? "a server job"}.`
-                  : "Available for an exclusive editing or review checkout."}
-              </p>
-              <div className="cardFoot">
-                <span>{situation.lifecycle.toLowerCase()}</span>
-                <span>
-                  {checkout
-                    ? `Active ${checkout.renewedAt.toISOString().slice(0, 10)}`
-                    : "Open workspace →"}
-                </span>
-              </div>
-            </Link>
-          );
-        })}
-      </div>
+      <SituationInventory
+        situations={inventory}
+        canCreate={session.permissions.has("situation.create")}
+      />
     </AppShell>
   );
 }

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { NewSituationForm } from "@/components/new-situation-form";
@@ -8,17 +9,28 @@ export default async function NewSituationPage() {
   const session = await currentSession();
   if (!session) redirect("/login?expired=1");
   if (!session.permissions.has("situation.create")) redirect("/");
-  const relatedSituations = await database().situation.findMany({
-    where: { lifecycle: "ACTIVE" },
-    select: { slug: true, title: true },
+  const situations = await database().situation.findMany({
+    select: { slug: true, title: true, lifecycle: true },
     orderBy: { title: "asc" },
   });
+  const relatedSituations = situations.filter(
+    (situation) => situation.lifecycle === "ACTIVE",
+  );
   return (
-    <AppShell user={session.user} csrfToken={session.csrfToken}>
-      <section className="pageIntro">
+    <AppShell
+      user={session.user}
+      csrfToken={session.csrfToken}
+      canAccessAdministration={session.permissions.has("system.admin")}
+    >
+      <nav className="breadcrumb" aria-label="Breadcrumb">
+        <Link href="/">Situations</Link>
+        <span aria-hidden="true">/</span>
+        <span aria-current="page">New situation</span>
+      </nav>
+      <section className="pageIntro compactIntro">
         <div>
           <p className="eyebrow">
-            Grilling-based discovery · human confirmation
+            Discovery brief · deliberate human confirmation
           </p>
           <h1>Start with a rule worth teaching.</h1>
         </div>
@@ -37,6 +49,7 @@ export default async function NewSituationPage() {
       <NewSituationForm
         csrfToken={session.csrfToken}
         relatedSituations={relatedSituations}
+        existingSlugs={situations.map((situation) => situation.slug)}
       />
     </AppShell>
   );

@@ -18,5 +18,19 @@ module.exports = {
       listen_timeout: 10_000,
       autorestart: true,
     },
+    {
+      name: "situation-studio-worker",
+      cwd: currentRelease,
+      script: path.join(currentRelease, "ops/start-worker.sh"),
+      interpreter: "/bin/bash",
+      env: {
+        NODE_ENV: "production",
+        SITUATION_STUDIO_SHARED_DIR:
+          "/home/admin/projects/situation-studio/shared",
+      },
+      max_memory_restart: "1536M",
+      kill_timeout: 30_000,
+      autorestart: true,
+    },
   ],
 };

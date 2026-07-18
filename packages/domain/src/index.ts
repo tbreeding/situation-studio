@@ -293,6 +293,8 @@ export const workflowRoles = [
   "REPOSITORY_VALIDATION",
 ] as const;
 
+export const LEADERSHIP_REVIEW_WORKFLOW_VERSION = "leadership-review-v3";
+
 export type PublicationSagaState =
   | "REQUESTED"
   | "WORKTREE_READY"
@@ -352,7 +354,8 @@ export function detectSensitiveText(value: string): {
 }
 
 export const MODEL_POLICY = Object.freeze({
-  version: "2026-07-18-api-safe-v1",
+  version: "2026-07-18-codex-first-v2",
+  priority: ["openai", "anthropic"] as const,
   providers: {
     anthropic: { model: "opus", execution: "service-api-required" },
     openai: { model: "gpt-5.6-sol", execution: "responses-api-required" },

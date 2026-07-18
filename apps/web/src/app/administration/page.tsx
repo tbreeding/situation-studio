@@ -23,7 +23,11 @@ export default async function AdministrationPage() {
     }),
   ]);
   return (
-    <AppShell user={session.user} csrfToken={session.csrfToken}>
+    <AppShell
+      user={session.user}
+      csrfToken={session.csrfToken}
+      canAccessAdministration
+    >
       <section className="pageIntro administrationIntro">
         <div>
           <p className="eyebrow">Restricted operations</p>

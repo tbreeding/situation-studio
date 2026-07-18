@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-18T13:21:55Z",
+  "recordedAt": "2026-07-18T18:13:06Z",
   "source": {
     "leadershipCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
     "leadershipRepositoryModified": false,
@@ -15,15 +15,18 @@
     "prismaSchema": "passed",
     "secretScan": "passed",
     "productionBuild": "passed",
-    "unitContractTests": 23,
+    "unitContractTests": 28,
     "browserTests": {
-      "passed": 8,
-      "desktop": 4,
+      "total": 36,
+      "passed": 28,
+      "skipped": 8,
+      "desktop": 24,
       "mobile": 4
     },
     "database": {
       "postgresVersion": "16.12",
-      "migrations": 4,
+      "productionMigrations": 4,
+      "localValidationMigrations": 5,
       "historicalUpgrade": "passed",
       "idempotentRedeploy": "passed",
       "checkoutRace": "one-winner",
@@ -57,6 +60,86 @@
     "exactCandidateBytesPreserved": true,
     "mode": "deterministic-local-acceptance-only"
   },
+  "desktopUxImplementation": {
+    "status": "local-verified-not-deployed",
+    "verifiedAt": "2026-07-18T15:25:24Z",
+    "viewports": ["1280x800", "1440x900"],
+    "staticGate": "passed",
+    "unitContractTests": 28,
+    "browserTests": {
+      "total": 36,
+      "passed": 28,
+      "skippedDesktopOutOfScopeOnMobile": 8,
+      "desktop": 24,
+      "mobileRegression": 4
+    },
+    "accessibility": {
+      "criticalViolations": 0,
+      "seriousViolations": 0,
+      "routes": [
+        "/",
+        "/situations/new",
+        "/situations/repeatedly-misses-deadlines",
+        "/jobs",
+        "/capacity"
+      ]
+    },
+    "importedSituations": 15,
+    "exactSourceReadOnlyWithoutCheckout": "passed-all-15",
+    "activeProposalSentinelSeparatedFromPublished": "passed-disposable-fixture",
+    "expandedSourceKeyboardModal": "passed",
+    "operationalBodyTextMinimumPx": 14,
+    "documentContainment": "passed-both-desktop-viewports",
+    "consoleWarningsOrErrors": 0,
+    "productionMutated": false,
+    "leadershipArtifactBytesModified": false,
+    "screenshots": [
+      "situation-studio-inventory-1440x900.png",
+      "situation-studio-new-1280x800.png",
+      "situation-studio-workspace-1440x900.png",
+      "situation-studio-source-1280x800.png"
+    ]
+  },
+  "codexFirstFullFlow": {
+    "status": "local-isolated-verified-not-deployed",
+    "verifiedAt": "2026-07-18T18:13:06Z",
+    "workflowVersion": "leadership-review-v3",
+    "modelPolicyVersion": "2026-07-18-codex-first-v2",
+    "primaryProvider": "openai",
+    "primaryModel": "gpt-5.6-sol",
+    "fallbackProvider": "anthropic",
+    "requiredRoles": 22,
+    "successfulRoles": 22,
+    "codexSelectedRuns": 22,
+    "fallbackSelectedRuns": 0,
+    "validations": {
+      "candidateSafety": "passed",
+      "contradictionAudit": "passed",
+      "requiredRoleCompletion": "passed"
+    },
+    "runningJobCancellation": "passed-with-custody-return",
+    "publisherFailureGate": "passed-build-rejected-before-preview",
+    "approvalInvalidationAfterEdit": "passed",
+    "publication": {
+      "state": "RECONCILED",
+      "successfulSteps": 10,
+      "commit": "01babf29268317b3ca9bbddfd61c6dbe264912fc"
+    },
+    "rollback": {
+      "state": "RECONCILED",
+      "successfulSteps": 10,
+      "commit": "e4057416e2627b0d02dc459f25daa66c6248cb10",
+      "tree": "340bef0d08dfababca804e3a811eb7918bb99959",
+      "targetTreeExact": true
+    },
+    "activeCheckoutsAfterReconciliation": 0,
+    "databaseInvariantTest": {
+      "checkoutRace": "one-winner",
+      "auditAppendOnly": true
+    },
+    "productionMutated": false,
+    "realLeadershipRemoteMutated": false
+  },
   "externalBeta": {
     "originDeployed": true,
     "release": "20260718T131848Z",
@@ -64,7 +147,7 @@
     "outerGateRegistered": true,
     "providerExecution": "disabled",
     "administratorBootstrapped": true,
-    "reason": "The protected TimsPrototypes route is registered, the first administrator is active, and the responsive Administration repair is deployed. Provider execution remains fail-closed pending qualified service credentials.",
+    "reason": "The protected TimsPrototypes route and manual web release remain active. The Codex-first worker and durable publisher/rollback are locally validated but not deployed; provider execution remains fail-closed pending a dedicated OpenAI service credential and restricted production publisher authority.",
     "rp1Mutated": true
   }
 }

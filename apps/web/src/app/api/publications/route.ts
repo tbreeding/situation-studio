@@ -71,47 +71,104 @@ export async function POST(request: NextRequest) {
     });
   const fake = environment().PROVIDER_EXECUTION_MODE === "fake";
   const publicationUuid = randomUUID();
-  const publicationRequest = await database().publicationRequest.create({
-    data: {
-      publicationUuid,
-      idempotencyKey: key,
-      targetEnvironment: parsed.data.target,
-      bundleId: bundle.id,
-      bundleHash: bundle.canonicalHash,
-      approvalId: approval.id,
-      baseCommit: bundle.baseCommit,
-      state: fake ? "AWAITING_CONFIRMATION" : "REQUESTED",
-      currentStep: fake ? "PREVIEW_VERIFIED" : "REQUESTED",
-      requestedById: auth.session.userId,
-    },
-  });
-  if (fake)
-    for (const [index, step] of [
-      "WORKTREE_READY",
-      "APPLIED",
-      "VALIDATED",
-      "COMMITTED",
-      "PUSHED",
-      "PREVIEW_BUILT",
-      "PREVIEW_VERIFIED",
-    ].entries())
-      await database().publicationStep.create({
-        data: {
-          requestId: publicationRequest.id,
-          step,
-          attempt: 1,
-          fence: BigInt(index + 1),
-          externalId: `fake:${publicationUuid}:${step}`,
-          state: "SUCCEEDED",
-          inputHash: bundle.canonicalHash,
-          outputHash: bundle.canonicalHash,
-          finishedAt: new Date(),
-        },
-      });
-  await database().draft.update({
-    where: { id: bundle.draftId },
-    data: { state: "PUBLISHING" },
-  });
+  let publicationRequest;
+  try {
+    publicationRequest = await database().$transaction(
+      async (transaction) => {
+        await transaction.$executeRaw`SELECT id FROM situations WHERE id = ${bundle.situationId}::uuid FOR UPDATE`;
+        const checkout = await transaction.situationCheckout.findFirst({
+          where: {
+            situationId: bundle.situationId,
+            draftId: bundle.draftId,
+            holderUserId: auth.session.userId,
+            custody: "USER",
+            releasedAt: null,
+            expiresAt: { gt: new Date() },
+          },
+        });
+        if (!checkout) throw new Error("ACTIVE_PUBLISHER_CHECKOUT_REQUIRED");
+        const situation = await transaction.situation.update({
+          where: { id: bundle.situationId },
+          data: { fence: { increment: 1 } },
+        });
+        const row = await transaction.publicationRequest.create({
+          data: {
+            publicationUuid,
+            idempotencyKey: key,
+            targetEnvironment: parsed.data.target,
+            bundleId: bundle.id,
+            bundleHash: bundle.canonicalHash,
+            approvalId: approval.id,
+            baseCommit: bundle.baseCommit,
+            state: fake ? "AWAITING_CONFIRMATION" : "REQUESTED",
+            currentStep: fake ? "PREVIEW_VERIFIED" : "REQUESTED",
+            requestedById: auth.session.userId,
+          },
+        });
+        const transferred = await transaction.situationCheckout.updateMany({
+          where: {
+            id: checkout.id,
+            fencingToken: checkout.fencingToken,
+            custody: "USER",
+            releasedAt: null,
+          },
+          data: {
+            custody: "PUBLISHER",
+            custodyReference: row.id,
+            mode: "PUBLISHING",
+            fencingToken: situation.fence,
+            transferReason: "PUBLICATION_STAGED",
+            renewedAt: new Date(),
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          },
+        });
+        if (transferred.count !== 1)
+          throw new Error("PUBLISHER_CHECKOUT_TRANSFER_LOST");
+        if (fake)
+          for (const [index, step] of [
+            "WORKTREE_READY",
+            "APPLIED",
+            "VALIDATED",
+            "COMMITTED",
+            "PUSHED",
+            "PREVIEW_BUILT",
+            "PREVIEW_VERIFIED",
+          ].entries())
+            await transaction.publicationStep.create({
+              data: {
+                requestId: row.id,
+                step,
+                attempt: 1,
+                fence: BigInt(index + 1),
+                externalId: `fake:${publicationUuid}:${step}`,
+                state: "SUCCEEDED",
+                inputHash: bundle.canonicalHash,
+                outputHash: bundle.canonicalHash,
+                finishedAt: new Date(),
+              },
+            });
+        await transaction.draft.update({
+          where: { id: bundle.draftId },
+          data: { state: "PUBLISHING" },
+        });
+        return row;
+      },
+      { isolationLevel: "Serializable" },
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      [
+        "ACTIVE_PUBLISHER_CHECKOUT_REQUIRED",
+        "PUBLISHER_CHECKOUT_TRANSFER_LOST",
+      ].includes(error.message)
+    )
+      return NextResponse.json(
+        { error: "active checkout required" },
+        { status: 409 },
+      );
+    throw error;
+  }
   await audit({
     actorId: auth.session.userId,
     permissions: [...auth.session.permissions],

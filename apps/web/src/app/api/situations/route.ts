@@ -92,6 +92,15 @@ export async function POST(request: NextRequest) {
         reused: true,
       });
   }
+  const existingSlug = await database().situation.findUnique({
+    where: { slug: parsed.data.slug },
+    select: { id: true },
+  });
+  if (existingSlug)
+    return NextResponse.json(
+      { error: "That stable slug already belongs to another situation." },
+      { status: 409 },
+    );
   const sensitive = detectSensitiveText(canonicalJson(parsed.data));
   if (sensitive.blocked)
     return NextResponse.json(

@@ -32,6 +32,31 @@ try {
     create: { userId: user.id, roleId: role.id, grantedById: user.id },
     update: {},
   });
+  const editor = await database.user.upsert({
+    where: { username: "studio-editor" },
+    create: {
+      username: "studio-editor",
+      displayName: "Studio Editor",
+      passwordHash: await hashPassword("Studio-Test-Only-Password-2026!"),
+      state: "ACTIVE",
+      identityType: "HUMAN",
+    },
+    update: { state: "ACTIVE" },
+  });
+  const editorRole = await database.role.findUniqueOrThrow({
+    where: { code: "EDITOR" },
+  });
+  await database.userRoleAssignment.upsert({
+    where: {
+      userId_roleId: { userId: editor.id, roleId: editorRole.id },
+    },
+    create: {
+      userId: editor.id,
+      roleId: editorRole.id,
+      grantedById: user.id,
+    },
+    update: {},
+  });
   const imported = await importLegacyBaseline(
     database,
     studioRoot,

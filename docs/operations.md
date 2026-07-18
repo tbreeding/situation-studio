@@ -12,6 +12,14 @@
 
 The route and first administrator are active. Provider execution and publisher authority remain disabled. Backup automation and a clean restore rehearsal remain required operational work.
 
+## Unreleased Codex-first services
+
+The local worktree contains a real AI worker and trusted publisher that are not part of the recorded production release. The worker policy is OpenAI/Codex first (`gpt-5.6-sol`) and Claude Opus fallback-only. Production worker mode is API-only and requires `OPENAI_API_KEY`; CLI authentication is accepted only with `STUDIO_RUNTIME_ENV=validation`. See `ops/worker.env.example`.
+
+The publisher consumes immutable approvals, validates exact candidate bytes, runs trusted Leadership install/lint/typecheck/content/test/build commands, creates one structured commit, publishes an immutable preview branch/release, waits for final human confirmation, compare-and-swap advances remote `main`, atomically moves the live release link, and reconciles PostgreSQL. Rollback creates a new forward-history commit with the exact prior tree and repeats validation/build/cutover. See `ops/publisher.env.example` and `ops/grant-service-privileges.sql`.
+
+An isolated 2026-07-18 rehearsal completed 22 Codex review roles, preview, final confirmation, cutover, reconciliation, and rollback without touching the real Leadership remote or production database. This proves the application flow, not production authority. Before enabling it on RP1, apply the fifth migration, provision the separate service logins and grants, install a restricted Git deploy key, provide the protected preview/activation runtime, and complete backup/restore controls.
+
 ## Allocations
 
 - Studio web: port 3015, pool maximum 8.

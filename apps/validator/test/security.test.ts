@@ -48,15 +48,27 @@ describe("trusted validator boundary", () => {
     expect(
       inspectCandidateText(
         "x.mdx",
-        'import x from "private"\n<Unknown />\n[j](javascript:alert(1))',
+        'import x from "private"\n<Unknown />\n[j](javascript:alert(1))\n<div onclick="x" />\n{run()}\n$(curl bad)',
       ),
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: "MDX_MODULE" }),
         expect.objectContaining({ code: "UNKNOWN_COMPONENT" }),
         expect.objectContaining({ code: "UNSAFE_URL" }),
+        expect.objectContaining({ code: "EVENT_HANDLER" }),
+        expect.objectContaining({ code: "MDX_EXPRESSION" }),
+        expect.objectContaining({ code: "SHELL_FRAGMENT" }),
       ]),
     );
+  });
+
+  it("accepts inert MDX comments and rejects HTML comments in MDX", () => {
+    expect(
+      inspectCandidateText("x.mdx", "# Safe\n\n{/* inert note */}\n"),
+    ).toEqual([]);
+    expect(
+      inspectCandidateText("x.mdx", "# Invalid\n\n<!-- invalid note -->\n"),
+    ).toContainEqual(expect.objectContaining({ code: "MDX_HTML_COMMENT" }));
   });
 
   it("detects bytes changed after approval", () => {

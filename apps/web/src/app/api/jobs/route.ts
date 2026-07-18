@@ -5,7 +5,11 @@ import { database } from "@/server/database";
 import { environment } from "@/server/environment";
 import { runDeterministicReview } from "@/server/workflows/fake-review";
 import { audit } from "@/server/audit";
-import { MODEL_POLICY, sha256 } from "@situation-studio/domain";
+import {
+  LEADERSHIP_REVIEW_WORKFLOW_VERSION,
+  MODEL_POLICY,
+  sha256,
+} from "@situation-studio/domain";
 
 const schema = z.object({
   situationId: z.string().uuid(),
@@ -105,7 +109,7 @@ export async function POST(request: NextRequest) {
           draftId: parsed.data.draftId,
           inputBundleHash: revision.manifestHash,
           graphHash: sha256(JSON.stringify(draft.baseSnapshot.manifest)),
-          workflowVersion: "leadership-review-v1",
+          workflowVersion: LEADERSHIP_REVIEW_WORKFLOW_VERSION,
           modelPolicyVersion: MODEL_POLICY.version,
           state: "QUEUED",
           stage: "Waiting for complete-review capacity",
@@ -116,6 +120,10 @@ export async function POST(request: NextRequest) {
         where: { id: draft.id },
         data: { state: "AI_REVIEW_QUEUED" },
       });
+      const situation = await transaction.situation.update({
+        where: { id: parsed.data.situationId },
+        data: { fence: { increment: 1 } },
+      });
       await transaction.situationCheckout.update({
         where: { id: checkout.id },
         data: {
@@ -123,6 +131,7 @@ export async function POST(request: NextRequest) {
           mode: "AI_QUEUED",
           custody: "AI_JOB",
           custodyReference: row.id,
+          fencingToken: situation.fence,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         },
       });

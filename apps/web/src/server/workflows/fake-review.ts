@@ -1,5 +1,6 @@
 import {
   canonicalBundleHash,
+  LEADERSHIP_REVIEW_WORKFLOW_VERSION,
   MODEL_POLICY,
   sha256,
   workflowRoles,
@@ -99,7 +100,7 @@ export async function runDeterministicReview(
       draftId: input.draftId,
       inputBundleHash: revision.manifestHash,
       graphHash,
-      workflowVersion: "leadership-review-v1",
+      workflowVersion: LEADERSHIP_REVIEW_WORKFLOW_VERSION,
       modelPolicyVersion: MODEL_POLICY.version,
       state: "RUNNING",
       stage: "Mapping connected learning surfaces",

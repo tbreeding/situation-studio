@@ -223,40 +223,40 @@ enum PublicationSagaState {
 }
 
 model User {
-  id                    String                    @id @default(uuid()) @db.Uuid
-  username              String                    @unique @db.VarChar(64)
-  displayName           String                    @map("display_name") @db.VarChar(120)
-  passwordHash          String?                   @map("password_hash") @db.VarChar(512)
-  identityType          IdentityType              @default(HUMAN) @map("identity_type")
-  state                 UserState                 @default(PENDING_ACTIVATION)
-  passwordVersion       Int                       @default(1) @map("password_version")
-  lastLoginAt           DateTime?                 @map("last_login_at") @db.Timestamptz(3)
-  deactivatedAt         DateTime?                 @map("deactivated_at") @db.Timestamptz(3)
-  deactivatedById       String?                   @map("deactivated_by_id") @db.Uuid
-  createdAt             DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt             DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
-  sessions              Session[]
-  roleAssignments       UserRoleAssignment[]      @relation("RoleSubject")
-  rolesGranted          UserRoleAssignment[]      @relation("RoleGrantor")
-  permissionGrants      UserPermissionGrant[]     @relation("PermissionSubject")
-  permissionsGranted    UserPermissionGrant[]     @relation("PermissionGrantor")
-  activationTokens      ActivationToken[]         @relation("TokenSubject")
-  activationTokensMade  ActivationToken[]         @relation("TokenCreator")
-  checkouts             SituationCheckout[]       @relation("CheckoutHolder")
-  auditEvents           AuditEvent[]              @relation("AuditActor")
+  id                   String                @id @default(uuid()) @db.Uuid
+  username             String                @unique @db.VarChar(64)
+  displayName          String                @map("display_name") @db.VarChar(120)
+  passwordHash         String?               @map("password_hash") @db.VarChar(512)
+  identityType         IdentityType          @default(HUMAN) @map("identity_type")
+  state                UserState             @default(PENDING_ACTIVATION)
+  passwordVersion      Int                   @default(1) @map("password_version")
+  lastLoginAt          DateTime?             @map("last_login_at") @db.Timestamptz(3)
+  deactivatedAt        DateTime?             @map("deactivated_at") @db.Timestamptz(3)
+  deactivatedById      String?               @map("deactivated_by_id") @db.Uuid
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  sessions             Session[]
+  roleAssignments      UserRoleAssignment[]  @relation("RoleSubject")
+  rolesGranted         UserRoleAssignment[]  @relation("RoleGrantor")
+  permissionGrants     UserPermissionGrant[] @relation("PermissionSubject")
+  permissionsGranted   UserPermissionGrant[] @relation("PermissionGrantor")
+  activationTokens     ActivationToken[]     @relation("TokenSubject")
+  activationTokensMade ActivationToken[]     @relation("TokenCreator")
+  checkouts            SituationCheckout[]   @relation("CheckoutHolder")
+  auditEvents          AuditEvent[]          @relation("AuditActor")
 
   @@index([state, username], map: "users_state_username_idx")
   @@map("users")
 }
 
 model Role {
-  id          String               @id @default(uuid()) @db.Uuid
-  code        String               @unique @db.VarChar(50)
-  displayName String               @map("display_name") @db.VarChar(100)
-  systemManaged Boolean            @default(true) @map("system_managed")
-  version     Int                  @default(1)
-  permissions RolePermission[]
-  assignments UserRoleAssignment[]
+  id            String               @id @default(uuid()) @db.Uuid
+  code          String               @unique @db.VarChar(50)
+  displayName   String               @map("display_name") @db.VarChar(100)
+  systemManaged Boolean              @default(true) @map("system_managed")
+  version       Int                  @default(1)
+  permissions   RolePermission[]
+  assignments   UserRoleAssignment[]
 
   @@map("roles")
 }
@@ -272,10 +272,10 @@ model Permission {
 }
 
 model RolePermission {
-  roleId       String      @map("role_id") @db.Uuid
-  permissionId String      @map("permission_id") @db.Uuid
-  role         Role        @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  permission   Permission  @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+  roleId       String     @map("role_id") @db.Uuid
+  permissionId String     @map("permission_id") @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
 
   @@id([roleId, permissionId])
   @@map("role_permissions")
@@ -295,34 +295,34 @@ model UserRoleAssignment {
 }
 
 model UserPermissionGrant {
-  userId       String      @map("user_id") @db.Uuid
-  permissionId String      @map("permission_id") @db.Uuid
-  grantedById  String      @map("granted_by_id") @db.Uuid
-  grantedAt    DateTime    @default(now()) @map("granted_at") @db.Timestamptz(3)
-  user         User        @relation("PermissionSubject", fields: [userId], references: [id], onDelete: Restrict)
-  permission   Permission  @relation(fields: [permissionId], references: [id], onDelete: Restrict)
-  grantedBy    User        @relation("PermissionGrantor", fields: [grantedById], references: [id], onDelete: Restrict)
+  userId       String     @map("user_id") @db.Uuid
+  permissionId String     @map("permission_id") @db.Uuid
+  grantedById  String     @map("granted_by_id") @db.Uuid
+  grantedAt    DateTime   @default(now()) @map("granted_at") @db.Timestamptz(3)
+  user         User       @relation("PermissionSubject", fields: [userId], references: [id], onDelete: Restrict)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+  grantedBy    User       @relation("PermissionGrantor", fields: [grantedById], references: [id], onDelete: Restrict)
 
   @@id([userId, permissionId])
   @@map("user_permission_grants")
 }
 
 model Session {
-  id               String    @id @default(uuid()) @db.Uuid
-  tokenHash        String    @unique @map("token_hash") @db.Char(64)
-  userId           String    @map("user_id") @db.Uuid
-  passwordVersion  Int       @map("password_version")
-  csrfSecretHash   String    @map("csrf_secret_hash") @db.Char(64)
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  lastSeenAt       DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
-  idleExpiresAt    DateTime  @map("idle_expires_at") @db.Timestamptz(3)
-  absoluteExpiresAt DateTime @map("absolute_expires_at") @db.Timestamptz(3)
+  id                String    @id @default(uuid()) @db.Uuid
+  tokenHash         String    @unique @map("token_hash") @db.Char(64)
+  userId            String    @map("user_id") @db.Uuid
+  passwordVersion   Int       @map("password_version")
+  csrfSecretHash    String    @map("csrf_secret_hash") @db.Char(64)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt        DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  idleExpiresAt     DateTime  @map("idle_expires_at") @db.Timestamptz(3)
+  absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(3)
   reauthenticatedAt DateTime? @map("reauthenticated_at") @db.Timestamptz(3)
-  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
-  revokedReason    String?   @map("revoked_reason") @db.VarChar(200)
-  ipHash           String?   @map("ip_hash") @db.Char(64)
-  userAgentClass   String?   @map("user_agent_class") @db.VarChar(80)
-  user             User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedReason     String?   @map("revoked_reason") @db.VarChar(200)
+  ipHash            String?   @map("ip_hash") @db.Char(64)
+  userAgentClass    String?   @map("user_agent_class") @db.VarChar(80)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([userId, absoluteExpiresAt], map: "sessions_user_expiry_idx")
   @@map("sessions")
@@ -343,30 +343,30 @@ model LoginThrottle {
 }
 
 model ActivationToken {
-  id          String     @id @default(uuid()) @db.Uuid
-  userId      String     @map("user_id") @db.Uuid
-  tokenHash   String     @unique @map("token_hash") @db.Char(64)
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash") @db.Char(64)
   kind        TokenKind
-  createdById String     @map("created_by_id") @db.Uuid
-  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
-  expiresAt   DateTime   @map("expires_at") @db.Timestamptz(3)
-  consumedAt  DateTime?  @map("consumed_at") @db.Timestamptz(3)
-  user        User       @relation("TokenSubject", fields: [userId], references: [id], onDelete: Restrict)
-  createdBy   User       @relation("TokenCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdById String    @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt  DateTime? @map("consumed_at") @db.Timestamptz(3)
+  user        User      @relation("TokenSubject", fields: [userId], references: [id], onDelete: Restrict)
+  createdBy   User      @relation("TokenCreator", fields: [createdById], references: [id], onDelete: Restrict)
 
   @@index([userId, kind, expiresAt], map: "activation_tokens_subject_idx")
   @@map("activation_tokens")
 }
 
 model RepositorySnapshot {
-  id              String        @id @default(uuid()) @db.Uuid
-  commitSha       String        @unique @map("commit_sha") @db.Char(40)
+  id              String             @id @default(uuid()) @db.Uuid
+  commitSha       String             @unique @map("commit_sha") @db.Char(40)
   manifest        Json
-  manifestHash    String        @map("manifest_hash") @db.Char(64)
-  parserVersion   String        @map("parser_version") @db.VarChar(80)
-  importKind      SnapshotKind  @map("import_kind")
-  validationState String        @map("validation_state") @db.VarChar(30)
-  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  manifestHash    String             @map("manifest_hash") @db.Char(64)
+  parserVersion   String             @map("parser_version") @db.VarChar(80)
+  importKind      SnapshotKind       @map("import_kind")
+  validationState String             @map("validation_state") @db.VarChar(30)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   artifacts       Artifact[]
   edges           ArtifactEdge[]
   versions        SituationVersion[]
@@ -377,79 +377,79 @@ model RepositorySnapshot {
 }
 
 model Situation {
-  id                    String               @id @default(uuid()) @db.Uuid
-  slug                  String               @unique @db.VarChar(120)
-  title                 String               @db.VarChar(240)
-  lifecycle             SituationLifecycle  @default(UNPUBLISHED)
-  publicationState      PublicationState     @default(NEVER_PUBLISHED) @map("publication_state")
-  currentPublicationId  String?              @unique @map("current_publication_id") @db.Uuid
-  previousLifecycle     SituationLifecycle?  @map("previous_lifecycle")
-  archivedAt            DateTime?            @map("archived_at") @db.Timestamptz(3)
-  archivedById          String?              @map("archived_by_id") @db.Uuid
-  archiveReason         String?              @map("archive_reason") @db.VarChar(500)
-  fence                 BigInt               @default(0)
-  createdAt             DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt             DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
-  currentPublication    Publication?         @relation("CurrentPublication", fields: [currentPublicationId], references: [id], onDelete: Restrict)
-  publications          Publication[]         @relation("SituationPublications")
-  artifacts             Artifact[]
-  versions              SituationVersion[]
-  drafts                Draft[]
-  checkouts             SituationCheckout[]
-  conversations         Conversation[]
-  aiJobs                AiJob[]
-  bundles               ProposedBundle[]
-  archiveRecords        ArchiveRecord[]
+  id                   String              @id @default(uuid()) @db.Uuid
+  slug                 String              @unique @db.VarChar(120)
+  title                String              @db.VarChar(240)
+  lifecycle            SituationLifecycle  @default(UNPUBLISHED)
+  publicationState     PublicationState    @default(NEVER_PUBLISHED) @map("publication_state")
+  currentPublicationId String?             @unique @map("current_publication_id") @db.Uuid
+  previousLifecycle    SituationLifecycle? @map("previous_lifecycle")
+  archivedAt           DateTime?           @map("archived_at") @db.Timestamptz(3)
+  archivedById         String?             @map("archived_by_id") @db.Uuid
+  archiveReason        String?             @map("archive_reason") @db.VarChar(500)
+  fence                BigInt              @default(0)
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  currentPublication   Publication?        @relation("CurrentPublication", fields: [currentPublicationId], references: [id], onDelete: Restrict)
+  publications         Publication[]       @relation("SituationPublications")
+  artifacts            Artifact[]
+  versions             SituationVersion[]
+  drafts               Draft[]
+  checkouts            SituationCheckout[]
+  conversations        Conversation[]
+  aiJobs               AiJob[]
+  bundles              ProposedBundle[]
+  archiveRecords       ArchiveRecord[]
 
   @@index([lifecycle, publicationState, title], map: "situations_inventory_idx")
   @@map("situations")
 }
 
 model ContentBlob {
-  hash       String    @id @db.Char(64)
-  body       String
-  byteLength Int       @map("byte_length")
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  hash             String            @id @db.Char(64)
+  body             String
+  byteLength       Int               @map("byte_length")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
   versionArtifacts VersionArtifact[]
-  draftArtifacts DraftArtifact[]
-  bundleArtifacts BundleArtifact[]
+  draftArtifacts   DraftArtifact[]
+  bundleArtifacts  BundleArtifact[]
 
   @@map("content_blobs")
 }
 
 model Artifact {
-  id                    String       @id @default(uuid()) @db.Uuid
-  logicalId             String       @unique @map("logical_id") @db.VarChar(200)
-  type                  ArtifactType
-  canonicalPath         String       @unique @map("canonical_path") @db.VarChar(500)
-  primarySituationId    String?      @map("primary_situation_id") @db.Uuid
-  repositorySnapshotId  String       @map("repository_snapshot_id") @db.Uuid
-  active                Boolean      @default(true)
-  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  primarySituation      Situation?   @relation(fields: [primarySituationId], references: [id], onDelete: Restrict)
-  repositorySnapshot    RepositorySnapshot @relation(fields: [repositorySnapshotId], references: [id], onDelete: Restrict)
-  outgoingEdges         ArtifactEdge[] @relation("EdgeSource")
-  incomingEdges         ArtifactEdge[] @relation("EdgeTarget")
-  versionArtifacts      VersionArtifact[]
-  draftArtifacts        DraftArtifact[]
-  checkoutResources     CheckoutResource[]
-  bundleArtifacts       BundleArtifact[]
+  id                   String             @id @default(uuid()) @db.Uuid
+  logicalId            String             @unique @map("logical_id") @db.VarChar(200)
+  type                 ArtifactType
+  canonicalPath        String             @unique @map("canonical_path") @db.VarChar(500)
+  primarySituationId   String?            @map("primary_situation_id") @db.Uuid
+  repositorySnapshotId String             @map("repository_snapshot_id") @db.Uuid
+  active               Boolean            @default(true)
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  primarySituation     Situation?         @relation(fields: [primarySituationId], references: [id], onDelete: Restrict)
+  repositorySnapshot   RepositorySnapshot @relation(fields: [repositorySnapshotId], references: [id], onDelete: Restrict)
+  outgoingEdges        ArtifactEdge[]     @relation("EdgeSource")
+  incomingEdges        ArtifactEdge[]     @relation("EdgeTarget")
+  versionArtifacts     VersionArtifact[]
+  draftArtifacts       DraftArtifact[]
+  checkoutResources    CheckoutResource[]
+  bundleArtifacts      BundleArtifact[]
 
   @@index([type, active], map: "artifacts_type_active_idx")
   @@map("artifacts")
 }
 
 model ArtifactEdge {
-  id           String           @id @default(uuid()) @db.Uuid
-  snapshotId   String           @map("snapshot_id") @db.Uuid
-  sourceId     String           @map("source_id") @db.Uuid
-  targetId     String           @map("target_id") @db.Uuid
-  edgeType     ArtifactEdgeType @map("edge_type")
-  evidence     String           @db.VarChar(500)
-  snapshot     RepositorySnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
-  source       Artifact         @relation("EdgeSource", fields: [sourceId], references: [id], onDelete: Restrict)
-  target       Artifact         @relation("EdgeTarget", fields: [targetId], references: [id], onDelete: Restrict)
+  id         String             @id @default(uuid()) @db.Uuid
+  snapshotId String             @map("snapshot_id") @db.Uuid
+  sourceId   String             @map("source_id") @db.Uuid
+  targetId   String             @map("target_id") @db.Uuid
+  edgeType   ArtifactEdgeType   @map("edge_type")
+  evidence   String             @db.VarChar(500)
+  snapshot   RepositorySnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  source     Artifact           @relation("EdgeSource", fields: [sourceId], references: [id], onDelete: Restrict)
+  target     Artifact           @relation("EdgeTarget", fields: [targetId], references: [id], onDelete: Restrict)
 
   @@unique([snapshotId, sourceId, targetId, edgeType])
   @@index([targetId, edgeType], map: "artifact_edges_target_idx")
@@ -457,80 +457,80 @@ model ArtifactEdge {
 }
 
 model SituationVersion {
-  id             String            @id @default(uuid()) @db.Uuid
-  situationId    String            @map("situation_id") @db.Uuid
-  sourceKind     VersionSourceKind @map("source_kind")
-  snapshotId     String            @map("snapshot_id") @db.Uuid
-  manifestHash   String            @map("manifest_hash") @db.Char(64)
-  bundleHash     String?           @map("bundle_hash") @db.Char(64)
-  actorId        String?           @map("actor_id") @db.Uuid
-  aiJobId        String?           @map("ai_job_id") @db.Uuid
-  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
-  situation      Situation         @relation(fields: [situationId], references: [id], onDelete: Restrict)
-  snapshot       RepositorySnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
-  artifacts      VersionArtifact[]
-  draftsBasedOn  Draft[]
-  publications   Publication[]
+  id            String             @id @default(uuid()) @db.Uuid
+  situationId   String             @map("situation_id") @db.Uuid
+  sourceKind    VersionSourceKind  @map("source_kind")
+  snapshotId    String             @map("snapshot_id") @db.Uuid
+  manifestHash  String             @map("manifest_hash") @db.Char(64)
+  bundleHash    String?            @map("bundle_hash") @db.Char(64)
+  actorId       String?            @map("actor_id") @db.Uuid
+  aiJobId       String?            @map("ai_job_id") @db.Uuid
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  situation     Situation          @relation(fields: [situationId], references: [id], onDelete: Restrict)
+  snapshot      RepositorySnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  artifacts     VersionArtifact[]
+  draftsBasedOn Draft[]
+  publications  Publication[]
 
   @@index([situationId, createdAt], map: "situation_versions_timeline_idx")
   @@map("situation_versions")
 }
 
 model VersionArtifact {
-  versionId    String      @map("version_id") @db.Uuid
-  artifactId   String      @map("artifact_id") @db.Uuid
-  path         String      @db.VarChar(500)
-  type         ArtifactType
-  contentHash  String      @map("content_hash") @db.Char(64)
-  changeKind   ChangeKind  @map("change_kind")
-  version      SituationVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
-  artifact     Artifact    @relation(fields: [artifactId], references: [id], onDelete: Restrict)
-  content      ContentBlob @relation(fields: [contentHash], references: [hash], onDelete: Restrict)
+  versionId   String           @map("version_id") @db.Uuid
+  artifactId  String           @map("artifact_id") @db.Uuid
+  path        String           @db.VarChar(500)
+  type        ArtifactType
+  contentHash String           @map("content_hash") @db.Char(64)
+  changeKind  ChangeKind       @map("change_kind")
+  version     SituationVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  artifact    Artifact         @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+  content     ContentBlob      @relation(fields: [contentHash], references: [hash], onDelete: Restrict)
 
   @@id([versionId, artifactId])
   @@map("version_artifacts")
 }
 
 model Draft {
-  id             String        @id @default(uuid()) @db.Uuid
-  situationId    String        @map("situation_id") @db.Uuid
-  baseVersionId  String?       @map("base_version_id") @db.Uuid
-  baseSnapshotId String        @map("base_snapshot_id") @db.Uuid
-  currentRevision Int          @default(0) @map("current_revision")
-  state          DraftState    @default(DRAFTING)
-  staleReason    String?       @map("stale_reason") @db.VarChar(500)
-  active         Boolean       @default(true)
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
-  situation      Situation     @relation(fields: [situationId], references: [id], onDelete: Restrict)
-  baseVersion    SituationVersion? @relation(fields: [baseVersionId], references: [id], onDelete: Restrict)
-  baseSnapshot   RepositorySnapshot @relation(fields: [baseSnapshotId], references: [id], onDelete: Restrict)
-  revisions      DraftRevision[]
-  checkouts      SituationCheckout[]
-  conversations  Conversation[]
-  aiJobs         AiJob[]
-  bundles        ProposedBundle[]
+  id              String              @id @default(uuid()) @db.Uuid
+  situationId     String              @map("situation_id") @db.Uuid
+  baseVersionId   String?             @map("base_version_id") @db.Uuid
+  baseSnapshotId  String              @map("base_snapshot_id") @db.Uuid
+  currentRevision Int                 @default(0) @map("current_revision")
+  state           DraftState          @default(DRAFTING)
+  staleReason     String?             @map("stale_reason") @db.VarChar(500)
+  active          Boolean             @default(true)
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  situation       Situation           @relation(fields: [situationId], references: [id], onDelete: Restrict)
+  baseVersion     SituationVersion?   @relation(fields: [baseVersionId], references: [id], onDelete: Restrict)
+  baseSnapshot    RepositorySnapshot  @relation(fields: [baseSnapshotId], references: [id], onDelete: Restrict)
+  revisions       DraftRevision[]
+  checkouts       SituationCheckout[]
+  conversations   Conversation[]
+  aiJobs          AiJob[]
+  bundles         ProposedBundle[]
 
   @@index([situationId, active], map: "drafts_situation_active_idx")
   @@map("drafts")
 }
 
 model DraftRevision {
-  id                   String        @id @default(uuid()) @db.Uuid
-  draftId              String        @map("draft_id") @db.Uuid
-  revision             Int
-  parentRevisionId     String?       @map("parent_revision_id") @db.Uuid
-  manifestHash         String        @map("manifest_hash") @db.Char(64)
-  actorId              String        @map("actor_id") @db.Uuid
-  clientMutationId     String?       @map("client_mutation_id") @db.Uuid
-  namedCheckpoint      String?       @map("named_checkpoint") @db.VarChar(160)
-  materialChange       Boolean       @default(true) @map("material_change")
-  semanticChange       Boolean       @default(true) @map("semantic_change")
-  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  draft                Draft         @relation(fields: [draftId], references: [id], onDelete: Restrict)
-  parentRevision       DraftRevision? @relation("RevisionParent", fields: [parentRevisionId], references: [id], onDelete: Restrict)
-  childRevisions       DraftRevision[] @relation("RevisionParent")
-  artifacts            DraftArtifact[]
+  id               String          @id @default(uuid()) @db.Uuid
+  draftId          String          @map("draft_id") @db.Uuid
+  revision         Int
+  parentRevisionId String?         @map("parent_revision_id") @db.Uuid
+  manifestHash     String          @map("manifest_hash") @db.Char(64)
+  actorId          String          @map("actor_id") @db.Uuid
+  clientMutationId String?         @map("client_mutation_id") @db.Uuid
+  namedCheckpoint  String?         @map("named_checkpoint") @db.VarChar(160)
+  materialChange   Boolean         @default(true) @map("material_change")
+  semanticChange   Boolean         @default(true) @map("semantic_change")
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  draft            Draft           @relation(fields: [draftId], references: [id], onDelete: Restrict)
+  parentRevision   DraftRevision?  @relation("RevisionParent", fields: [parentRevisionId], references: [id], onDelete: Restrict)
+  childRevisions   DraftRevision[] @relation("RevisionParent")
+  artifacts        DraftArtifact[]
 
   @@unique([draftId, revision])
   @@unique([draftId, clientMutationId])
@@ -538,38 +538,38 @@ model DraftRevision {
 }
 
 model DraftArtifact {
-  revisionId   String       @map("revision_id") @db.Uuid
-  artifactId   String       @map("artifact_id") @db.Uuid
-  path         String       @db.VarChar(500)
-  type         ArtifactType
-  contentHash  String       @map("content_hash") @db.Char(64)
-  changeKind   ChangeKind   @map("change_kind")
-  revision     DraftRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict)
-  artifact     Artifact      @relation(fields: [artifactId], references: [id], onDelete: Restrict)
-  content      ContentBlob  @relation(fields: [contentHash], references: [hash], onDelete: Restrict)
+  revisionId  String        @map("revision_id") @db.Uuid
+  artifactId  String        @map("artifact_id") @db.Uuid
+  path        String        @db.VarChar(500)
+  type        ArtifactType
+  contentHash String        @map("content_hash") @db.Char(64)
+  changeKind  ChangeKind    @map("change_kind")
+  revision    DraftRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+  artifact    Artifact      @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+  content     ContentBlob   @relation(fields: [contentHash], references: [hash], onDelete: Restrict)
 
   @@id([revisionId, artifactId])
   @@map("draft_artifacts")
 }
 
 model SituationCheckout {
-  id               String          @id @default(uuid()) @db.Uuid
-  situationId      String          @map("situation_id") @db.Uuid
-  holderUserId     String?         @map("holder_user_id") @db.Uuid
+  id               String             @id @default(uuid()) @db.Uuid
+  situationId      String             @map("situation_id") @db.Uuid
+  holderUserId     String?            @map("holder_user_id") @db.Uuid
   mode             CheckoutMode
-  custody          CheckoutCustody @default(USER)
-  custodyReference String?         @map("custody_reference") @db.Uuid
-  draftId          String?         @map("draft_id") @db.Uuid
-  fencingToken     BigInt          @map("fencing_token")
-  acquiredAt       DateTime        @default(now()) @map("acquired_at") @db.Timestamptz(3)
-  renewedAt        DateTime        @default(now()) @map("renewed_at") @db.Timestamptz(3)
-  expiresAt        DateTime        @map("expires_at") @db.Timestamptz(3)
-  releasedAt       DateTime?       @map("released_at") @db.Timestamptz(3)
-  releaseReason    String?         @map("release_reason") @db.VarChar(500)
-  transferReason   String?         @map("transfer_reason") @db.VarChar(500)
-  situation        Situation       @relation(fields: [situationId], references: [id], onDelete: Restrict)
-  holder           User?           @relation("CheckoutHolder", fields: [holderUserId], references: [id], onDelete: Restrict)
-  draft            Draft?          @relation(fields: [draftId], references: [id], onDelete: Restrict)
+  custody          CheckoutCustody    @default(USER)
+  custodyReference String?            @map("custody_reference") @db.Uuid
+  draftId          String?            @map("draft_id") @db.Uuid
+  fencingToken     BigInt             @map("fencing_token")
+  acquiredAt       DateTime           @default(now()) @map("acquired_at") @db.Timestamptz(3)
+  renewedAt        DateTime           @default(now()) @map("renewed_at") @db.Timestamptz(3)
+  expiresAt        DateTime           @map("expires_at") @db.Timestamptz(3)
+  releasedAt       DateTime?          @map("released_at") @db.Timestamptz(3)
+  releaseReason    String?            @map("release_reason") @db.VarChar(500)
+  transferReason   String?            @map("transfer_reason") @db.VarChar(500)
+  situation        Situation          @relation(fields: [situationId], references: [id], onDelete: Restrict)
+  holder           User?              @relation("CheckoutHolder", fields: [holderUserId], references: [id], onDelete: Restrict)
+  draft            Draft?             @relation(fields: [draftId], references: [id], onDelete: Restrict)
   resources        CheckoutResource[]
 
   @@index([situationId, releasedAt], map: "checkouts_situation_active_idx")
@@ -578,68 +578,68 @@ model SituationCheckout {
 }
 
 model CheckoutResource {
-  id          String       @id @default(uuid()) @db.Uuid
-  checkoutId  String       @map("checkout_id") @db.Uuid
-  artifactId  String?      @map("artifact_id") @db.Uuid
-  situationId String?      @map("situation_id") @db.Uuid
-  resourceKey String       @map("resource_key") @db.VarChar(260)
-  purpose     String       @db.VarChar(120)
-  acquiredAt  DateTime     @default(now()) @map("acquired_at") @db.Timestamptz(3)
-  releasedAt  DateTime?    @map("released_at") @db.Timestamptz(3)
+  id          String            @id @default(uuid()) @db.Uuid
+  checkoutId  String            @map("checkout_id") @db.Uuid
+  artifactId  String?           @map("artifact_id") @db.Uuid
+  situationId String?           @map("situation_id") @db.Uuid
+  resourceKey String            @map("resource_key") @db.VarChar(260)
+  purpose     String            @db.VarChar(120)
+  acquiredAt  DateTime          @default(now()) @map("acquired_at") @db.Timestamptz(3)
+  releasedAt  DateTime?         @map("released_at") @db.Timestamptz(3)
   checkout    SituationCheckout @relation(fields: [checkoutId], references: [id], onDelete: Restrict)
-  artifact    Artifact?    @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+  artifact    Artifact?         @relation(fields: [artifactId], references: [id], onDelete: Restrict)
 
   @@index([resourceKey, releasedAt], map: "checkout_resources_active_idx")
   @@map("checkout_resources")
 }
 
 model Conversation {
-  id                    String             @id @default(uuid()) @db.Uuid
-  situationId           String             @map("situation_id") @db.Uuid
-  draftId               String             @map("draft_id") @db.Uuid
-  kind                  ConversationKind
-  state                 ConversationState  @default(OPEN)
-  ownerId               String             @map("owner_id") @db.Uuid
-  currentBriefId        String?            @unique @map("current_brief_id") @db.Uuid
-  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt             DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
-  situation             Situation          @relation(fields: [situationId], references: [id], onDelete: Restrict)
-  draft                 Draft              @relation(fields: [draftId], references: [id], onDelete: Restrict)
-  currentBrief          SharedUnderstandingBrief? @relation("CurrentBrief", fields: [currentBriefId], references: [id], onDelete: Restrict)
-  briefs                SharedUnderstandingBrief[] @relation("ConversationBriefs")
-  messages              ConversationMessage[]
+  id             String                     @id @default(uuid()) @db.Uuid
+  situationId    String                     @map("situation_id") @db.Uuid
+  draftId        String                     @map("draft_id") @db.Uuid
+  kind           ConversationKind
+  state          ConversationState          @default(OPEN)
+  ownerId        String                     @map("owner_id") @db.Uuid
+  currentBriefId String?                    @unique @map("current_brief_id") @db.Uuid
+  createdAt      DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  situation      Situation                  @relation(fields: [situationId], references: [id], onDelete: Restrict)
+  draft          Draft                      @relation(fields: [draftId], references: [id], onDelete: Restrict)
+  currentBrief   SharedUnderstandingBrief?  @relation("CurrentBrief", fields: [currentBriefId], references: [id], onDelete: Restrict)
+  briefs         SharedUnderstandingBrief[] @relation("ConversationBriefs")
+  messages       ConversationMessage[]
 
   @@map("conversations")
 }
 
 model ConversationMessage {
-  id                 String       @id @default(uuid()) @db.Uuid
-  conversationId     String       @map("conversation_id") @db.Uuid
-  sequence           Int
-  role               MessageRole
-  body               String
-  bodyHash           String       @map("body_hash") @db.Char(64)
-  actorId            String?      @map("actor_id") @db.Uuid
-  agentRunId         String?      @map("agent_run_id") @db.Uuid
-  sensitiveDisposition String     @default("CLEAR") @map("sensitive_disposition") @db.VarChar(30)
-  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  conversation       Conversation @relation(fields: [conversationId], references: [id], onDelete: Restrict)
+  id                   String       @id @default(uuid()) @db.Uuid
+  conversationId       String       @map("conversation_id") @db.Uuid
+  sequence             Int
+  role                 MessageRole
+  body                 String
+  bodyHash             String       @map("body_hash") @db.Char(64)
+  actorId              String?      @map("actor_id") @db.Uuid
+  agentRunId           String?      @map("agent_run_id") @db.Uuid
+  sensitiveDisposition String       @default("CLEAR") @map("sensitive_disposition") @db.VarChar(30)
+  createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  conversation         Conversation @relation(fields: [conversationId], references: [id], onDelete: Restrict)
 
   @@unique([conversationId, sequence])
   @@map("conversation_messages")
 }
 
 model SharedUnderstandingBrief {
-  id              String      @id @default(uuid()) @db.Uuid
-  conversationId  String      @map("conversation_id") @db.Uuid
-  canonicalFields Json        @map("canonical_fields")
-  fieldStates     Json        @map("field_states")
-  sourceSequence  Int         @map("source_sequence")
+  id              String              @id @default(uuid()) @db.Uuid
+  conversationId  String              @map("conversation_id") @db.Uuid
+  canonicalFields Json                @map("canonical_fields")
+  fieldStates     Json                @map("field_states")
+  sourceSequence  Int                 @map("source_sequence")
   readiness       Json
-  hash            String      @db.Char(64)
-  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
-  conversation    Conversation @relation("ConversationBriefs", fields: [conversationId], references: [id], onDelete: Restrict)
-  currentFor      Conversation? @relation("CurrentBrief")
+  hash            String              @db.Char(64)
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  conversation    Conversation        @relation("ConversationBriefs", fields: [conversationId], references: [id], onDelete: Restrict)
+  currentFor      Conversation?       @relation("CurrentBrief")
   confirmations   BriefConfirmation[]
   bundles         ProposedBundle[]
 
@@ -648,58 +648,58 @@ model SharedUnderstandingBrief {
 }
 
 model BriefConfirmation {
-  id                  String    @id @default(uuid()) @db.Uuid
-  briefId             String    @map("brief_id") @db.Uuid
-  actorId             String    @map("actor_id") @db.Uuid
-  sessionId           String    @map("session_id") @db.Uuid
-  permissionSnapshot  Json      @map("permission_snapshot")
-  acceptedUnknowns    Json      @map("accepted_unknowns")
-  confirmedAt         DateTime  @default(now()) @map("confirmed_at") @db.Timestamptz(3)
-  invalidatedAt       DateTime? @map("invalidated_at") @db.Timestamptz(3)
-  invalidationReason  String?   @map("invalidation_reason") @db.VarChar(500)
-  brief               SharedUnderstandingBrief @relation(fields: [briefId], references: [id], onDelete: Restrict)
+  id                 String                   @id @default(uuid()) @db.Uuid
+  briefId            String                   @map("brief_id") @db.Uuid
+  actorId            String                   @map("actor_id") @db.Uuid
+  sessionId          String                   @map("session_id") @db.Uuid
+  permissionSnapshot Json                     @map("permission_snapshot")
+  acceptedUnknowns   Json                     @map("accepted_unknowns")
+  confirmedAt        DateTime                 @default(now()) @map("confirmed_at") @db.Timestamptz(3)
+  invalidatedAt      DateTime?                @map("invalidated_at") @db.Timestamptz(3)
+  invalidationReason String?                  @map("invalidation_reason") @db.VarChar(500)
+  brief              SharedUnderstandingBrief @relation(fields: [briefId], references: [id], onDelete: Restrict)
 
   @@index([briefId, invalidatedAt], map: "brief_confirmations_valid_idx")
   @@map("brief_confirmations")
 }
 
 model ProviderAccount {
-  id           String        @id @default(uuid()) @db.Uuid
-  provider     String        @db.VarChar(40)
-  label        String        @db.VarChar(100)
-  state        ProviderState @default(PAUSED)
-  credentialMode String      @map("credential_mode") @db.VarChar(50)
-  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
-  runs         AgentRun[]
+  id             String        @id @default(uuid()) @db.Uuid
+  provider       String        @db.VarChar(40)
+  label          String        @db.VarChar(100)
+  state          ProviderState @default(PAUSED)
+  credentialMode String        @map("credential_mode") @db.VarChar(50)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  runs           AgentRun[]
 
   @@unique([provider, label])
   @@map("provider_accounts")
 }
 
 model AiJob {
-  id                 String      @id @default(uuid()) @db.Uuid
-  kind               String      @db.VarChar(50)
-  ownerId            String      @map("owner_id") @db.Uuid
-  situationId        String      @map("situation_id") @db.Uuid
-  draftId            String      @map("draft_id") @db.Uuid
-  inputBundleHash    String      @map("input_bundle_hash") @db.Char(64)
-  briefHash          String?     @map("brief_hash") @db.Char(64)
-  graphHash          String      @map("graph_hash") @db.Char(64)
-  workflowVersion    String      @map("workflow_version") @db.VarChar(80)
-  modelPolicyVersion String      @map("model_policy_version") @db.VarChar(80)
-  state              AiJobState  @default(QUEUED)
-  stage              String      @db.VarChar(100)
-  priority           Int         @default(0)
-  queueSequence      BigInt      @default(autoincrement()) @map("queue_sequence")
-  runNonce           String      @default("default") @map("run_nonce") @db.VarChar(80)
-  idempotencyKey     String      @map("idempotency_key") @db.VarChar(120)
-  cancellationReason String?     @map("cancellation_reason") @db.VarChar(500)
-  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
-  startedAt          DateTime?   @map("started_at") @db.Timestamptz(3)
-  finishedAt         DateTime?   @map("finished_at") @db.Timestamptz(3)
-  situation          Situation   @relation(fields: [situationId], references: [id], onDelete: Restrict)
-  draft              Draft       @relation(fields: [draftId], references: [id], onDelete: Restrict)
+  id                 String           @id @default(uuid()) @db.Uuid
+  kind               String           @db.VarChar(50)
+  ownerId            String           @map("owner_id") @db.Uuid
+  situationId        String           @map("situation_id") @db.Uuid
+  draftId            String           @map("draft_id") @db.Uuid
+  inputBundleHash    String           @map("input_bundle_hash") @db.Char(64)
+  briefHash          String?          @map("brief_hash") @db.Char(64)
+  graphHash          String           @map("graph_hash") @db.Char(64)
+  workflowVersion    String           @map("workflow_version") @db.VarChar(80)
+  modelPolicyVersion String           @map("model_policy_version") @db.VarChar(80)
+  state              AiJobState       @default(QUEUED)
+  stage              String           @db.VarChar(100)
+  priority           Int              @default(0)
+  queueSequence      BigInt           @default(autoincrement()) @map("queue_sequence")
+  runNonce           String           @default("default") @map("run_nonce") @db.VarChar(80)
+  idempotencyKey     String           @map("idempotency_key") @db.VarChar(120)
+  cancellationReason String?          @map("cancellation_reason") @db.VarChar(500)
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt          DateTime?        @map("started_at") @db.Timestamptz(3)
+  finishedAt         DateTime?        @map("finished_at") @db.Timestamptz(3)
+  situation          Situation        @relation(fields: [situationId], references: [id], onDelete: Restrict)
+  draft              Draft            @relation(fields: [draftId], references: [id], onDelete: Restrict)
   steps              WorkflowStep[]
   bundles            ProposedBundle[]
 
@@ -710,47 +710,47 @@ model AiJob {
 }
 
 model WorkflowStep {
-  id              String            @id @default(uuid()) @db.Uuid
-  jobId           String            @map("job_id") @db.Uuid
-  role            String            @db.VarChar(100)
-  stage           String            @db.VarChar(100)
-  round           Int               @default(1)
-  dependencyIds   Json              @map("dependency_ids")
-  inputHash       String            @map("input_hash") @db.Char(64)
-  state           WorkflowStepState @default(PENDING)
-  fencingToken    BigInt            @default(0) @map("fencing_token")
-  selectedRunId   String?           @unique @map("selected_run_id") @db.Uuid
-  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
-  job             AiJob             @relation(fields: [jobId], references: [id], onDelete: Restrict)
-  selectedRun     AgentRun?         @relation("SelectedRun", fields: [selectedRunId], references: [id], onDelete: Restrict)
-  runs            AgentRun[]        @relation("StepRuns")
+  id            String            @id @default(uuid()) @db.Uuid
+  jobId         String            @map("job_id") @db.Uuid
+  role          String            @db.VarChar(100)
+  stage         String            @db.VarChar(100)
+  round         Int               @default(1)
+  dependencyIds Json              @map("dependency_ids")
+  inputHash     String            @map("input_hash") @db.Char(64)
+  state         WorkflowStepState @default(PENDING)
+  fencingToken  BigInt            @default(0) @map("fencing_token")
+  selectedRunId String?           @unique @map("selected_run_id") @db.Uuid
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  job           AiJob             @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  selectedRun   AgentRun?         @relation("SelectedRun", fields: [selectedRunId], references: [id], onDelete: Restrict)
+  runs          AgentRun[]        @relation("StepRuns")
 
   @@unique([jobId, role, round, inputHash])
   @@map("workflow_steps")
 }
 
 model AgentRun {
-  id                String        @id @default(uuid()) @db.Uuid
-  stepId            String        @map("step_id") @db.Uuid
+  id                String          @id @default(uuid()) @db.Uuid
+  stepId            String          @map("step_id") @db.Uuid
   attempt           Int
-  providerAccountId String        @map("provider_account_id") @db.Uuid
-  requestedModel    String        @map("requested_model") @db.VarChar(100)
-  resolvedModel     String?       @map("resolved_model") @db.VarChar(160)
-  effort            String        @db.VarChar(20)
-  adapterVersion    String        @map("adapter_version") @db.VarChar(80)
-  cliVersion        String?       @map("cli_version") @db.VarChar(80)
-  inputHash         String        @map("input_hash") @db.Char(64)
-  outputHash        String?       @map("output_hash") @db.Char(64)
-  normalizedOutput  Json?         @map("normalized_output")
-  redactedRawOutput String?       @map("redacted_raw_output")
-  failureClass      FailureClass? @map("failure_class")
-  failureEvidence   Json?         @map("failure_evidence")
+  providerAccountId String          @map("provider_account_id") @db.Uuid
+  requestedModel    String          @map("requested_model") @db.VarChar(100)
+  resolvedModel     String?         @map("resolved_model") @db.VarChar(160)
+  effort            String          @db.VarChar(20)
+  adapterVersion    String          @map("adapter_version") @db.VarChar(80)
+  cliVersion        String?         @map("cli_version") @db.VarChar(80)
+  inputHash         String          @map("input_hash") @db.Char(64)
+  outputHash        String?         @map("output_hash") @db.Char(64)
+  normalizedOutput  Json?           @map("normalized_output")
+  redactedRawOutput String?         @map("redacted_raw_output")
+  failureClass      FailureClass?   @map("failure_class")
+  failureEvidence   Json?           @map("failure_evidence")
   usage             Json?
-  startedAt         DateTime      @default(now()) @map("started_at") @db.Timestamptz(3)
-  finishedAt        DateTime?     @map("finished_at") @db.Timestamptz(3)
-  step              WorkflowStep  @relation("StepRuns", fields: [stepId], references: [id], onDelete: Restrict)
-  selectedForStep   WorkflowStep? @relation("SelectedRun")
+  startedAt         DateTime        @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt        DateTime?       @map("finished_at") @db.Timestamptz(3)
+  step              WorkflowStep    @relation("StepRuns", fields: [stepId], references: [id], onDelete: Restrict)
+  selectedForStep   WorkflowStep?   @relation("SelectedRun")
   providerAccount   ProviderAccount @relation(fields: [providerAccountId], references: [id], onDelete: Restrict)
 
   @@unique([stepId, attempt])
@@ -758,112 +758,112 @@ model AgentRun {
 }
 
 model ProposedBundle {
-  id                 String       @id @default(uuid()) @db.Uuid
-  situationId        String       @map("situation_id") @db.Uuid
-  parentBundleId     String?      @map("parent_bundle_id") @db.Uuid
-  revision           Int
-  snapshotId         String       @map("snapshot_id") @db.Uuid
-  draftId            String       @map("draft_id") @db.Uuid
-  briefId            String?      @map("brief_id") @db.Uuid
-  aiJobId            String?      @map("ai_job_id") @db.Uuid
-  baseCommit         String       @map("base_commit") @db.Char(40)
-  baseManifestHash   String       @map("base_manifest_hash") @db.Char(64)
-  briefHash          String?      @map("brief_hash") @db.Char(64)
-  graphHash          String       @map("graph_hash") @db.Char(64)
-  canonicalHash      String       @unique @map("canonical_hash") @db.Char(64)
-  manifest           Json
-  decisionLedger     Json?        @map("decision_ledger")
-  contradictionMatrix Json?       @map("contradiction_matrix")
-  state              BundleState  @default(DRAFT)
-  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  situation          Situation    @relation(fields: [situationId], references: [id], onDelete: Restrict)
-  parentBundle       ProposedBundle? @relation("BundleParent", fields: [parentBundleId], references: [id], onDelete: Restrict)
-  childBundles       ProposedBundle[] @relation("BundleParent")
-  snapshot           RepositorySnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
-  draft              Draft        @relation(fields: [draftId], references: [id], onDelete: Restrict)
-  brief              SharedUnderstandingBrief? @relation(fields: [briefId], references: [id], onDelete: Restrict)
-  aiJob              AiJob?       @relation(fields: [aiJobId], references: [id], onDelete: Restrict)
-  artifacts          BundleArtifact[]
-  validations        ValidationRun[]
-  approvals          Approval[]
+  id                  String                    @id @default(uuid()) @db.Uuid
+  situationId         String                    @map("situation_id") @db.Uuid
+  parentBundleId      String?                   @map("parent_bundle_id") @db.Uuid
+  revision            Int
+  snapshotId          String                    @map("snapshot_id") @db.Uuid
+  draftId             String                    @map("draft_id") @db.Uuid
+  briefId             String?                   @map("brief_id") @db.Uuid
+  aiJobId             String?                   @map("ai_job_id") @db.Uuid
+  baseCommit          String                    @map("base_commit") @db.Char(40)
+  baseManifestHash    String                    @map("base_manifest_hash") @db.Char(64)
+  briefHash           String?                   @map("brief_hash") @db.Char(64)
+  graphHash           String                    @map("graph_hash") @db.Char(64)
+  canonicalHash       String                    @unique @map("canonical_hash") @db.Char(64)
+  manifest            Json
+  decisionLedger      Json?                     @map("decision_ledger")
+  contradictionMatrix Json?                     @map("contradiction_matrix")
+  state               BundleState               @default(DRAFT)
+  createdAt           DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  situation           Situation                 @relation(fields: [situationId], references: [id], onDelete: Restrict)
+  parentBundle        ProposedBundle?           @relation("BundleParent", fields: [parentBundleId], references: [id], onDelete: Restrict)
+  childBundles        ProposedBundle[]          @relation("BundleParent")
+  snapshot            RepositorySnapshot        @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  draft               Draft                     @relation(fields: [draftId], references: [id], onDelete: Restrict)
+  brief               SharedUnderstandingBrief? @relation(fields: [briefId], references: [id], onDelete: Restrict)
+  aiJob               AiJob?                    @relation(fields: [aiJobId], references: [id], onDelete: Restrict)
+  artifacts           BundleArtifact[]
+  validations         ValidationRun[]
+  approvals           Approval[]
   publicationRequests PublicationRequest[]
-  comments           Comment[]
+  comments            Comment[]
 
   @@unique([situationId, revision])
   @@map("proposed_bundles")
 }
 
 model BundleArtifact {
-  bundleId          String       @map("bundle_id") @db.Uuid
-  artifactId        String       @map("artifact_id") @db.Uuid
-  path              String       @db.VarChar(500)
+  bundleId          String         @map("bundle_id") @db.Uuid
+  artifactId        String         @map("artifact_id") @db.Uuid
+  path              String         @db.VarChar(500)
   type              ArtifactType
-  baseHash          String?      @map("base_hash") @db.Char(64)
-  candidateHash     String       @map("candidate_hash") @db.Char(64)
-  contentHash       String       @map("content_hash") @db.Char(64)
-  changeKind        ChangeKind   @map("change_kind")
-  noChangeRationale String?      @map("no_change_rationale") @db.VarChar(1000)
+  baseHash          String?        @map("base_hash") @db.Char(64)
+  candidateHash     String         @map("candidate_hash") @db.Char(64)
+  contentHash       String         @map("content_hash") @db.Char(64)
+  changeKind        ChangeKind     @map("change_kind")
+  noChangeRationale String?        @map("no_change_rationale") @db.VarChar(1000)
   bundle            ProposedBundle @relation(fields: [bundleId], references: [id], onDelete: Restrict)
-  artifact          Artifact     @relation(fields: [artifactId], references: [id], onDelete: Restrict)
-  content           ContentBlob  @relation(fields: [contentHash], references: [hash], onDelete: Restrict)
+  artifact          Artifact       @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+  content           ContentBlob    @relation(fields: [contentHash], references: [hash], onDelete: Restrict)
 
   @@id([bundleId, artifactId])
   @@map("bundle_artifacts")
 }
 
 model Comment {
-  id              String       @id @default(uuid()) @db.Uuid
-  bundleId        String       @map("bundle_id") @db.Uuid
-  artifactId      String?      @map("artifact_id") @db.Uuid
-  authorId        String       @map("author_id") @db.Uuid
-  body            String
-  blocking        Boolean      @default(false)
-  anchor          Json?
-  status          String       @default("OPEN") @db.VarChar(20)
-  resolvedById    String?      @map("resolved_by_id") @db.Uuid
-  resolution      String?
-  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  resolvedAt      DateTime?    @map("resolved_at") @db.Timestamptz(3)
-  bundle          ProposedBundle @relation(fields: [bundleId], references: [id], onDelete: Restrict)
+  id           String         @id @default(uuid()) @db.Uuid
+  bundleId     String         @map("bundle_id") @db.Uuid
+  artifactId   String?        @map("artifact_id") @db.Uuid
+  authorId     String         @map("author_id") @db.Uuid
+  body         String
+  blocking     Boolean        @default(false)
+  anchor       Json?
+  status       String         @default("OPEN") @db.VarChar(20)
+  resolvedById String?        @map("resolved_by_id") @db.Uuid
+  resolution   String?
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  resolvedAt   DateTime?      @map("resolved_at") @db.Timestamptz(3)
+  bundle       ProposedBundle @relation(fields: [bundleId], references: [id], onDelete: Restrict)
 
   @@index([bundleId, status, blocking], map: "comments_blocking_idx")
   @@map("comments")
 }
 
 model ValidationRun {
-  id                 String          @id @default(uuid()) @db.Uuid
-  bundleId           String          @map("bundle_id") @db.Uuid
-  bundleHash         String          @map("bundle_hash") @db.Char(64)
-  validator          String          @db.VarChar(100)
-  version            String          @db.VarChar(80)
-  environmentHash    String          @map("environment_hash") @db.Char(64)
-  state              ValidationState @default(QUEUED)
-  summary            String?         @db.VarChar(1000)
-  outputHash         String?         @map("output_hash") @db.Char(64)
-  approvalSensitive  Boolean         @default(true) @map("approval_sensitive")
-  expiresAt          DateTime?       @map("expires_at") @db.Timestamptz(3)
-  startedAt          DateTime?       @map("started_at") @db.Timestamptz(3)
-  finishedAt         DateTime?       @map("finished_at") @db.Timestamptz(3)
-  bundle             ProposedBundle  @relation(fields: [bundleId], references: [id], onDelete: Restrict)
+  id                String          @id @default(uuid()) @db.Uuid
+  bundleId          String          @map("bundle_id") @db.Uuid
+  bundleHash        String          @map("bundle_hash") @db.Char(64)
+  validator         String          @db.VarChar(100)
+  version           String          @db.VarChar(80)
+  environmentHash   String          @map("environment_hash") @db.Char(64)
+  state             ValidationState @default(QUEUED)
+  summary           String?         @db.VarChar(1000)
+  outputHash        String?         @map("output_hash") @db.Char(64)
+  approvalSensitive Boolean         @default(true) @map("approval_sensitive")
+  expiresAt         DateTime?       @map("expires_at") @db.Timestamptz(3)
+  startedAt         DateTime?       @map("started_at") @db.Timestamptz(3)
+  finishedAt        DateTime?       @map("finished_at") @db.Timestamptz(3)
+  bundle            ProposedBundle  @relation(fields: [bundleId], references: [id], onDelete: Restrict)
 
   @@unique([bundleId, validator, version, environmentHash])
   @@map("validation_runs")
 }
 
 model Approval {
-  id                  String    @id @default(uuid()) @db.Uuid
-  bundleId            String    @map("bundle_id") @db.Uuid
-  bundleHash          String    @map("bundle_hash") @db.Char(64)
-  baseCommit          String    @map("base_commit") @db.Char(40)
-  validationPolicyHash String   @map("validation_policy_hash") @db.Char(64)
-  approvedById        String    @map("approved_by_id") @db.Uuid
-  sessionId           String    @map("session_id") @db.Uuid
-  permissionSnapshot  Json      @map("permission_snapshot")
-  approvedAt          DateTime  @default(now()) @map("approved_at") @db.Timestamptz(3)
-  invalidatedAt       DateTime? @map("invalidated_at") @db.Timestamptz(3)
-  invalidationReason  String?   @map("invalidation_reason") @db.VarChar(500)
-  bundle              ProposedBundle @relation(fields: [bundleId], references: [id], onDelete: Restrict)
-  publicationRequests PublicationRequest[]
+  id                   String               @id @default(uuid()) @db.Uuid
+  bundleId             String               @map("bundle_id") @db.Uuid
+  bundleHash           String               @map("bundle_hash") @db.Char(64)
+  baseCommit           String               @map("base_commit") @db.Char(40)
+  validationPolicyHash String               @map("validation_policy_hash") @db.Char(64)
+  approvedById         String               @map("approved_by_id") @db.Uuid
+  sessionId            String               @map("session_id") @db.Uuid
+  permissionSnapshot   Json                 @map("permission_snapshot")
+  approvedAt           DateTime             @default(now()) @map("approved_at") @db.Timestamptz(3)
+  invalidatedAt        DateTime?            @map("invalidated_at") @db.Timestamptz(3)
+  invalidationReason   String?              @map("invalidation_reason") @db.VarChar(500)
+  bundle               ProposedBundle       @relation(fields: [bundleId], references: [id], onDelete: Restrict)
+  publicationRequests  PublicationRequest[]
 
   @@index([bundleId, invalidatedAt], map: "approvals_valid_idx")
   @@map("approvals")
@@ -898,48 +898,90 @@ model PublicationRequest {
 }
 
 model PublicationStep {
-  id          String    @id @default(uuid()) @db.Uuid
-  requestId   String    @map("request_id") @db.Uuid
-  step        String    @db.VarChar(80)
-  attempt     Int
-  fence       BigInt
-  externalId  String?   @map("external_id") @db.VarChar(300)
-  state       String    @db.VarChar(30)
-  inputHash   String    @map("input_hash") @db.Char(64)
-  outputHash  String?   @map("output_hash") @db.Char(64)
-  startedAt   DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
-  finishedAt  DateTime? @map("finished_at") @db.Timestamptz(3)
-  request     PublicationRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  id         String             @id @default(uuid()) @db.Uuid
+  requestId  String             @map("request_id") @db.Uuid
+  step       String             @db.VarChar(80)
+  attempt    Int
+  fence      BigInt
+  externalId String?            @map("external_id") @db.VarChar(300)
+  state      String             @db.VarChar(30)
+  inputHash  String             @map("input_hash") @db.Char(64)
+  outputHash String?            @map("output_hash") @db.Char(64)
+  startedAt  DateTime           @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt DateTime?          @map("finished_at") @db.Timestamptz(3)
+  request    PublicationRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
 
   @@unique([requestId, step, attempt])
   @@map("publication_steps")
 }
 
 model Publication {
-  id                    String    @id @default(uuid()) @db.Uuid
-  situationId           String    @map("situation_id") @db.Uuid
-  bundleId              String?   @map("bundle_id") @db.Uuid
-  requestId             String?   @unique @map("request_id") @db.Uuid
-  versionId             String?   @map("version_id") @db.Uuid
+  id                    String              @id @default(uuid()) @db.Uuid
+  situationId           String              @map("situation_id") @db.Uuid
+  bundleId              String?             @map("bundle_id") @db.Uuid
+  requestId             String?             @unique @map("request_id") @db.Uuid
+  rollbackRequestId     String?             @unique @map("rollback_request_id") @db.Uuid
+  versionId             String?             @map("version_id") @db.Uuid
   kind                  SnapshotKind
-  commitSha             String    @map("commit_sha") @db.Char(40)
-  manifestHash          String    @map("manifest_hash") @db.Char(64)
-  releaseId             String    @map("release_id") @db.VarChar(200)
-  previewReleaseId      String?   @map("preview_release_id") @db.VarChar(200)
-  previousPublicationId String?   @map("previous_publication_id") @db.Uuid
-  publishedById         String?   @map("published_by_id") @db.Uuid
-  cutoverAt             DateTime? @map("cutover_at") @db.Timestamptz(3)
-  healthState           String    @map("health_state") @db.VarChar(30)
-  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  situation             Situation @relation("SituationPublications", fields: [situationId], references: [id], onDelete: Restrict)
-  currentForSituation   Situation? @relation("CurrentPublication")
+  commitSha             String              @map("commit_sha") @db.Char(40)
+  manifestHash          String              @map("manifest_hash") @db.Char(64)
+  releaseId             String              @map("release_id") @db.VarChar(200)
+  previewReleaseId      String?             @map("preview_release_id") @db.VarChar(200)
+  previousPublicationId String?             @map("previous_publication_id") @db.Uuid
+  publishedById         String?             @map("published_by_id") @db.Uuid
+  cutoverAt             DateTime?           @map("cutover_at") @db.Timestamptz(3)
+  healthState           String              @map("health_state") @db.VarChar(30)
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  situation             Situation           @relation("SituationPublications", fields: [situationId], references: [id], onDelete: Restrict)
+  currentForSituation   Situation?          @relation("CurrentPublication")
   request               PublicationRequest? @relation(fields: [requestId], references: [id], onDelete: Restrict)
-  version               SituationVersion? @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  version               SituationVersion?   @relation(fields: [versionId], references: [id], onDelete: Restrict)
 
   @@unique([commitSha, situationId])
   @@index([versionId], map: "publications_version_idx")
   @@index([situationId, createdAt], map: "publications_timeline_idx")
   @@map("publications")
+}
+
+model RollbackRequest {
+  id                           String               @id @default(uuid()) @db.Uuid
+  rollbackUuid                 String               @unique @map("rollback_uuid") @db.Uuid
+  idempotencyKey               String               @map("idempotency_key") @db.VarChar(120)
+  targetEnvironment            String               @map("target_environment") @db.VarChar(50)
+  situationId                  String               @map("situation_id") @db.Uuid
+  targetPublicationId          String               @map("target_publication_id") @db.Uuid
+  expectedCurrentPublicationId String               @map("expected_current_publication_id") @db.Uuid
+  requestedById                String               @map("requested_by_id") @db.Uuid
+  reason                       String               @db.VarChar(500)
+  state                        PublicationSagaState @default(REQUESTED)
+  currentStep                  String               @default("REQUESTED") @map("current_step") @db.VarChar(80)
+  errorClass                   String?              @map("error_class") @db.VarChar(100)
+  reconciliationReason         String?              @map("reconciliation_reason") @db.VarChar(500)
+  createdAt                    DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                    DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  steps                        RollbackStep[]
+
+  @@unique([requestedById, idempotencyKey])
+  @@index([targetEnvironment, state], map: "rollback_requests_active_idx")
+  @@map("rollback_requests")
+}
+
+model RollbackStep {
+  id         String          @id @default(uuid()) @db.Uuid
+  requestId  String          @map("request_id") @db.Uuid
+  step       String          @db.VarChar(80)
+  attempt    Int
+  fence      BigInt
+  externalId String?         @map("external_id") @db.VarChar(300)
+  state      String          @db.VarChar(30)
+  inputHash  String          @map("input_hash") @db.Char(64)
+  outputHash String?         @map("output_hash") @db.Char(64)
+  startedAt  DateTime        @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt DateTime?       @map("finished_at") @db.Timestamptz(3)
+  request    RollbackRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+
+  @@unique([requestId, step, attempt])
+  @@map("rollback_steps")
 }
 
 model ArchiveRecord {
@@ -957,24 +999,24 @@ model ArchiveRecord {
 }
 
 model AuditEvent {
-  id                    String    @id @default(uuid()) @db.Uuid
-  actorType             IdentityType @map("actor_type")
-  actorId               String?   @map("actor_id") @db.Uuid
-  permissionSnapshot    Json?     @map("permission_snapshot")
-  action                String    @db.VarChar(120)
-  targetType            String    @map("target_type") @db.VarChar(60)
-  targetId              String?   @map("target_id") @db.VarChar(120)
-  targetVersion         String?   @map("target_version") @db.VarChar(120)
-  requestId             String?   @map("request_id") @db.Uuid
-  correlationId         String    @map("correlation_id") @db.Uuid
-  ipHash                String?   @map("ip_hash") @db.Char(64)
-  userAgentClass        String?   @map("user_agent_class") @db.VarChar(80)
-  beforeMetadata        Json?     @map("before_metadata")
-  afterMetadata         Json?     @map("after_metadata")
-  outcome               String    @db.VarChar(30)
-  reason                String?   @db.VarChar(500)
-  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  actor                 User?     @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  id                 String       @id @default(uuid()) @db.Uuid
+  actorType          IdentityType @map("actor_type")
+  actorId            String?      @map("actor_id") @db.Uuid
+  permissionSnapshot Json?        @map("permission_snapshot")
+  action             String       @db.VarChar(120)
+  targetType         String       @map("target_type") @db.VarChar(60)
+  targetId           String?      @map("target_id") @db.VarChar(120)
+  targetVersion      String?      @map("target_version") @db.VarChar(120)
+  requestId          String?      @map("request_id") @db.Uuid
+  correlationId      String       @map("correlation_id") @db.Uuid
+  ipHash             String?      @map("ip_hash") @db.Char(64)
+  userAgentClass     String?      @map("user_agent_class") @db.VarChar(80)
+  beforeMetadata     Json?        @map("before_metadata")
+  afterMetadata      Json?        @map("after_metadata")
+  outcome            String       @db.VarChar(30)
+  reason             String?      @db.VarChar(500)
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  actor              User?        @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
 
   @@index([actorId, createdAt], map: "audit_events_actor_idx")
   @@index([targetType, targetId, createdAt], map: "audit_events_target_idx")
@@ -983,14 +1025,14 @@ model AuditEvent {
 }
 
 model IdempotencyKey {
-  id           String    @id @default(uuid()) @db.Uuid
-  actorId      String    @map("actor_id") @db.Uuid
-  route        String    @db.VarChar(160)
-  key          String    @db.VarChar(120)
-  requestHash  String    @map("request_hash") @db.Char(64)
-  responseRef  String?   @map("response_ref") @db.VarChar(160)
-  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  id          String   @id @default(uuid()) @db.Uuid
+  actorId     String   @map("actor_id") @db.Uuid
+  route       String   @db.VarChar(160)
+  key         String   @db.VarChar(120)
+  requestHash String   @map("request_hash") @db.Char(64)
+  responseRef String?  @map("response_ref") @db.VarChar(160)
+  expiresAt   DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([actorId, route, key])
   @@index([expiresAt], map: "idempotency_keys_expiry_idx")
@@ -998,14 +1040,14 @@ model IdempotencyKey {
 }
 
 model SystemIncident {
-  id          String    @id @default(uuid()) @db.Uuid
-  severity    String    @db.VarChar(20)
-  type        String    @db.VarChar(80)
-  state       String    @db.VarChar(30)
-  evidence    Json?
-  detectedAt  DateTime  @default(now()) @map("detected_at") @db.Timestamptz(3)
-  resolvedAt  DateTime? @map("resolved_at") @db.Timestamptz(3)
-  resolvedById String?  @map("resolved_by_id") @db.Uuid
+  id           String    @id @default(uuid()) @db.Uuid
+  severity     String    @db.VarChar(20)
+  type         String    @db.VarChar(80)
+  state        String    @db.VarChar(30)
+  evidence     Json?
+  detectedAt   DateTime  @default(now()) @map("detected_at") @db.Timestamptz(3)
+  resolvedAt   DateTime? @map("resolved_at") @db.Timestamptz(3)
+  resolvedById String?   @map("resolved_by_id") @db.Uuid
 
   @@index([state, severity, detectedAt], map: "system_incidents_open_idx")
   @@map("system_incidents")

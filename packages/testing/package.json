@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@situation-studio/db": "workspace:*",
+    "@situation-studio/domain": "workspace:*",
     "gray-matter": "4.0.3",
     "yaml": "2.9.0"
   },

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { RenderedGuidance } from "@/components/rendered-guidance";
 
 type Props = {
   situationId: string;
@@ -13,6 +14,7 @@ type Props = {
   } | null;
   userId: string;
   artifact: { id: string; body: string } | null;
+  displayedArtifactState: "PUBLISHED" | "DRAFT" | "PROPOSAL";
   publishedBody: string | null;
   revision: number | null;
   csrfToken: string;
@@ -22,27 +24,56 @@ type Props = {
     comments: { id: string; body: string; blocking: boolean }[];
   } | null;
   approvalId: string | null;
-  publicationRequest: { id: string; state: string } | null;
+  publicationRequest: {
+    id: string;
+    state: string;
+    previewCommitSha: string | null;
+    finalConfirmed: boolean;
+  } | null;
   permissions: string[];
   lifecycle: string;
   rollbackTarget: { id: string; commitSha: string } | null;
+  rollbackRequest: { id: string; state: string; currentStep: string } | null;
 };
 
 export function WorkspaceEditor(props: Props) {
-  const [body, setBody] = useState(props.artifact?.body ?? "");
-  const [status, setStatus] = useState("All saved");
-  const [archiveReason, setArchiveReason] = useState("");
-  const [commentBody, setCommentBody] = useState("");
-  const [blockingComment, setBlockingComment] = useState(true);
   const ownsCheckout =
     props.checkout?.holderUserId === props.userId &&
     props.checkout.custody === "USER";
-  const canEdit =
+  const canEdit = Boolean(
     ownsCheckout &&
     props.permissions.includes("draft.update") &&
     props.draftId &&
     props.artifact &&
-    props.revision !== null;
+    props.revision !== null,
+  );
+  const [body, setBody] = useState(props.artifact?.body ?? "");
+  const [checkInPending, setCheckInPending] = useState(false);
+  const hasUnsavedChanges = body !== (props.artifact?.body ?? "");
+  const [status, setStatus] = useState(
+    canEdit
+      ? `Draft revision ${props.revision} · ready to edit`
+      : props.displayedArtifactState === "PUBLISHED"
+        ? "Published baseline · read-only"
+        : `${props.displayedArtifactState === "PROPOSAL" ? "Proposal" : "Draft"} candidate revision ${props.revision} · read-only · not published`,
+  );
+  const [view, setView] = useState<"guidance" | "source">("guidance");
+  const [sourceExpanded, setSourceExpanded] = useState(false);
+  const expandSourceButtonRef = useRef<HTMLButtonElement>(null);
+  const closeSourceButtonRef = useRef<HTMLButtonElement>(null);
+  const sourcePanelRef = useRef<HTMLDivElement>(null);
+  const [archiveReason, setArchiveReason] = useState("");
+  const [lifecycleAttempted, setLifecycleAttempted] = useState(false);
+  const [commentBody, setCommentBody] = useState("");
+  const [blockingComment, setBlockingComment] = useState(true);
+  const lifecycleReasonError =
+    lifecycleAttempted && archiveReason.trim().length < 8
+      ? "Enter a specific reason of at least 8 characters."
+      : "";
+  const closeExpandedSource = useCallback(() => {
+    setSourceExpanded(false);
+    window.requestAnimationFrame(() => expandSourceButtonRef.current?.focus());
+  }, []);
 
   useEffect(() => {
     if (!ownsCheckout || !props.checkout) return;
@@ -65,6 +96,41 @@ export function WorkspaceEditor(props: Props) {
     }, 60_000);
     return () => window.clearInterval(timer);
   }, [ownsCheckout, props.checkout, props.csrfToken]);
+
+  useEffect(() => {
+    if (!sourceExpanded) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeSourceButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeExpandedSource();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        sourcePanelRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeExpandedSource, sourceExpanded]);
 
   async function checkout() {
     setStatus("Acquiring exclusive checkout…");
@@ -124,6 +190,42 @@ export function WorkspaceEditor(props: Props) {
             ? "Checkout expired or transferred."
             : "Save failed.",
       );
+  }
+
+  async function checkIn() {
+    if (!ownsCheckout || !props.checkout) return;
+    if (
+      hasUnsavedChanges &&
+      !window.confirm(
+        "Check in and discard your unsaved source changes? Saved revisions will remain available.",
+      )
+    ) {
+      setStatus("Check-in cancelled · your checkout remains active");
+      return;
+    }
+
+    setCheckInPending(true);
+    setStatus("Checking in and releasing the exclusive checkout…");
+    const response = await fetch(
+      `/api/checkouts/${props.checkout.id}/release`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": props.csrfToken,
+        },
+        body: JSON.stringify({ fencingToken: props.checkout.fencingToken }),
+      },
+    );
+    if (response.ok) location.reload();
+    else {
+      setCheckInPending(false);
+      setStatus(
+        response.status === 423
+          ? "Checkout expired or transferred · reload to see the current owner"
+          : "Check-in failed · your checkout remains active",
+      );
+    }
   }
 
   async function review() {
@@ -209,7 +311,31 @@ export function WorkspaceEditor(props: Props) {
     else setStatus("Final publication confirmation failed.");
   }
 
+  const publicationPending =
+    props.publicationRequest &&
+    ![
+      "AWAITING_CONFIRMATION",
+      "FAILED_PREVIEW",
+      "RECONCILIATION_REQUIRED",
+      "RECONCILED",
+    ].includes(props.publicationRequest.state);
+
   async function changeLifecycle(action: "ARCHIVE" | "RESTORE") {
+    setLifecycleAttempted(true);
+    const reason = archiveReason.trim();
+    if (reason.length < 8) {
+      setStatus("A specific lifecycle reason is required before this action.");
+      return;
+    }
+    const confirmed = window.confirm(
+      action === "ARCHIVE"
+        ? "Archive this situation? It will leave the active inventory until restored."
+        : "Restore this situation to its previous lifecycle state?",
+    );
+    if (!confirmed) {
+      setStatus("Lifecycle change cancelled. No request was sent.");
+      return;
+    }
     setStatus(`${action === "ARCHIVE" ? "Archiving" : "Restoring"} situation…`);
     const response = await fetch(
       `/api/situations/${props.situationId}/lifecycle`,
@@ -221,9 +347,7 @@ export function WorkspaceEditor(props: Props) {
         },
         body: JSON.stringify({
           action,
-          reason:
-            archiveReason ||
-            (action === "RESTORE" ? "Restored for renewed use." : ""),
+          reason,
         }),
       },
     );
@@ -293,36 +417,16 @@ export function WorkspaceEditor(props: Props) {
   return (
     <section className="panel editorPanel">
       <div className="panelHeader">
-        <h2>Situation artifact</h2>
+        <h2>
+          {props.displayedArtifactState === "PUBLISHED"
+            ? "Guidance"
+            : props.displayedArtifactState === "PROPOSAL"
+              ? "Proposal candidate"
+              : "Draft candidate"}
+        </h2>
       </div>
       <div className="panelBody">
-        <label className="field">
-          <span className="srOnly">Situation MDX</span>
-          <textarea
-            value={body}
-            onChange={(event) => {
-              setBody(event.target.value);
-              setStatus("Unsaved changes");
-            }}
-            readOnly={!canEdit}
-          />
-        </label>
-        {props.publishedBody !== null && props.publishedBody !== body && (
-          <details className="diffPanel">
-            <summary>Compare published and draft bytes</summary>
-            <div className="diffGrid">
-              <section>
-                <h3>Published</h3>
-                <pre>{props.publishedBody}</pre>
-              </section>
-              <section>
-                <h3>Draft revision</h3>
-                <pre>{body}</pre>
-              </section>
-            </div>
-          </details>
-        )}
-        <div className="saveBar">
+        <div className="saveBar primaryActionBar">
           <span role="status" aria-live="polite">
             {status}
           </span>
@@ -330,19 +434,40 @@ export function WorkspaceEditor(props: Props) {
             {!props.checkout &&
               props.permissions.includes("draft.update") &&
               props.lifecycle !== "ARCHIVED" && (
-                <button className="button secondary" onClick={checkout}>
+                <button className="button" type="button" onClick={checkout}>
                   Check out for editing
                 </button>
               )}
             {canEdit && (
-              <button className="button" onClick={save}>
+              <button
+                className="button"
+                type="button"
+                onClick={save}
+                disabled={checkInPending}
+              >
                 Save revision
+              </button>
+            )}
+            {ownsCheckout && (
+              <button
+                className="button secondary"
+                type="button"
+                onClick={checkIn}
+                disabled={checkInPending}
+                title="Release the checkout while preserving saved draft revisions"
+              >
+                {checkInPending ? "Checking in…" : "Check in"}
               </button>
             )}
             {ownsCheckout &&
               props.permissions.includes("ai.run") &&
               !props.bundle && (
-                <button className="button secondary" onClick={review}>
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={review}
+                  disabled={checkInPending}
+                >
                   Run complete review
                 </button>
               )}
@@ -350,6 +475,7 @@ export function WorkspaceEditor(props: Props) {
               props.permissions.includes("publication.approve") && (
                 <button
                   className="button"
+                  type="button"
                   onClick={approve}
                   disabled={props.bundle.comments.some(
                     (comment) => comment.blocking,
@@ -366,18 +492,200 @@ export function WorkspaceEditor(props: Props) {
             {props.bundle?.state === "APPROVED" &&
               props.permissions.includes("publication.publish") &&
               !props.publicationRequest && (
-                <button className="button warn" onClick={stage}>
+                <button className="button warn" type="button" onClick={stage}>
                   Stage approved bundle
                 </button>
               )}
             {props.publicationRequest?.state === "AWAITING_CONFIRMATION" &&
+              !props.publicationRequest.finalConfirmed &&
               props.permissions.includes("publication.publish") && (
-                <button className="button warn" onClick={confirmPublication}>
+                <button
+                  className="button warn"
+                  type="button"
+                  onClick={confirmPublication}
+                >
                   Publish this reviewed bundle
                 </button>
               )}
+            {publicationPending && (
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => location.reload()}
+              >
+                Refresh publication status
+              </button>
+            )}
           </div>
         </div>
+
+        {props.publicationRequest && (
+          <p className="artifactStateNotice candidate" role="status">
+            {props.publicationRequest.state === "AWAITING_CONFIRMATION"
+              ? props.publicationRequest.finalConfirmed
+                ? "Final confirmation recorded. The trusted publisher is promoting the exact previewed release."
+                : "Preview verified. Inspect the protected preview, then explicitly publish this exact commit."
+              : props.publicationRequest.state === "FAILED_PREVIEW"
+                ? "Preview staging failed before cutover. The live release is unchanged and your checkout has been returned."
+                : props.publicationRequest.state === "RECONCILIATION_REQUIRED"
+                  ? "Cutover needs reconciliation. Further publication is blocked until Git, the live marker, and Studio agree."
+                  : props.publicationRequest.state === "RECONCILED"
+                    ? "Publication reconciled against the live release marker."
+                    : `Publisher stage: ${props.publicationRequest.state.toLowerCase().replaceAll("_", " ")}.`}{" "}
+            {props.publicationRequest.previewCommitSha && (
+              <>
+                Candidate commit{" "}
+                <code>
+                  {props.publicationRequest.previewCommitSha.slice(0, 12)}
+                </code>
+                .{" "}
+                {props.publicationRequest.state === "AWAITING_CONFIRMATION" &&
+                  !props.publicationRequest.finalConfirmed && (
+                    <a
+                      href="https://leadership-preview.timsprototypes.com"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open protected preview
+                    </a>
+                  )}
+              </>
+            )}
+          </p>
+        )}
+        {props.rollbackRequest && (
+          <p className="artifactStateNotice candidate" role="status">
+            {props.rollbackRequest.state === "RECONCILED"
+              ? "Rollback reconciled. The selected prior tree is live as a new audited publication."
+              : props.rollbackRequest.state === "FAILED_PREVIEW"
+                ? "Rollback preview failed before cutover. The live release is unchanged."
+                : props.rollbackRequest.state === "RECONCILIATION_REQUIRED"
+                  ? "Rollback cutover needs reconciliation before another publication action."
+                  : `Rollback in progress: ${props.rollbackRequest.currentStep.toLowerCase().replaceAll("_", " ")}.`}
+          </p>
+        )}
+
+        <p
+          className={`artifactStateNotice ${
+            props.displayedArtifactState === "PUBLISHED"
+              ? "published"
+              : "candidate"
+          }`}
+        >
+          {props.displayedArtifactState === "PUBLISHED"
+            ? "Published guidance · this rendered view and Source MDX are the live baseline."
+            : props.displayedArtifactState === "PROPOSAL"
+              ? `Proposal candidate revision ${props.revision} · not published. The published baseline remains separate below.`
+              : `Draft candidate revision ${props.revision} · not published. The published baseline remains separate below.`}
+        </p>
+
+        <div className="viewToolbar">
+          <div aria-label="Guidance view" className="viewTabs" role="tablist">
+            <button
+              aria-controls="guidance-view"
+              aria-selected={view === "guidance"}
+              className={view === "guidance" ? "active" : undefined}
+              id="guidance-tab"
+              role="tab"
+              type="button"
+              onClick={() => setView("guidance")}
+            >
+              Rendered guidance
+            </button>
+            <button
+              aria-controls="source-view"
+              aria-selected={view === "source"}
+              className={view === "source" ? "active" : undefined}
+              id="source-tab"
+              role="tab"
+              type="button"
+              onClick={() => setView("source")}
+            >
+              Source MDX
+            </button>
+          </div>
+          {view === "source" && !sourceExpanded && (
+            <button
+              ref={expandSourceButtonRef}
+              className="button secondary compactButton"
+              type="button"
+              onClick={() => setSourceExpanded(true)}
+            >
+              Expand source
+            </button>
+          )}
+        </div>
+
+        {view === "guidance" ? (
+          <div
+            aria-labelledby="guidance-tab"
+            id="guidance-view"
+            role="tabpanel"
+            tabIndex={0}
+          >
+            <RenderedGuidance body={body} />
+          </div>
+        ) : (
+          <div
+            ref={sourcePanelRef}
+            aria-label={sourceExpanded ? "Expanded Source MDX" : undefined}
+            aria-labelledby={sourceExpanded ? undefined : "source-tab"}
+            aria-modal={sourceExpanded || undefined}
+            className={`sourcePanel ${sourceExpanded ? "expanded" : ""}`}
+            id="source-view"
+            role={sourceExpanded ? "dialog" : "tabpanel"}
+          >
+            {sourceExpanded && (
+              <header className="expandedSourceHeader">
+                <div>
+                  <p className="eyebrow">Exact artifact bytes</p>
+                  <h2>Source MDX</h2>
+                </div>
+                <button
+                  ref={closeSourceButtonRef}
+                  className="button secondary"
+                  type="button"
+                  onClick={closeExpandedSource}
+                >
+                  Close expanded source
+                </button>
+              </header>
+            )}
+            <label className="field" htmlFor="situation-source">
+              <span className="srOnly">Situation MDX</span>
+              <textarea
+                className="sourceTextarea"
+                id="situation-source"
+                value={body}
+                onChange={(event) => {
+                  const nextBody = event.target.value;
+                  setBody(nextBody);
+                  setStatus(
+                    nextBody === (props.artifact?.body ?? "")
+                      ? `Draft revision ${props.revision} · ready to edit`
+                      : "Unsaved draft changes · save them or check in to discard them",
+                  );
+                }}
+                readOnly={!canEdit}
+              />
+            </label>
+          </div>
+        )}
+        {props.publishedBody !== null && props.publishedBody !== body && (
+          <details className="diffPanel">
+            <summary>Compare published and draft bytes</summary>
+            <div className="diffGrid">
+              <section>
+                <h3>Published</h3>
+                <pre>{props.publishedBody}</pre>
+              </section>
+              <section>
+                <h3>Draft revision</h3>
+                <pre>{body}</pre>
+              </section>
+            </div>
+          </details>
+        )}
         {props.bundle && props.permissions.includes("proposal.review") && (
           <section className="commentPanel">
             <h3>Bundle review comments</h3>
@@ -428,22 +736,59 @@ export function WorkspaceEditor(props: Props) {
           </section>
         )}
         {props.permissions.includes("situation.archive") && !props.checkout && (
-          <div className="lifecycleBar">
-            <label className="field">
-              Lifecycle reason
+          <section className="dangerArea" aria-labelledby="lifecycle-heading">
+            <div>
+              <p className="eyebrow">Separated destructive action</p>
+              <h3 id="lifecycle-heading">
+                {props.lifecycle === "ARCHIVED"
+                  ? "Restore situation"
+                  : "Archive situation"}
+              </h3>
+              <p>
+                {props.lifecycle === "ARCHIVED"
+                  ? "Restoration returns this situation to its previous lifecycle state and records the reason."
+                  : "Archiving removes this situation from active use without deleting its published history."}
+              </p>
+            </div>
+            <label className="field" htmlFor="lifecycle-reason">
+              Required reason
+              <span className="fieldHelp" id="lifecycle-reason-help">
+                Enter at least 8 characters. You will confirm before any request
+                is sent.
+              </span>
               <input
+                id="lifecycle-reason"
                 value={archiveReason}
-                onChange={(event) => setArchiveReason(event.target.value)}
+                onChange={(event) => {
+                  setArchiveReason(event.target.value);
+                  if (lifecycleAttempted) setLifecycleAttempted(true);
+                }}
+                onBlur={() => setLifecycleAttempted(true)}
                 placeholder={
                   props.lifecycle === "ARCHIVED"
                     ? "Reason for restoration"
                     : "Required reason for archive"
                 }
+                required
+                minLength={8}
+                maxLength={500}
+                aria-describedby={`lifecycle-reason-help${lifecycleReasonError ? " lifecycle-reason-error" : ""}`}
+                aria-invalid={lifecycleReasonError ? true : undefined}
               />
+              {lifecycleReasonError && (
+                <span className="fieldError" id="lifecycle-reason-error">
+                  {lifecycleReasonError}
+                </span>
+              )}
             </label>
             <button
-              className="button secondary"
+              className={
+                props.lifecycle === "ARCHIVED"
+                  ? "button secondary"
+                  : "button warn"
+              }
               type="button"
+              disabled={archiveReason.trim().length < 8}
               onClick={() =>
                 changeLifecycle(
                   props.lifecycle === "ARCHIVED" ? "RESTORE" : "ARCHIVE",
@@ -454,7 +799,7 @@ export function WorkspaceEditor(props: Props) {
                 ? "Restore situation"
                 : "Archive situation"}
             </button>
-          </div>
+          </section>
         )}
         {props.rollbackTarget &&
           props.permissions.includes("publication.publish") &&

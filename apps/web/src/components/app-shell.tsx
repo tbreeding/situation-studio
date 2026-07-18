@@ -1,12 +1,15 @@
 import Link from "next/link";
+import { PrimaryNavigation } from "@/components/primary-navigation";
 
 export function AppShell({
   user,
   csrfToken,
+  canAccessAdministration,
   children,
 }: {
   user: { displayName: string };
   csrfToken: string;
+  canAccessAdministration?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -15,12 +18,9 @@ export function AppShell({
         <Link className="wordmark" href="/">
           <span className="mark">S</span> Situation Studio
         </Link>
-        <nav aria-label="Primary">
-          <Link href="/">Situations</Link>
-          <Link href="/jobs">Jobs</Link>
-          <Link href="/capacity">Capacity</Link>
-          <Link href="/administration">Administration</Link>
-        </nav>
+        <PrimaryNavigation
+          canAccessAdministration={canAccessAdministration ?? false}
+        />
         <div className="account">
           <span>{user.displayName}</span>
           <form action="/auth/logout" method="post">

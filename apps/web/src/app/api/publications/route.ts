@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
+import { Prisma } from "@situation-studio/db";
 import { z } from "zod";
 import { authenticateMutation } from "@/server/auth/request";
 import { database } from "@/server/database";
@@ -83,21 +84,38 @@ export async function POST(request: NextRequest) {
   const fake = environment().PROVIDER_EXECUTION_MODE === "fake";
   const publicationUuid = randomUUID();
   let publicationRequest;
+  let checkoutAcquired = false;
   try {
     publicationRequest = await database().$transaction(
       async (transaction) => {
         await transaction.$executeRaw`SELECT id FROM situations WHERE id = ${bundle.situationId}::uuid FOR UPDATE`;
-        const checkout = await transaction.situationCheckout.findFirst({
-          where: {
-            situationId: bundle.situationId,
-            draftId: bundle.draftId,
-            holderUserId: auth.session.userId,
-            custody: "USER",
-            releasedAt: null,
-            expiresAt: { gt: new Date() },
-          },
+        const now = new Date();
+        let checkout = await transaction.situationCheckout.findFirst({
+          where: { situationId: bundle.situationId, releasedAt: null },
         });
-        if (!checkout) throw new Error("ACTIVE_PUBLISHER_CHECKOUT_REQUIRED");
+        if (
+          checkout &&
+          checkout.custody === "USER" &&
+          checkout.expiresAt <= now
+        ) {
+          await transaction.situationCheckout.update({
+            where: { id: checkout.id },
+            data: { releasedAt: now, releaseReason: "LEASE_EXPIRED" },
+          });
+          await transaction.checkoutResource.updateMany({
+            where: { checkoutId: checkout.id, releasedAt: null },
+            data: { releasedAt: now },
+          });
+          checkout = null;
+        }
+        if (
+          checkout &&
+          (checkout.draftId !== bundle.draftId ||
+            checkout.holderUserId !== auth.session.userId ||
+            checkout.custody !== "USER" ||
+            checkout.expiresAt <= now)
+        )
+          throw new Error("ACTIVE_PUBLISHER_CHECKOUT_UNAVAILABLE");
         const situation = await transaction.situation.update({
           where: { id: bundle.situationId },
           data: { fence: { increment: 1 } },
@@ -116,25 +134,47 @@ export async function POST(request: NextRequest) {
             requestedById: auth.session.userId,
           },
         });
-        const transferred = await transaction.situationCheckout.updateMany({
-          where: {
-            id: checkout.id,
-            fencingToken: checkout.fencingToken,
-            custody: "USER",
-            releasedAt: null,
-          },
-          data: {
-            custody: "PUBLISHER",
-            custodyReference: row.id,
-            mode: "PUBLISHING",
-            fencingToken: situation.fence,
-            transferReason: "PUBLICATION_STAGED",
-            renewedAt: new Date(),
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-          },
-        });
-        if (transferred.count !== 1)
-          throw new Error("PUBLISHER_CHECKOUT_TRANSFER_LOST");
+        const publisherLease = {
+          custody: "PUBLISHER" as const,
+          custodyReference: row.id,
+          mode: "PUBLISHING" as const,
+          fencingToken: situation.fence,
+          transferReason: "PUBLICATION_STAGED",
+          renewedAt: now,
+          expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+        };
+        if (checkout) {
+          const transferred = await transaction.situationCheckout.updateMany({
+            where: {
+              id: checkout.id,
+              fencingToken: checkout.fencingToken,
+              custody: "USER",
+              releasedAt: null,
+            },
+            data: publisherLease,
+          });
+          if (transferred.count !== 1)
+            throw new Error("PUBLISHER_CHECKOUT_TRANSFER_LOST");
+        } else {
+          checkoutAcquired = true;
+          const acquired = await transaction.situationCheckout.create({
+            data: {
+              situationId: bundle.situationId,
+              holderUserId: auth.session.userId,
+              draftId: bundle.draftId,
+              acquiredAt: now,
+              ...publisherLease,
+            },
+          });
+          await transaction.checkoutResource.create({
+            data: {
+              checkoutId: acquired.id,
+              situationId: bundle.situationId,
+              resourceKey: `situation:${bundle.situationId}`,
+              purpose: "PUBLISHING",
+            },
+          });
+        }
         if (fake)
           for (const [index, step] of [
             "WORKTREE_READY",
@@ -168,15 +208,48 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const raced = await database().publicationRequest.findUnique({
+        where: {
+          requestedById_idempotencyKey: {
+            requestedById: auth.session.userId,
+            idempotencyKey: key,
+          },
+        },
+      });
+      if (raced)
+        return NextResponse.json({
+          publicationRequestId: raced.id,
+          state: raced.state,
+          reused: true,
+        });
+      return NextResponse.json(
+        { error: "another publication is already being staged" },
+        { status: 423 },
+      );
+    }
+    if (
       error instanceof Error &&
       [
-        "ACTIVE_PUBLISHER_CHECKOUT_REQUIRED",
+        "ACTIVE_PUBLISHER_CHECKOUT_UNAVAILABLE",
         "PUBLISHER_CHECKOUT_TRANSFER_LOST",
       ].includes(error.message)
     )
       return NextResponse.json(
-        { error: "active checkout required" },
-        { status: 409 },
+        {
+          error:
+            error.message === "ACTIVE_PUBLISHER_CHECKOUT_UNAVAILABLE"
+              ? "another checkout owns this situation"
+              : "publisher checkout transfer failed",
+        },
+        {
+          status:
+            error.message === "ACTIVE_PUBLISHER_CHECKOUT_UNAVAILABLE"
+              ? 423
+              : 409,
+        },
       );
     throw error;
   }
@@ -188,7 +261,7 @@ export async function POST(request: NextRequest) {
     targetId: publicationRequest.id,
     targetVersion: bundle.canonicalHash,
     outcome: "SUCCEEDED",
-    after: { target: parsed.data.target, fake },
+    after: { target: parsed.data.target, fake, checkoutAcquired },
   });
   return NextResponse.json(
     {

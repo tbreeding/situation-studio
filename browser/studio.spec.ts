@@ -857,10 +857,11 @@ test("a synthetic proposal remains unmistakably separate from the published base
       page.getByRole("button", { name: "Approve exact bundle" }),
     ).toBeDisabled();
     const prepared = await database.query<{
+      id: string;
       parent_bundle_id: string;
       state: string;
     }>(
-      `SELECT parent_bundle_id, state
+      `SELECT id, parent_bundle_id, state
        FROM proposed_bundles
        WHERE parent_bundle_id = $1`,
       [bundleId],
@@ -883,7 +884,7 @@ test("a synthetic proposal remains unmistakably separate from the published base
     await database.query(
       `UPDATE proposed_bundles
        SET state = 'STALE'
-       WHERE id = $1 OR parent_bundle_id = $1`,
+       WHERE parent_bundle_id = $1`,
       [bundleId],
     );
 
@@ -943,8 +944,92 @@ test("a synthetic proposal remains unmistakably separate from the published base
     );
     expect(releasedCheckout.rows[0]?.released_at).not.toBeNull();
     expect(releasedCheckout.rows[0]?.release_reason).toBe("USER_CHECK_IN");
+
+    if (testInfo.project.name === "desktop-1280") {
+      const preparedBundleId = prepared.rows[0]?.id;
+      expect(preparedBundleId).toBeDefined();
+      if (!preparedBundleId) return;
+      await database.query(
+        `UPDATE proposed_bundles
+         SET state = 'HUMAN_REVIEW'
+         WHERE id = $1`,
+        [preparedBundleId],
+      );
+      await page.getByRole("button", { name: "Sign out" }).click();
+      await login(page);
+      await page.goto(`/situations/${slug}`);
+      const [resolveResponse] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.request().method() === "POST" &&
+            response.url().includes("/api/comments/") &&
+            response.url().endsWith("/resolve"),
+        ),
+        page.getByRole("button", { name: "Resolve" }).click(),
+      ]);
+      expect(resolveResponse.status()).toBe(200);
+      const [approvalResponse] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.request().method() === "POST" &&
+            response.url().endsWith(`/api/bundles/${preparedBundleId}/approve`),
+        ),
+        page.getByRole("button", { name: "Approve exact bundle" }).click(),
+      ]);
+      expect(approvalResponse.status()).toBe(200);
+      await expect(
+        page.getByRole("button", { name: "Stage approved bundle" }),
+      ).toBeVisible();
+      await expect(page.locator(".workspaceSummary")).toContainText(
+        "No active owner",
+      );
+      const [stageResponse] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.request().method() === "POST" &&
+            response.url().endsWith("/api/publications"),
+        ),
+        page.getByRole("button", { name: "Stage approved bundle" }).click(),
+      ]);
+      expect(stageResponse.status()).toBe(201);
+      const staged = await database.query<{
+        custody: string;
+        state: string;
+      }>(
+        `SELECT checkout.custody, request.state
+         FROM publication_requests AS request
+         JOIN situation_checkouts AS checkout
+           ON checkout.custody_reference = request.id
+         WHERE request.bundle_id = $1
+           AND checkout.released_at IS NULL`,
+        [preparedBundleId],
+      );
+      expect(staged.rows).toEqual([
+        { custody: "PUBLISHER", state: "REQUESTED" },
+      ]);
+    }
   } finally {
     const releasedAt = new Date();
+    if (bundleId)
+      await database.query(
+        `UPDATE publication_requests
+         SET state = 'FAILED_PREVIEW',
+             current_step = 'DESKTOP_UX_FIXTURE_CLEANUP',
+             error_class = 'TEST_FIXTURE_CLEANUP',
+             reconciliation_reason = 'Disposable browser fixture completed.'
+         WHERE bundle_id IN (
+           SELECT id
+           FROM proposed_bundles
+           WHERE id = $1 OR parent_bundle_id = $1
+         )
+           AND state IN (
+             'REQUESTED', 'WORKTREE_READY', 'APPLIED', 'VALIDATED',
+             'COMMITTED', 'PUSHED', 'PREVIEW_BUILT', 'PREVIEW_VERIFIED',
+             'AWAITING_CONFIRMATION', 'CUTOVER', 'LIVE_VERIFIED',
+             'RECONCILIATION_REQUIRED'
+           )`,
+        [bundleId],
+      );
     if (situationId) {
       await database.query(
         `UPDATE checkout_resources AS resource

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   RepositoryPublisher,
   type RepositoryPublication,
+  type RepositoryPublisherConfig,
 } from "../src/repository";
 
 const execute = promisify(execFile);
@@ -25,7 +27,9 @@ afterEach(async () => {
   );
 });
 
-async function fixture() {
+async function fixture(
+  publisherOverrides: Partial<RepositoryPublisherConfig> = {},
+) {
   const root = await mkdtemp(path.join(tmpdir(), "studio-publisher-test-"));
   temporaryRoots.push(root);
   const source = path.join(root, "source");
@@ -92,6 +96,7 @@ async function fixture() {
         args: ["-e", "process.exit(0)"],
       },
     ],
+    ...publisherOverrides,
   });
   return {
     root,
@@ -198,5 +203,46 @@ describe("trusted repository publisher", () => {
     await expect(item.publisher.apply(item.publication)).rejects.toThrow(
       "base hash changed",
     );
+  });
+
+  it("activates and health-checks the exact preview and live release", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200).end("healthy");
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("Fixture health server did not bind.");
+      const item = await fixture({
+        activationBinary: "/usr/bin/true",
+        previewProcessName: "preview-fixture",
+        liveProcessName: "live-fixture",
+        previewHealthUrl: `http://127.0.0.1:${address.port}/preview`,
+        liveHealthUrl: `http://127.0.0.1:${address.port}/live`,
+      });
+      await item.publisher.prepareWorktree(item.publication);
+      await item.publisher.apply(item.publication);
+      await item.publisher.validate(item.publication);
+      const commitSha = await item.publisher.commit(item.publication);
+      await item.publisher.pushPreview(item.publication, commitSha);
+      const releasePath = await item.publisher.buildPreview(
+        item.publication,
+        commitSha,
+      );
+      await item.publisher.verifyPreview(
+        item.publication,
+        commitSha,
+        releasePath,
+      );
+      await item.publisher.cutover(item.publication, commitSha, releasePath);
+      await item.publisher.verifyLive(item.publication, commitSha, releasePath);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 });

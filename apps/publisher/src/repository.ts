@@ -15,6 +15,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   canonicalBundleHash,
   isApprovedArtifactPath,
@@ -57,6 +58,11 @@ export type RepositoryPublisherConfig = {
   liveLink: string;
   validationCommands: readonly Command[];
   validationEnvironment?: Readonly<Record<string, string>>;
+  activationBinary?: string;
+  previewProcessName?: string;
+  liveProcessName?: string;
+  previewHealthUrl?: string;
+  liveHealthUrl?: string;
 };
 
 export type ReleaseMarker = {
@@ -202,6 +208,16 @@ async function atomicSymlink(linkPath: string, target: string) {
   await rename(temporary, linkPath);
 }
 
+async function linkedTarget(linkPath: string) {
+  try {
+    const target = await readlink(linkPath);
+    return path.resolve(path.dirname(linkPath), target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 async function extractCommit(worktree: string, releasePath: string) {
   const temporary = await mkdtemp(path.join(tmpdir(), "studio-release-"));
   try {
@@ -234,6 +250,85 @@ async function attachRuntimeDependencies(
 
 export class RepositoryPublisher {
   constructor(private readonly config: RepositoryPublisherConfig) {}
+
+  private activation(kind: "preview" | "live") {
+    const processName =
+      kind === "preview"
+        ? this.config.previewProcessName
+        : this.config.liveProcessName;
+    const healthUrl =
+      kind === "preview"
+        ? this.config.previewHealthUrl
+        : this.config.liveHealthUrl;
+    const configured = [
+      this.config.activationBinary,
+      this.config.previewProcessName,
+      this.config.liveProcessName,
+      this.config.previewHealthUrl,
+      this.config.liveHealthUrl,
+    ];
+    if (configured.every((item) => item === undefined)) return null;
+    if (configured.some((item) => item === undefined))
+      throw new Error(
+        "Publisher release activation is only partly configured.",
+      );
+    return {
+      binary: this.config.activationBinary!,
+      processName: processName!,
+      healthUrl: healthUrl!,
+    };
+  }
+
+  private async waitForHealth(kind: "preview" | "live") {
+    const activation = this.activation(kind);
+    if (!activation) return;
+    let lastFailure = "no response";
+    for (let attempt = 1; attempt <= 20; attempt += 1) {
+      try {
+        const response = await fetch(activation.healthUrl, {
+          redirect: "manual",
+          signal: AbortSignal.timeout(3_000),
+        });
+        if (response.ok) return;
+        lastFailure = `HTTP ${response.status}`;
+      } catch (error) {
+        lastFailure = error instanceof Error ? error.message : "request failed";
+      }
+      await delay(1_000);
+    }
+    throw new Error(
+      `${kind === "preview" ? "Preview" : "Live"} release health failed: ${lastFailure}`,
+    );
+  }
+
+  private async restart(kind: "preview" | "live") {
+    const activation = this.activation(kind);
+    if (!activation) return;
+    await runCommand({
+      binary: activation.binary,
+      args: ["restart", activation.processName, "--update-env"],
+    });
+  }
+
+  private async activateLink(
+    kind: "preview" | "live",
+    linkPath: string,
+    releasePath: string,
+  ) {
+    const previous = await linkedTarget(linkPath);
+    await atomicSymlink(linkPath, releasePath);
+    try {
+      await this.restart(kind);
+      await this.waitForHealth(kind);
+    } catch (error) {
+      if (previous) {
+        await atomicSymlink(linkPath, previous);
+        await this.restart(kind);
+        await this.waitForHealth(kind);
+      } else await rm(linkPath, { force: true });
+      throw error;
+    }
+  }
 
   private async runValidationCommands(worktree: string) {
     const validationHome = path.join(this.config.workRoot, ".validation-home");
@@ -536,7 +631,7 @@ export class RepositoryPublisher {
       await rename(buildingPath, releasePath);
     }
     await this.verifyRelease(publication, commitSha, releasePath);
-    await atomicSymlink(this.config.previewLink, releasePath);
+    await this.activateLink("preview", this.config.previewLink, releasePath);
     return releasePath;
   }
 
@@ -573,6 +668,7 @@ export class RepositoryPublisher {
       releasePath
     )
       throw new Error("Preview link does not point at the staged release.");
+    await this.waitForHealth("preview");
     return this.verifyRelease(publication, commitSha, releasePath);
   }
 
@@ -600,7 +696,7 @@ export class RepositoryPublisher {
         `${commitSha}:refs/heads/main`,
       ]);
     else if (remoteHead !== commitSha) throw new Error("REMOTE_HEAD_ADVANCED");
-    await atomicSymlink(this.config.liveLink, releasePath);
+    await this.activateLink("live", this.config.liveLink, releasePath);
   }
 
   async verifyLive(
@@ -613,6 +709,7 @@ export class RepositoryPublisher {
       path.resolve(path.dirname(this.config.liveLink), linked) !== releasePath
     )
       throw new Error("Live link does not point at the promoted release.");
+    await this.waitForHealth("live");
     return this.verifyRelease(publication, commitSha, releasePath);
   }
 
@@ -805,7 +902,7 @@ export class RepositoryPublisher {
       await rename(buildingPath, releasePath);
     }
     await this.verifyRollbackRelease(rollback, commitSha, releasePath);
-    await atomicSymlink(this.config.previewLink, releasePath);
+    await this.activateLink("preview", this.config.previewLink, releasePath);
     return releasePath;
   }
 
@@ -841,6 +938,7 @@ export class RepositoryPublisher {
       releasePath
     )
       throw new Error("Preview link does not point at the rollback release.");
+    await this.waitForHealth("preview");
     return this.verifyRollbackRelease(rollback, commitSha, releasePath);
   }
 
@@ -868,7 +966,7 @@ export class RepositoryPublisher {
         `${commitSha}:refs/heads/main`,
       ]);
     else if (remoteHead !== commitSha) throw new Error("REMOTE_HEAD_ADVANCED");
-    await atomicSymlink(this.config.liveLink, releasePath);
+    await this.activateLink("live", this.config.liveLink, releasePath);
   }
 
   async verifyRollbackLive(
@@ -881,6 +979,7 @@ export class RepositoryPublisher {
       path.resolve(path.dirname(this.config.liveLink), linked) !== releasePath
     )
       throw new Error("Live link does not point at the rollback release.");
+    await this.waitForHealth("live");
     return this.verifyRollbackRelease(rollback, commitSha, releasePath);
   }
 }

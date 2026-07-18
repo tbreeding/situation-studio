@@ -32,5 +32,19 @@ module.exports = {
       kill_timeout: 30_000,
       autorestart: true,
     },
+    {
+      name: "situation-studio-publisher",
+      cwd: currentRelease,
+      script: path.join(currentRelease, "ops/start-publisher.sh"),
+      interpreter: "/bin/bash",
+      env: {
+        NODE_ENV: "production",
+        SITUATION_STUDIO_SHARED_DIR:
+          "/home/admin/projects/situation-studio/shared",
+      },
+      max_memory_restart: "1536M",
+      kill_timeout: 30_000,
+      autorestart: true,
+    },
   ],
 };

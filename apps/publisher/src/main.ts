@@ -16,6 +16,11 @@ const schema = z
     PUBLISHER_RELEASE_ROOT: z.string().min(1),
     PUBLISHER_PREVIEW_LINK: z.string().min(1),
     PUBLISHER_LIVE_LINK: z.string().min(1),
+    PUBLISHER_ACTIVATION_BINARY: z.string().startsWith("/"),
+    PUBLISHER_PREVIEW_PROCESS: z.string().min(1),
+    PUBLISHER_LIVE_PROCESS: z.string().min(1),
+    PUBLISHER_PREVIEW_HEALTH_URL: z.string().url(),
+    PUBLISHER_LIVE_HEALTH_URL: z.string().url(),
     PUBLISHER_POLL_MS: z.coerce
       .number()
       .int()
@@ -55,6 +60,11 @@ const publisher = new RepositoryPublisher({
   releaseRoot: path.resolve(config.PUBLISHER_RELEASE_ROOT),
   previewLink: path.resolve(config.PUBLISHER_PREVIEW_LINK),
   liveLink: path.resolve(config.PUBLISHER_LIVE_LINK),
+  activationBinary: path.resolve(config.PUBLISHER_ACTIVATION_BINARY),
+  previewProcessName: config.PUBLISHER_PREVIEW_PROCESS,
+  liveProcessName: config.PUBLISHER_LIVE_PROCESS,
+  previewHealthUrl: config.PUBLISHER_PREVIEW_HEALTH_URL,
+  liveHealthUrl: config.PUBLISHER_LIVE_HEALTH_URL,
   validationCommands: [
     { binary: "pnpm", args: ["install", "--frozen-lockfile"] },
     { binary: "pnpm", args: ["lint"] },

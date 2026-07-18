@@ -371,10 +371,21 @@ export function WorkspaceEditor(props: Props) {
     )
       return;
     if (response.ok) location.reload();
-    else
+    else {
+      const result = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
       setStatus(
-        "Staging unavailable. Production publisher credentials are never used by the web process.",
+        result?.error === "another checkout owns this situation"
+          ? "Staging is blocked because another checkout owns this situation. Reload to see the current owner."
+          : result?.error === "another publication is already being staged"
+            ? "Staging is temporarily blocked while another approved bundle uses the protected preview."
+            : result?.error === "publication preconditions failed"
+              ? "Staging is blocked because this approval, validation, or exact bundle is no longer current."
+              : (result?.error ??
+                "Staging failed before publisher custody began."),
       );
+    }
   }
 
   async function confirmPublication() {

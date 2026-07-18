@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-studio_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+studio_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 studio_shared_dir="${SITUATION_STUDIO_SHARED_DIR:-/home/admin/projects/situation-studio/shared}"
 studio_env_file="${studio_shared_dir}/web.env"
 

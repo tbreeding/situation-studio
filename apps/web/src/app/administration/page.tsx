@@ -24,7 +24,7 @@ export default async function AdministrationPage() {
   ]);
   return (
     <AppShell user={session.user} csrfToken={session.csrfToken}>
-      <section className="pageIntro">
+      <section className="pageIntro administrationIntro">
         <div>
           <p className="eyebrow">Restricted operations</p>
           <h1>Administration</h1>
@@ -34,7 +34,7 @@ export default async function AdministrationPage() {
           only to permitted administrators.
         </p>
       </section>
-      <div className="workspaceGrid">
+      <div className="administrationGrid">
         <UserAdministration
           csrfToken={session.csrfToken}
           users={users.map((user) => ({
@@ -46,19 +46,19 @@ export default async function AdministrationPage() {
             isSelf: user.id === session.userId,
           }))}
         />
-        <section className="panel">
+        <section className="panel administrationAudit">
           <div className="panelHeader">
             <h2>Audit trail</h2>
           </div>
           <div className="panelBody">
-            <ul className="timeline">
+            <ul className="timeline auditTimeline">
               {audits.map((event) => (
                 <li key={event.id}>
                   <div>
                     <strong>{event.action}</strong> ·{" "}
                     {event.outcome.toLowerCase()}
                     <br />
-                    <span className="muted">
+                    <span className="muted auditMetadata">
                       {event.targetType} {event.targetId ?? ""} ·{" "}
                       {event.createdAt.toISOString()}
                     </span>
@@ -68,7 +68,7 @@ export default async function AdministrationPage() {
             </ul>
           </div>
         </section>
-        <aside className="panel">
+        <aside className="panel administrationIncidents">
           <div className="panelHeader">
             <h2>Open incidents</h2>
           </div>

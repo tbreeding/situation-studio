@@ -100,22 +100,21 @@ export function UserAdministration({
             Create invitation
           </button>
         </form>
-        <p role="status" aria-live="polite">
+        <p className="formStatus" role="status" aria-live="polite">
           {status}
         </p>
         {activationUrl && (
-          <div className="policyBanner">
-            <span>
+          <div className="policyBanner activationBanner">
+            <div className="activationDetails">
               <strong>Single-use activation link</strong>
-              <br />
-              <code>{activationUrl}</code>
-            </span>
+              <code className="activationUrl">{activationUrl}</code>
+            </div>
           </div>
         )}
-        <ul className="timeline">
+        <ul className="timeline userList">
           {users.map((user) => (
-            <li key={user.id}>
-              <div>
+            <li className="userRow" key={user.id}>
+              <div className="userSummary">
                 <strong>{user.displayName}</strong>{" "}
                 <span className="badge">{user.state}</span>
                 <br />

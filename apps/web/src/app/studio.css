@@ -423,6 +423,25 @@ p {
   gap: 1rem;
   align-items: start;
 }
+.administrationGrid {
+  display: grid;
+  grid-template-columns:
+    minmax(21rem, 0.9fr) minmax(0, 1.7fr)
+    minmax(14rem, 0.6fr);
+  gap: 1rem;
+  align-items: start;
+}
+.administrationGrid > * {
+  min-width: 0;
+}
+.administrationIntro h1 {
+  font-size: clamp(3rem, 5vw, 5.4rem);
+}
+.administrationGrid .panelBody,
+.administrationGrid form,
+.administrationGrid .stack {
+  min-width: 0;
+}
 .panel {
   border: 1px solid var(--line);
   background: rgba(255, 253, 247, 0.92);
@@ -588,6 +607,68 @@ p {
   border-radius: 50%;
   background: var(--moss);
 }
+.formStatus {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.formStatus:empty {
+  display: none;
+}
+.activationBanner {
+  display: block;
+  min-width: 0;
+  margin: 0;
+}
+.activationDetails {
+  min-width: 0;
+}
+.activationUrl {
+  display: block;
+  max-width: 100%;
+  margin-top: 0.4rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  user-select: all;
+}
+.userList {
+  min-width: 0;
+  margin: 0.4rem 0 0;
+}
+.timeline .userRow {
+  grid-template-columns: 1rem minmax(0, 1fr);
+  align-items: start;
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--line);
+}
+.timeline .userRow:first-child {
+  border-top: 0;
+}
+.userSummary {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+.userRow > .button {
+  grid-column: 2;
+  justify-self: start;
+  margin-top: 0.35rem;
+}
+.auditTimeline {
+  min-width: 0;
+  margin: 0;
+}
+.auditTimeline li,
+.auditTimeline li > div,
+.auditMetadata {
+  min-width: 0;
+}
+.auditMetadata {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .formGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -660,6 +741,20 @@ p {
   .contextPanel {
     position: static;
     grid-column: 1 / -1;
+  }
+  .administrationGrid {
+    grid-template-columns: minmax(19rem, 0.8fr) minmax(0, 1.4fr);
+  }
+  .administrationIncidents {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 860px) {
+  .administrationGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .administrationIncidents {
+    grid-column: auto;
   }
 }
 @media (max-width: 760px) {

@@ -33,13 +33,13 @@ echo "[6/8] Building with production cookie and origin policy"
 ssh "${studio_host}" "set -a; source '${studio_root}/shared/web.env'; set +a; cd '${studio_release}'; source ~/.nvm/nvm.sh; nvm use; corepack pnpm build"
 
 echo "[7/8] Cutting over the release and reloading PM2"
-studio_previous="$(ssh "${studio_host}" "readlink -f '${studio_root}/current' 2>/dev/null || true")"
+studio_previous="$(ssh "${studio_host}" "if [ -L '${studio_root}/current' ] && [ -e '${studio_root}/current' ]; then readlink -f '${studio_root}/current'; fi")"
 ssh "${studio_host}" "ln -sfn '${studio_release}' '${studio_root}/current.next' && mv -Tf '${studio_root}/current.next' '${studio_root}/current' && cd '${studio_root}/current' && source ~/.nvm/nvm.sh && pm2 startOrReload ecosystem.config.cjs --update-env"
 
 echo "[8/8] Verifying liveness and database readiness"
 if ! ssh "${studio_host}" "set -a; source '${studio_root}/shared/web.env'; set +a; for attempt in \$(seq 1 30); do if curl -fsS -H \"Host: \${SITUATION_STUDIO_HOST}\" \"http://\${SITUATION_STUDIO_BIND_ADDRESS}:\${SITUATION_STUDIO_PORT:-3015}/health/live\" >/dev/null && curl -fsS -H \"Host: \${SITUATION_STUDIO_HOST}\" \"http://\${SITUATION_STUDIO_BIND_ADDRESS}:\${SITUATION_STUDIO_PORT:-3015}/health/ready\" >/dev/null; then exit 0; fi; sleep 2; done; exit 1"; then
   echo "Release health failed; restoring the previous current symlink." >&2
-  if [[ -n "${studio_previous}" ]]; then
+  if [[ -n "${studio_previous}" && "${studio_previous}" != "${studio_root}/current" ]]; then
     ssh "${studio_host}" "ln -sfn '${studio_previous}' '${studio_root}/current.next' && mv -Tf '${studio_root}/current.next' '${studio_root}/current' && cd '${studio_root}/current' && source ~/.nvm/nvm.sh && pm2 startOrReload ecosystem.config.cjs --update-env"
   fi
   exit 1

@@ -24,6 +24,7 @@ if [[ ! -x "${studio_node}" || ! -f "${studio_next}" ]]; then
   exit 1
 fi
 
+cd "${studio_root}/apps/web"
 exec "${studio_node}" "${studio_next}" start \
   --hostname "${SITUATION_STUDIO_BIND_ADDRESS:?missing bind address}" \
   --port "${SITUATION_STUDIO_PORT:-3015}"

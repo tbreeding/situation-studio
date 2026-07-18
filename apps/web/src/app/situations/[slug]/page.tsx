@@ -4,6 +4,11 @@ import { AppShell } from "@/components/app-shell";
 import { WorkspaceEditor } from "@/components/workspace-editor";
 import { currentSession } from "@/server/auth/sessions";
 import { database } from "@/server/database";
+import {
+  exactArtifactsMatchReviewProvenance,
+  exactArtifactsMatchStoredHashes,
+  readPreparedReviewProvenance,
+} from "@/server/workflows/review-provenance";
 
 export default async function SituationWorkspace({
   params,
@@ -38,6 +43,7 @@ export default async function SituationWorkspace({
             take: 1,
             include: {
               validations: true,
+              artifacts: { include: { artifact: true, content: true } },
               approvals: {
                 where: { invalidatedAt: null },
                 orderBy: { approvedAt: "desc" },
@@ -100,8 +106,31 @@ export default async function SituationWorkspace({
     revision?.artifacts.find(
       (item) => item.artifact.logicalId === `situation:${slug}`,
     ) ?? null;
-  const artifactEntry = draftArtifactEntry ?? publishedArtifactEntry ?? null;
   const bundle = draft?.bundles[0] ?? null;
+  const bundleArtifactEntry =
+    bundle?.artifacts.find(
+      (item) => item.artifact.logicalId === `situation:${slug}`,
+    ) ?? null;
+  const artifactEntry =
+    bundleArtifactEntry ?? draftArtifactEntry ?? publishedArtifactEntry ?? null;
+  const preparedProvenance = readPreparedReviewProvenance(
+    bundle?.decisionLedger,
+  );
+  const provenanceReady = Boolean(
+    bundle &&
+    preparedProvenance &&
+    preparedProvenance.repositoryReviewerId ===
+      session.user.repositoryReviewerId &&
+    preparedProvenance.preparedByUserId === session.userId &&
+    bundle.validations.some(
+      (validation) =>
+        validation.validator === "human-review-provenance" &&
+        validation.state === "PASSED" &&
+        validation.bundleHash === bundle.canonicalHash,
+    ) &&
+    exactArtifactsMatchReviewProvenance(bundle.artifacts, preparedProvenance) &&
+    exactArtifactsMatchStoredHashes(bundle.artifacts),
+  );
   const graphItems = situation.artifacts.flatMap((artifact) => [
     ...artifact.outgoingEdges.map((edge) => ({
       id: edge.id,
@@ -248,16 +277,33 @@ export default async function SituationWorkspace({
                 : null
             }
             displayedArtifactState={
-              draftArtifactEntry ? (bundle ? "PROPOSAL" : "DRAFT") : "PUBLISHED"
+              bundleArtifactEntry
+                ? "PROPOSAL"
+                : draftArtifactEntry
+                  ? "DRAFT"
+                  : "PUBLISHED"
             }
             publishedBody={publishedArtifactEntry?.content.body ?? null}
-            revision={draft?.currentRevision ?? null}
+            revision={bundle?.revision ?? draft?.currentRevision ?? null}
             csrfToken={session.csrfToken}
             bundle={
               bundle
                 ? {
                     id: bundle.id,
                     state: bundle.state,
+                    canonicalHash: bundle.canonicalHash,
+                    repositoryReviewerId:
+                      session.user.repositoryReviewerId ?? null,
+                    provenanceReady,
+                    preparedReviewDate: preparedProvenance?.reviewDate ?? null,
+                    artifacts: bundle.artifacts.map((artifact) => ({
+                      id: artifact.artifactId,
+                      logicalId: artifact.artifact.logicalId,
+                      path: artifact.path,
+                      changeKind: artifact.changeKind,
+                      candidateHash: artifact.candidateHash,
+                      body: artifact.content.body,
+                    })),
                     comments: bundle.comments.map((comment) => ({
                       id: comment.id,
                       body: comment.body,

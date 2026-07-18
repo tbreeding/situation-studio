@@ -1179,6 +1179,53 @@ summary:focus-visible {
   justify-self: start;
   margin-top: 0.35rem;
 }
+.reviewerIdentityForm {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.6rem;
+  min-width: 0;
+  margin-top: 0.45rem;
+}
+.reviewerIdentityForm .field {
+  min-width: 0;
+}
+.exactBundlePanel {
+  margin-top: 1rem;
+}
+.exactBundleArtifacts {
+  display: grid;
+  gap: 0.7rem;
+}
+.exactBundleArtifacts > details {
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+.exactBundleArtifacts > details > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem;
+  cursor: pointer;
+}
+.exactBundleArtifacts summary span,
+.exactBundleArtifacts summary small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.exactBundleArtifacts pre {
+  max-height: 32rem;
+  margin: 0;
+  padding: 1rem;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  background: #fff;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .auditTimeline {
   min-width: 0;
   margin: 0;

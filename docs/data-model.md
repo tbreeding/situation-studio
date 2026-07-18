@@ -26,6 +26,7 @@ erDiagram
   PROPOSED_BUNDLE ||--o{ BUNDLE_ARTIFACT : contains
   PROPOSED_BUNDLE ||--o{ VALIDATION_RUN : validates
   PROPOSED_BUNDLE ||--o{ APPROVAL : approves
+  PROPOSED_BUNDLE ||--o{ PROPOSED_BUNDLE : finalizes_provenance
   APPROVAL ||--o{ PUBLICATION_REQUEST : authorizes
   PUBLICATION_REQUEST ||--o{ PUBLICATION_STEP : executes
   PUBLICATION_REQUEST ||--o| PUBLICATION : reconciles
@@ -44,6 +45,15 @@ The checked-in SQL migration adds constraints Prisma cannot express:
 - normalized username, slug, hash, and checkout-resource shape checks;
 - historical foreign keys use `RESTRICT`;
 - write roles receive only their explicit table/function grants.
+
+Human approval is bound to repository provenance. Each human account may map
+to one unique Leadership `reviewer` identifier. Preparing an AI proposal for
+approval creates a new immutable child bundle, writes that identifier and the
+review date into every changed public MDX artifact, recalculates all candidate
+and canonical hashes, carries open comments forward, reruns exact-byte checks,
+and marks the parent bundle stale. The approval records both the Studio user
+and repository reviewer identity; staging and the publisher require the
+provenance validation as well as the ordinary validation policy.
 
 ## Forward migration order
 

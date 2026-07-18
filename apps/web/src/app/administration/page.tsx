@@ -45,6 +45,7 @@ export default async function AdministrationPage() {
             id: user.id,
             username: user.username,
             displayName: user.displayName,
+            repositoryReviewerId: user.repositoryReviewerId,
             state: user.state,
             roles: user.roleAssignments.map((item) => item.role.code),
             isSelf: user.id === session.userId,

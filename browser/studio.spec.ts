@@ -3,6 +3,10 @@ import type { Locator, Page, TestInfo } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { createHash, randomUUID } from "node:crypto";
 import { Client } from "pg";
+import {
+  canonicalBundleHash,
+  type BundleManifest,
+} from "@situation-studio/domain";
 
 const password = "Studio-Test-Only-Password-2026!";
 
@@ -489,6 +493,7 @@ test("a synthetic proposal remains unmistakably separate from the published base
       ? "defensive-about-feedback"
       : "delegated-work-wrong-result";
   const sentinel = `Candidate-only sentinel ${testInfo.project.name}`;
+  const bundleSentinel = `Immutable bundle-only sentinel ${testInfo.project.name}`;
   const database = new Client({ connectionString: databaseUrl });
   let draftId: string | null = null;
   let bundleId: string | null = null;
@@ -548,9 +553,15 @@ test("a synthetic proposal remains unmistakably separate from the published base
       revision_id: string;
       artifact_id: string;
       actor_id: string;
+      logical_id: string;
+      path: string;
+      type: BundleManifest["artifacts"][number]["type"];
+      base_hash: string;
     }>(
       `SELECT revision.id AS revision_id, artifact.id AS artifact_id,
-              editor.id AS actor_id
+              editor.id AS actor_id, artifact.logical_id,
+              draft_artifact.path, draft_artifact.type,
+              draft_artifact.content_hash AS base_hash
        FROM draft_revisions AS revision
        JOIN draft_artifacts AS draft_artifact
          ON draft_artifact.revision_id = revision.id
@@ -623,27 +634,110 @@ test("a synthetic proposal remains unmistakably separate from the published base
       createHash("sha256")
         .update(`${label}:${testInfo.project.name}:${Date.now()}`)
         .digest("hex");
-    bundleId = randomUUID();
-    await database.query(
-      `INSERT INTO proposed_bundles
-       (id, situation_id, revision, snapshot_id, draft_id, base_commit,
-        base_manifest_hash, graph_hash, canonical_hash, manifest, state)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, 'HUMAN_REVIEW')`,
-      [
-        bundleId,
-        situationId,
-        (latestBundle.rows[0]?.revision ?? 0) + 1,
-        draft.base_snapshot_id,
-        draft.id,
-        draft.commit_sha,
-        draft.manifest_hash,
-        fixtureHash("graph"),
-        fixtureHash("bundle"),
-        JSON.stringify({ fixture: "desktop-ux-active-proposal" }),
+    const bundleBody = candidateBody.replace(sentinel, bundleSentinel);
+    const bundleCandidateHash = createHash("sha256")
+      .update(bundleBody)
+      .digest("hex");
+    const bundleRevision = (latestBundle.rows[0]?.revision ?? 0) + 1;
+    const graphHash = fixtureHash("graph");
+    const bundleManifest: BundleManifest = {
+      schemaVersion: "1",
+      situationId,
+      revision: bundleRevision,
+      baseCommit: draft.commit_sha,
+      baseManifestHash: draft.manifest_hash,
+      briefHash: null,
+      graphHash,
+      artifacts: [
+        {
+          logicalId: fixtureSource.logical_id,
+          type: fixtureSource.type,
+          path: fixtureSource.path,
+          baseHash: fixtureSource.base_hash,
+          candidateHash: bundleCandidateHash,
+          changeKind: "MODIFY",
+          noChangeRationale: null,
+        },
       ],
-    );
+      relationshipChanges: [],
+    };
+    const canonicalHash = canonicalBundleHash(bundleManifest);
+    bundleId = randomUUID();
+    await database.query("BEGIN");
+    try {
+      await database.query(
+        `INSERT INTO content_blobs (hash, body, byte_length)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (hash) DO NOTHING`,
+        [bundleCandidateHash, bundleBody, Buffer.byteLength(bundleBody)],
+      );
+      await database.query(
+        `INSERT INTO proposed_bundles
+         (id, situation_id, revision, snapshot_id, draft_id, base_commit,
+          base_manifest_hash, graph_hash, canonical_hash, manifest, state)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, 'HUMAN_REVIEW')`,
+        [
+          bundleId,
+          situationId,
+          bundleRevision,
+          draft.base_snapshot_id,
+          draft.id,
+          draft.commit_sha,
+          draft.manifest_hash,
+          graphHash,
+          canonicalHash,
+          JSON.stringify(bundleManifest),
+        ],
+      );
+      await database.query(
+        `INSERT INTO bundle_artifacts
+         (bundle_id, artifact_id, path, type, base_hash, candidate_hash,
+          content_hash, change_kind)
+         VALUES ($1, $2, $3, $4, $5, $6, $6, 'MODIFY')`,
+        [
+          bundleId,
+          fixtureSource.artifact_id,
+          fixtureSource.path,
+          fixtureSource.type,
+          fixtureSource.base_hash,
+          bundleCandidateHash,
+        ],
+      );
+      const environmentHash = fixtureHash("validation-environment");
+      for (const validator of [
+        "required-role-completion",
+        "candidate-safety",
+        "contradiction-audit",
+      ])
+        await database.query(
+          `INSERT INTO validation_runs
+           (id, bundle_id, bundle_hash, validator, version, environment_hash,
+            state, summary, started_at, finished_at)
+           VALUES ($1, $2, $3, $4, '1', $5, 'PASSED',
+                   'Synthetic exact-byte fixture passed.', NOW(), NOW())`,
+          [randomUUID(), bundleId, canonicalHash, validator, environmentHash],
+        );
+      await database.query(
+        `INSERT INTO comments
+         (id, bundle_id, author_id, body, blocking)
+         VALUES ($1, $2, $3, $4, true)`,
+        [
+          randomUUID(),
+          bundleId,
+          fixtureSource.actor_id,
+          "Inspect the immutable candidate before approval.",
+        ],
+      );
+      await database.query("COMMIT");
+    } catch (error) {
+      await database.query("ROLLBACK");
+      throw error;
+    }
     await page.reload();
-    await expect(page.getByRole("heading", { name: sentinel })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: bundleSentinel }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: sentinel })).toHaveCount(0);
     await expect(
       page.getByRole("heading", { name: "Proposal candidate" }),
     ).toBeVisible();
@@ -654,7 +748,9 @@ test("a synthetic proposal remains unmistakably separate from the published base
     await page.getByRole("button", { name: "Sign out" }).click();
     await login(page);
     await page.goto(`/situations/${slug}`);
-    await expect(page.getByRole("heading", { name: sentinel })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: bundleSentinel }),
+    ).toBeVisible();
     await expect(
       page.getByText(
         /Proposal candidate revision \d+ · read-only · not published/u,
@@ -663,6 +759,45 @@ test("a synthetic proposal remains unmistakably separate from the published base
     await expect(page.locator(".workspaceSummary")).toContainText(
       "Published baseline",
     );
+    const [prepareResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response.url().endsWith(`/api/bundles/${bundleId}/prepare-approval`),
+      ),
+      page
+        .getByRole("button", {
+          name: "Prepare exact bundle for my approval",
+        })
+        .click(),
+    ]);
+    expect(prepareResponse.status()).toBe(201);
+    await page.getByRole("tab", { name: "Source MDX" }).click();
+    await expect(page.getByLabel("Situation MDX")).toHaveValue(
+      /reviewer: studio-admin-reviewer/u,
+    );
+    await expect(page.getByLabel("Situation MDX")).toHaveValue(
+      new RegExp(`lastReviewed: ${new Date().toISOString().slice(0, 10)}`, "u"),
+    );
+    await expect(
+      page.getByRole("button", { name: "Approve exact bundle" }),
+    ).toBeDisabled();
+    const prepared = await database.query<{
+      parent_bundle_id: string;
+      state: string;
+    }>(
+      `SELECT parent_bundle_id, state
+       FROM proposed_bundles
+       WHERE parent_bundle_id = $1`,
+      [bundleId],
+    );
+    expect(prepared.rows).toHaveLength(1);
+    expect(prepared.rows[0]?.state).toBe("HUMAN_REVIEW");
+    const original = await database.query<{ state: string }>(
+      "SELECT state FROM proposed_bundles WHERE id = $1",
+      [bundleId],
+    );
+    expect(original.rows[0]?.state).toBe("STALE");
     await page.goto("/");
     const candidateCard = page.locator(
       `.situationCard[href='/situations/${slug}']`,
@@ -670,6 +805,13 @@ test("a synthetic proposal remains unmistakably separate from the published base
     await expect(candidateCard).toHaveClass(/attentionCard/u);
     await page.getByRole("checkbox", { name: "Needs attention" }).check();
     await expect(candidateCard).toBeVisible();
+
+    await database.query(
+      `UPDATE proposed_bundles
+       SET state = 'STALE'
+       WHERE id = $1 OR parent_bundle_id = $1`,
+      [bundleId],
+    );
 
     await page.getByRole("button", { name: "Sign out" }).click();
     await login(page, "studio-editor");
@@ -748,7 +890,9 @@ test("a synthetic proposal remains unmistakably separate from the published base
     }
     if (bundleId)
       await database.query(
-        "UPDATE proposed_bundles SET state = 'STALE' WHERE id = $1",
+        `UPDATE proposed_bundles
+         SET state = 'STALE'
+         WHERE id = $1 OR parent_bundle_id = $1`,
         [bundleId],
       );
     if (situationId)

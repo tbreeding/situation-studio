@@ -17,6 +17,7 @@
     "@prisma/client": "7.8.0",
     "@situation-studio/db": "workspace:*",
     "@situation-studio/domain": "workspace:*",
+    "@situation-studio/validator": "workspace:*",
     "argon2": "0.44.0",
     "gray-matter": "4.0.3",
     "next": "16.2.10",

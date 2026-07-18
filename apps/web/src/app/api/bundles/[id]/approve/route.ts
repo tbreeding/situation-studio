@@ -1,8 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { authenticateMutation } from "@/server/auth/request";
 import { database } from "@/server/database";
-import { sha256 } from "@situation-studio/domain";
+import {
+  bundleManifestSchema,
+  canonicalBundleHash,
+  sha256,
+} from "@situation-studio/domain";
 import { audit } from "@/server/audit";
+import {
+  exactArtifactsMatchReviewProvenance,
+  exactArtifactsMatchStoredHashes,
+  readPreparedReviewProvenance,
+} from "@/server/workflows/review-provenance";
 
 export async function POST(
   request: NextRequest,
@@ -19,75 +28,128 @@ export async function POST(
       { error: "recent reauthentication required" },
       { status: 403 },
     );
+  const repositoryReviewerId = auth.session.user.repositoryReviewerId;
+  if (!repositoryReviewerId)
+    return NextResponse.json(
+      { error: "repository reviewer identity required" },
+      { status: 409 },
+    );
   const { id } = await params;
-  const bundle = await database().proposedBundle.findUnique({
-    where: { id },
-    include: {
-      validations: true,
-      comments: { where: { status: "OPEN", blocking: true } },
-      draft: true,
-    },
-  });
-  if (
-    !bundle ||
-    bundle.state !== "HUMAN_REVIEW" ||
-    bundle.comments.length ||
-    !bundle.validations.length ||
-    bundle.validations.some(
-      (item) =>
-        item.state !== "PASSED" || item.bundleHash !== bundle.canonicalHash,
-    ) ||
-    bundle.draft.staleReason
-  )
+  let result;
+  try {
+    result = await database().$transaction(
+      async (transaction) => {
+        await transaction.$executeRaw`SELECT id FROM proposed_bundles WHERE id = ${id}::uuid FOR UPDATE`;
+        const bundle = await transaction.proposedBundle.findUnique({
+          where: { id },
+          include: {
+            artifacts: { include: { content: true } },
+            validations: true,
+            comments: { where: { status: "OPEN", blocking: true } },
+            draft: true,
+          },
+        });
+        const provenance = readPreparedReviewProvenance(bundle?.decisionLedger);
+        const provenanceValidation = bundle?.validations.some(
+          (item) =>
+            item.validator === "human-review-provenance" &&
+            item.state === "PASSED" &&
+            item.bundleHash === bundle.canonicalHash,
+        );
+        const canonicalManifest = bundleManifestSchema.safeParse(
+          bundle?.manifest,
+        );
+        if (
+          !bundle ||
+          bundle.state !== "HUMAN_REVIEW" ||
+          bundle.comments.length ||
+          !bundle.validations.length ||
+          bundle.validations.some(
+            (item) =>
+              item.state !== "PASSED" ||
+              item.bundleHash !== bundle.canonicalHash,
+          ) ||
+          bundle.draft.staleReason ||
+          !provenance ||
+          !provenanceValidation ||
+          !canonicalManifest.success ||
+          canonicalBundleHash(canonicalManifest.data) !==
+            bundle.canonicalHash ||
+          provenance.repositoryReviewerId !== repositoryReviewerId ||
+          provenance.preparedByUserId !== auth.session.userId ||
+          provenance.parentBundleId !== bundle.parentBundleId ||
+          !exactArtifactsMatchReviewProvenance(bundle.artifacts, provenance) ||
+          !exactArtifactsMatchStoredHashes(bundle.artifacts)
+        )
+          throw new Error("APPROVAL_PRECONDITIONS_FAILED");
+        const policyHash = sha256(
+          JSON.stringify(
+            bundle.validations
+              .map((item) => [
+                item.validator,
+                item.version,
+                item.environmentHash,
+              ])
+              .sort(),
+          ),
+        );
+        const approval = await transaction.approval.create({
+          data: {
+            bundleId: bundle.id,
+            bundleHash: bundle.canonicalHash,
+            baseCommit: bundle.baseCommit,
+            validationPolicyHash: policyHash,
+            approvedById: auth.session.userId,
+            repositoryReviewerId,
+            contentReviewDate: provenance.reviewDate,
+            sessionId: auth.session.id,
+            permissionSnapshot: [...auth.session.permissions],
+          },
+        });
+        await transaction.proposedBundle.update({
+          where: { id: bundle.id },
+          data: { state: "APPROVED" },
+        });
+        await transaction.draft.update({
+          where: { id: bundle.draftId },
+          data: { state: "APPROVED" },
+        });
+        return { approval, bundle, policyHash, provenance };
+      },
+      { isolationLevel: "Serializable" },
+    );
+  } catch (error) {
+    const reason =
+      error instanceof Error ? error.message : "APPROVAL_PRECONDITIONS_FAILED";
+    await audit({
+      actorId: auth.session.userId,
+      permissions: [...auth.session.permissions],
+      action: "bundle.approve",
+      targetType: "bundle",
+      targetId: id,
+      outcome: "FAILED",
+      reason,
+    });
     return NextResponse.json(
       { error: "approval preconditions failed" },
       { status: 409 },
     );
-  const policyHash = sha256(
-    JSON.stringify(
-      bundle.validations
-        .map((item) => [item.validator, item.version, item.environmentHash])
-        .sort(),
-    ),
-  );
-  const approval = await database().$transaction(
-    async (transaction) => {
-      const row = await transaction.approval.create({
-        data: {
-          bundleId: bundle.id,
-          bundleHash: bundle.canonicalHash,
-          baseCommit: bundle.baseCommit,
-          validationPolicyHash: policyHash,
-          approvedById: auth.session.userId,
-          sessionId: auth.session.id,
-          permissionSnapshot: [...auth.session.permissions],
-        },
-      });
-      await transaction.proposedBundle.update({
-        where: { id: bundle.id },
-        data: { state: "APPROVED" },
-      });
-      await transaction.draft.update({
-        where: { id: bundle.draftId },
-        data: { state: "APPROVED" },
-      });
-      return row;
-    },
-    { isolationLevel: "Serializable" },
-  );
+  }
   await audit({
     actorId: auth.session.userId,
     permissions: [...auth.session.permissions],
     action: "bundle.approve",
     targetType: "bundle",
-    targetId: bundle.id,
-    targetVersion: bundle.canonicalHash,
+    targetId: result.bundle.id,
+    targetVersion: result.bundle.canonicalHash,
     outcome: "SUCCEEDED",
     after: {
-      approvalId: approval.id,
-      baseCommit: bundle.baseCommit,
-      validationPolicyHash: policyHash,
+      approvalId: result.approval.id,
+      baseCommit: result.bundle.baseCommit,
+      validationPolicyHash: result.policyHash,
+      repositoryReviewerId,
+      contentReviewDate: result.provenance.reviewDate,
     },
   });
-  return NextResponse.json({ approvalId: approval.id });
+  return NextResponse.json({ approvalId: result.approval.id });
 }

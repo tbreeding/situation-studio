@@ -6,6 +6,7 @@ type ManagedUser = {
   id: string;
   username: string;
   displayName: string;
+  repositoryReviewerId: string | null;
   state: string;
   roles: string[];
   isSelf: boolean;
@@ -34,6 +35,8 @@ export function UserAdministration({
       body: JSON.stringify({
         username: form.get("username"),
         displayName: form.get("displayName"),
+        repositoryReviewerId:
+          String(form.get("repositoryReviewerId") ?? "").trim() || null,
         roles,
       }),
     });
@@ -65,6 +68,22 @@ export function UserAdministration({
     else setStatus("User state change failed.");
   }
 
+  async function setReviewerIdentity(user: ManagedUser, form: FormData) {
+    setStatus(`Saving repository reviewer identity for ${user.displayName}…`);
+    const value = String(form.get("repositoryReviewerId") ?? "").trim();
+    const response = await fetch(`/api/users/${user.id}/reviewer-identity`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-csrf-token": csrfToken,
+      },
+      body: JSON.stringify({ repositoryReviewerId: value || null }),
+    });
+    const result = (await response.json()) as { error?: string };
+    if (response.ok) location.reload();
+    else setStatus(result.error ?? "Reviewer identity update failed.");
+  }
+
   return (
     <section className="panel">
       <div className="panelHeader">
@@ -85,6 +104,15 @@ export function UserAdministration({
             <label className="field">
               Display name
               <input name="displayName" required maxLength={120} />
+            </label>
+            <label className="field">
+              Repository reviewer ID
+              <input
+                name="repositoryReviewerId"
+                pattern="[a-z0-9][a-z0-9-]{1,99}"
+                maxLength={100}
+                placeholder="timothy-breeding"
+              />
             </label>
           </div>
           <fieldset className="roleChoices">
@@ -122,6 +150,25 @@ export function UserAdministration({
                   {user.username} · {user.roles.join(", ") || "No role"}
                 </span>
               </div>
+              <form
+                action={(form) => setReviewerIdentity(user, form)}
+                className="reviewerIdentityForm"
+              >
+                <label className="field" htmlFor={`reviewer-${user.id}`}>
+                  Repository reviewer ID
+                  <input
+                    id={`reviewer-${user.id}`}
+                    name="repositoryReviewerId"
+                    defaultValue={user.repositoryReviewerId ?? ""}
+                    pattern="[a-z0-9][a-z0-9-]{1,99}"
+                    maxLength={100}
+                    placeholder="Not mapped"
+                  />
+                </label>
+                <button className="button secondary" type="submit">
+                  Save reviewer ID
+                </button>
+              </form>
               {!user.isSelf && (
                 <button
                   className="button secondary"

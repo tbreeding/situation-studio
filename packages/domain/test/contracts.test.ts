@@ -7,8 +7,14 @@ import {
   detectSensitiveText,
   draftTransitions,
   effectivePermissions,
+  finalizeHumanReviewProvenance,
+  hasHumanReviewProvenance,
   isApprovedArtifactPath,
+  isIsoReviewDate,
+  isRepositoryReviewerId,
   publicationSagaTransitions,
+  readHumanReviewProvenance,
+  requiresHumanReviewProvenance,
   sha256,
   situationLifecycleTransitions,
   type BundleManifest,
@@ -82,6 +88,46 @@ describe("executable domain contracts", () => {
     );
     expect(isApprovedArtifactPath("content/situations/example.js")).toBe(false);
     expect(isApprovedArtifactPath("public/escape.json")).toBe(false);
+  });
+
+  it("finalizes exact reviewer provenance without reformatting MDX", () => {
+    const original = `---\ntitle: A fixture\nlastReviewed: 2026-07-16\nreviewer: pending-human-review\ntags: [one, two]\n---\n\n# Exact body\n`;
+    const finalized = finalizeHumanReviewProvenance(original, {
+      reviewer: "timothy-breeding",
+      lastReviewed: "2026-07-18",
+    });
+    expect(finalized).toBe(
+      `---\ntitle: A fixture\nlastReviewed: 2026-07-18\nreviewer: timothy-breeding\ntags: [one, two]\n---\n\n# Exact body\n`,
+    );
+    expect(readHumanReviewProvenance(finalized)).toEqual({
+      reviewer: "timothy-breeding",
+      lastReviewed: "2026-07-18",
+    });
+    expect(
+      hasHumanReviewProvenance(finalized, {
+        reviewer: "timothy-breeding",
+        lastReviewed: "2026-07-18",
+      }),
+    ).toBe(true);
+  });
+
+  it("fails review provenance closed for malformed identities, dates, and paths", () => {
+    expect(isRepositoryReviewerId("timothy-breeding")).toBe(true);
+    expect(isRepositoryReviewerId("Timothy Breeding")).toBe(false);
+    expect(isIsoReviewDate("2026-07-18")).toBe(true);
+    expect(isIsoReviewDate("2026-02-30")).toBe(false);
+    expect(
+      requiresHumanReviewProvenance("content/situations/example.mdx"),
+    ).toBe(true);
+    expect(
+      requiresHumanReviewProvenance("content/practices/example.json"),
+    ).toBe(false);
+    expect(() =>
+      finalizeHumanReviewProvenance(
+        `---\nreviewer: one\nreviewer: two\nlastReviewed: 2026-07-18\n---\n`,
+        { reviewer: "timothy-breeding", lastReviewed: "2026-07-18" },
+      ),
+    ).toThrow(/exactly one reviewer/u);
   });
 
   it("requires the complete brief and blocks credentials", () => {

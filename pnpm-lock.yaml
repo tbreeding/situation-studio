@@ -96,6 +96,9 @@ importers:
       "@situation-studio/domain":
         specifier: workspace:*
         version: link:../../packages/domain
+      "@situation-studio/validator":
+        specifier: workspace:*
+        version: link:../validator
       argon2:
         specifier: 0.44.0
         version: 0.44.0

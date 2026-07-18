@@ -9,6 +9,7 @@ import {
   acquireCheckout,
   saveDraft,
 } from "../../../apps/web/src/server/workflows/checkouts";
+import { prepareBundleForHumanApproval } from "../../../apps/web/src/server/workflows/review-provenance";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required.");
@@ -167,15 +168,19 @@ async function approveAndStage() {
   });
   if (job.state !== "SUCCEEDED")
     throw new Error(`Review is not successful: ${job.state}`);
-  const bundle = job.bundles[0];
-  if (!bundle) throw new Error("Review did not produce a bundle.");
+  const aiBundle = job.bundles[0];
+  if (!aiBundle) throw new Error("Review did not produce a bundle.");
   if (
-    !bundle.validations.length ||
-    bundle.validations.some((validation) => validation.state !== "PASSED")
+    !aiBundle.validations.length ||
+    aiBundle.validations.some((validation) => validation.state !== "PASSED")
   )
     throw new Error("Review produced blocking validation findings.");
   const priorRequest = await database.publicationRequest.findFirst({
-    where: { bundleId: bundle.id },
+    where: {
+      bundle: {
+        OR: [{ id: aiBundle.id }, { parentBundleId: aiBundle.id }],
+      },
+    },
   });
   if (priorRequest)
     return {
@@ -187,6 +192,25 @@ async function approveAndStage() {
   const user = await database.user.findUniqueOrThrow({
     where: { id: job.ownerId },
   });
+  if (!user.repositoryReviewerId)
+    throw new Error(
+      "Full-flow human account requires a repository reviewer identity.",
+    );
+  const prepared = await prepareBundleForHumanApproval(database, {
+    bundleId: aiBundle.id,
+    userId: user.id,
+    repositoryReviewerId: user.repositoryReviewerId,
+  });
+  const bundle = await database.proposedBundle.findUniqueOrThrow({
+    where: { id: prepared.bundle.id },
+    include: {
+      validations: true,
+      approvals: true,
+      comments: { where: { status: "OPEN", blocking: true } },
+    },
+  });
+  if (bundle.comments.length)
+    throw new Error("Prepared bundle has unresolved blocking comments.");
   const session = await database.session.create({
     data: {
       tokenHash: sha256(randomUUID()),
@@ -214,6 +238,8 @@ async function approveAndStage() {
         baseCommit: bundle.baseCommit,
         validationPolicyHash,
         approvedById: user.id,
+        repositoryReviewerId: user.repositoryReviewerId,
+        contentReviewDate: prepared.provenance.reviewDate,
         sessionId: session.id,
         permissionSnapshot: ["publication.approve", "publication.publish"],
       },

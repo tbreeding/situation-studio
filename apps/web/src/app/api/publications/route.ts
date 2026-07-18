@@ -48,8 +48,19 @@ export async function POST(request: NextRequest) {
     bundle.state !== "APPROVED" ||
     approval.bundleHash !== bundle.canonicalHash ||
     approval.baseCommit !== bundle.baseCommit ||
+    !approval.repositoryReviewerId ||
+    !approval.contentReviewDate ||
     bundle.comments.length ||
-    bundle.validations.some((item) => item.state !== "PASSED")
+    bundle.validations.some(
+      (item) =>
+        item.state !== "PASSED" || item.bundleHash !== bundle.canonicalHash,
+    ) ||
+    !bundle.validations.some(
+      (item) =>
+        item.validator === "human-review-provenance" &&
+        item.state === "PASSED" &&
+        item.bundleHash === bundle.canonicalHash,
+    )
   )
     return NextResponse.json(
       { error: "publication preconditions failed" },

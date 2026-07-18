@@ -21,6 +21,18 @@ type Props = {
   bundle: {
     id: string;
     state: string;
+    canonicalHash: string;
+    repositoryReviewerId: string | null;
+    provenanceReady: boolean;
+    preparedReviewDate: string | null;
+    artifacts: {
+      id: string;
+      logicalId: string;
+      path: string;
+      changeKind: string;
+      candidateHash: string;
+      body: string;
+    }[];
     comments: { id: string; body: string; blocking: boolean }[];
   } | null;
   approvalId: string | null;
@@ -45,10 +57,12 @@ export function WorkspaceEditor(props: Props) {
     props.permissions.includes("draft.update") &&
     props.draftId &&
     props.artifact &&
-    props.revision !== null,
+    props.revision !== null &&
+    props.displayedArtifactState === "DRAFT",
   );
   const [body, setBody] = useState(props.artifact?.body ?? "");
   const [checkInPending, setCheckInPending] = useState(false);
+  const [preparationPending, setPreparationPending] = useState(false);
   const hasUnsavedChanges = body !== (props.artifact?.body ?? "");
   const [status, setStatus] = useState(
     canEdit
@@ -270,6 +284,32 @@ export function WorkspaceEditor(props: Props) {
       );
   }
 
+  async function prepareApproval() {
+    if (!props.bundle) return;
+    setPreparationPending(true);
+    setStatus("Writing your reviewer identity into a new exact bundle…");
+    const response = await fetch(
+      `/api/bundles/${props.bundle.id}/prepare-approval`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": props.csrfToken,
+        },
+        body: "{}",
+      },
+    );
+    if (response.ok) location.reload();
+    else {
+      const result = (await response.json()) as { error?: string };
+      setPreparationPending(false);
+      setStatus(
+        result.error ??
+          "Approval preparation was blocked by identity, validation, or staleness.",
+      );
+    }
+  }
+
   async function stage() {
     if (!props.bundle || !props.approvalId) return;
     setStatus("Staging the exact approved bundle…");
@@ -472,7 +512,8 @@ export function WorkspaceEditor(props: Props) {
                 </button>
               )}
             {props.bundle?.state === "HUMAN_REVIEW" &&
-              props.permissions.includes("publication.approve") && (
+              props.permissions.includes("publication.approve") &&
+              (props.bundle.provenanceReady ? (
                 <button
                   className="button"
                   type="button"
@@ -488,7 +529,27 @@ export function WorkspaceEditor(props: Props) {
                 >
                   Approve exact bundle
                 </button>
-              )}
+              ) : (
+                <button
+                  className="button"
+                  type="button"
+                  onClick={prepareApproval}
+                  disabled={
+                    preparationPending || !props.bundle.repositoryReviewerId
+                  }
+                  title={
+                    props.bundle.repositoryReviewerId
+                      ? "Create a new immutable bundle with your repository reviewer identity and rerun exact-byte validation"
+                      : "An administrator must map this account to a repository reviewer identity"
+                  }
+                >
+                  {preparationPending
+                    ? "Preparing exact bundle…"
+                    : props.bundle.repositoryReviewerId
+                      ? "Prepare exact bundle for my approval"
+                      : "Reviewer identity required"}
+                </button>
+              ))}
             {props.bundle?.state === "APPROVED" &&
               props.permissions.includes("publication.publish") &&
               !props.publicationRequest && (
@@ -575,7 +636,7 @@ export function WorkspaceEditor(props: Props) {
           {props.displayedArtifactState === "PUBLISHED"
             ? "Published guidance · this rendered view and Source MDX are the live baseline."
             : props.displayedArtifactState === "PROPOSAL"
-              ? `Proposal candidate revision ${props.revision} · not published. The published baseline remains separate below.`
+              ? `Exact proposal bundle ${props.bundle?.canonicalHash.slice(0, 12) ?? "unavailable"} · revision ${props.revision} · not published.${props.bundle?.provenanceReady ? ` Reviewer ${props.bundle.repositoryReviewerId} · review date ${props.bundle.preparedReviewDate}.` : " Reviewer provenance must be finalized before approval."} The published baseline remains separate below.`
               : `Draft candidate revision ${props.revision} · not published. The published baseline remains separate below.`}
         </p>
 
@@ -673,16 +734,62 @@ export function WorkspaceEditor(props: Props) {
         )}
         {props.publishedBody !== null && props.publishedBody !== body && (
           <details className="diffPanel">
-            <summary>Compare published and draft bytes</summary>
+            <summary>
+              Compare published and {props.displayedArtifactState.toLowerCase()}{" "}
+              bytes
+            </summary>
             <div className="diffGrid">
               <section>
                 <h3>Published</h3>
                 <pre>{props.publishedBody}</pre>
               </section>
               <section>
-                <h3>Draft revision</h3>
+                <h3>
+                  {props.displayedArtifactState === "PROPOSAL"
+                    ? "Exact proposal"
+                    : "Draft revision"}
+                </h3>
                 <pre>{body}</pre>
               </section>
+            </div>
+          </details>
+        )}
+        {props.bundle && (
+          <details className="panel exactBundlePanel">
+            <summary>
+              <span>
+                <strong>Inspect every exact bundle artifact</strong>
+                <small>
+                  {props.bundle.artifacts.length} immutable candidate
+                  {props.bundle.artifacts.length === 1 ? "" : "s"} bound to the
+                  displayed bundle hash
+                </small>
+              </span>
+              <span className="badge">
+                {
+                  props.bundle.artifacts.filter(
+                    (artifact) => artifact.changeKind !== "NO_CHANGE",
+                  ).length
+                }{" "}
+                changed
+              </span>
+            </summary>
+            <div className="panelBody exactBundleArtifacts">
+              {props.bundle.artifacts.map((artifact) => (
+                <details key={artifact.id}>
+                  <summary>
+                    <span>
+                      <strong>{artifact.path}</strong>
+                      <small>
+                        {artifact.logicalId} ·{" "}
+                        {artifact.changeKind.toLowerCase()}
+                      </small>
+                    </span>
+                    <code>{artifact.candidateHash.slice(0, 12)}…</code>
+                  </summary>
+                  <pre>{artifact.body}</pre>
+                </details>
+              ))}
             </div>
           </details>
         )}

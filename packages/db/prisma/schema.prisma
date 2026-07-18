@@ -226,6 +226,7 @@ model User {
   id                   String                @id @default(uuid()) @db.Uuid
   username             String                @unique @db.VarChar(64)
   displayName          String                @map("display_name") @db.VarChar(120)
+  repositoryReviewerId String?               @unique @map("repository_reviewer_id") @db.VarChar(100)
   passwordHash         String?               @map("password_hash") @db.VarChar(512)
   identityType         IdentityType          @default(HUMAN) @map("identity_type")
   state                UserState             @default(PENDING_ACTIVATION)
@@ -857,6 +858,8 @@ model Approval {
   baseCommit           String               @map("base_commit") @db.Char(40)
   validationPolicyHash String               @map("validation_policy_hash") @db.Char(64)
   approvedById         String               @map("approved_by_id") @db.Uuid
+  repositoryReviewerId String?              @map("repository_reviewer_id") @db.VarChar(100)
+  contentReviewDate    String?              @map("content_review_date") @db.Char(10)
   sessionId            String               @map("session_id") @db.Uuid
   permissionSnapshot   Json                 @map("permission_snapshot")
   approvedAt           DateTime             @default(now()) @map("approved_at") @db.Timestamptz(3)

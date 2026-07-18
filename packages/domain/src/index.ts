@@ -107,6 +107,120 @@ export function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+export type HumanReviewProvenance = {
+  reviewer: string;
+  lastReviewed: string;
+};
+
+const repositoryReviewerIdPattern = /^[a-z0-9][a-z0-9-]{1,99}$/u;
+const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/u;
+
+export function isRepositoryReviewerId(value: string): boolean {
+  return repositoryReviewerIdPattern.test(value);
+}
+
+export function isIsoReviewDate(value: string): boolean {
+  if (!isoDatePattern.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value
+  );
+}
+
+export function requiresHumanReviewProvenance(candidatePath: string): boolean {
+  return (
+    /^content\/situations\/[a-z0-9-]+\.mdx$/u.test(candidatePath) ||
+    /^content\/guides\/[a-z0-9-]+\.mdx$/u.test(candidatePath)
+  );
+}
+
+function frontmatterBounds(body: string): { start: number; end: number } {
+  const normalized = body.replace(/\r\n?/gu, "\n");
+  if (!normalized.startsWith("---\n"))
+    throw new Error("Reviewable MDX must start with YAML frontmatter.");
+  const end = normalized.indexOf("\n---\n", 4);
+  if (end < 0) throw new Error("Reviewable MDX frontmatter is not terminated.");
+  return { start: 4, end };
+}
+
+function unquoteFrontmatterScalar(value: string): string {
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  )
+    return value.slice(1, -1);
+  return value;
+}
+
+function frontmatterScalar(body: string, key: string): string {
+  const normalized = body.replace(/\r\n?/gu, "\n");
+  const bounds = frontmatterBounds(normalized);
+  const matches = [
+    ...normalized
+      .slice(bounds.start, bounds.end)
+      .matchAll(new RegExp(`^${key}:[ \\t]*(.*)$`, "gmu")),
+  ];
+  if (matches.length !== 1)
+    throw new Error(`Reviewable MDX must contain exactly one ${key} field.`);
+  return unquoteFrontmatterScalar(matches[0]?.[1]?.trim() ?? "");
+}
+
+function replaceFrontmatterScalar(
+  body: string,
+  key: string,
+  value: string,
+): string {
+  const normalized = body.replace(/\r\n?/gu, "\n");
+  const bounds = frontmatterBounds(normalized);
+  const frontmatter = normalized.slice(bounds.start, bounds.end);
+  const pattern = new RegExp(`^${key}:[^\\n]*$`, "gmu");
+  const matches = [...frontmatter.matchAll(pattern)];
+  if (matches.length !== 1)
+    throw new Error(`Reviewable MDX must contain exactly one ${key} field.`);
+  return `${normalized.slice(0, bounds.start)}${frontmatter.replace(pattern, `${key}: ${value}`)}${normalized.slice(bounds.end)}`;
+}
+
+export function readHumanReviewProvenance(body: string): HumanReviewProvenance {
+  return {
+    reviewer: frontmatterScalar(body, "reviewer"),
+    lastReviewed: frontmatterScalar(body, "lastReviewed"),
+  };
+}
+
+export function finalizeHumanReviewProvenance(
+  body: string,
+  provenance: HumanReviewProvenance,
+): string {
+  if (!isRepositoryReviewerId(provenance.reviewer))
+    throw new Error("Repository reviewer identity is invalid.");
+  if (!isIsoReviewDate(provenance.lastReviewed))
+    throw new Error("Review date must be a real ISO calendar date.");
+  return replaceFrontmatterScalar(
+    replaceFrontmatterScalar(body, "reviewer", provenance.reviewer),
+    "lastReviewed",
+    provenance.lastReviewed,
+  );
+}
+
+export function hasHumanReviewProvenance(
+  body: string,
+  expected: HumanReviewProvenance,
+): boolean {
+  try {
+    const actual = readHumanReviewProvenance(body);
+    return (
+      actual.reviewer === expected.reviewer &&
+      actual.lastReviewed === expected.lastReviewed &&
+      isRepositoryReviewerId(actual.reviewer) &&
+      isIsoReviewDate(actual.lastReviewed)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export const artifactTypes = [
   "SITUATION",
   "GUIDE",

@@ -67,4 +67,19 @@ The command refuses a second active administrator and accepts the password only 
 corepack pnpm admin:reset --username <username>
 ```
 
+## Repository reviewer identity
+
+Before a human can approve a candidate, an administrator must map that Studio
+account to its unique Leadership frontmatter reviewer ID on the Administration
+page. The mapping is audited and may not be shared by two accounts. An
+unmapped account can inspect and comment on a proposal but cannot prepare or
+approve it.
+
+The reviewer then uses **Prepare exact bundle for my approval**. This does not
+approve or publish anything. It creates an immutable child bundle with the
+reviewer/date provenance, reruns deterministic validation, preserves open
+comments, and exposes all exact artifact bodies and hashes for inspection. The
+separate **Approve exact bundle** action appears only for the same mapped user;
+blocking comments must still be resolved first.
+
 See `rp1-assessment.md` for the observed host capacity, database listener risk, and concrete external-beta blockers.

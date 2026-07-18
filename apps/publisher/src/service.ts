@@ -51,6 +51,8 @@ async function publicationInput(database: DatabaseClient, requestId: string) {
     request.approval.invalidatedAt ||
     request.approval.bundleHash !== request.bundleHash ||
     request.approval.baseCommit !== request.baseCommit ||
+    !request.approval.repositoryReviewerId ||
+    !request.approval.contentReviewDate ||
     (request.bundle.state !== "APPROVED" &&
       !(request.publication && request.bundle.state === "PUBLISHED")) ||
     request.bundle.comments.length ||
@@ -59,6 +61,12 @@ async function publicationInput(database: DatabaseClient, requestId: string) {
       (validation) =>
         validation.state !== "PASSED" ||
         validation.bundleHash !== request.bundleHash,
+    ) ||
+    !request.bundle.validations.some(
+      (validation) =>
+        validation.validator === "human-review-provenance" &&
+        validation.state === "PASSED" &&
+        validation.bundleHash === request.bundleHash,
     )
   )
     throw new Error("Publication approval or bundle preconditions changed.");

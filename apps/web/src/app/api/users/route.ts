@@ -9,6 +9,12 @@ import { environment } from "@/server/environment";
 const schema = z.object({
   username: z.string().regex(/^[a-z0-9][a-z0-9._-]{2,63}$/u),
   displayName: z.string().trim().min(2).max(120),
+  repositoryReviewerId: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9][a-z0-9-]{1,99}$/u)
+    .nullable()
+    .optional(),
   roles: z
     .array(z.enum(["ADMINISTRATOR", "EDITOR", "REVIEWER", "PUBLISHER"]))
     .max(4),
@@ -39,6 +45,7 @@ export async function POST(request: NextRequest) {
         data: {
           username: parsed.data.username,
           displayName: parsed.data.displayName,
+          repositoryReviewerId: parsed.data.repositoryReviewerId ?? null,
           state: "PENDING_ACTIVATION",
           identityType: "HUMAN",
         },
@@ -75,7 +82,11 @@ export async function POST(request: NextRequest) {
     targetType: "user",
     targetId: result.id,
     outcome: "SUCCEEDED",
-    after: { username: result.username, roles: parsed.data.roles },
+    after: {
+      username: result.username,
+      roles: parsed.data.roles,
+      repositoryReviewerId: result.repositoryReviewerId,
+    },
   });
   return NextResponse.json(
     {

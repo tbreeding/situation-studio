@@ -18,11 +18,15 @@ try {
     create: {
       username: "studio-admin",
       displayName: "Studio Administrator",
+      repositoryReviewerId: "studio-admin-reviewer",
       passwordHash: await hashPassword("Studio-Test-Only-Password-2026!"),
       state: "ACTIVE",
       identityType: "HUMAN",
     },
-    update: { state: "ACTIVE" },
+    update: {
+      state: "ACTIVE",
+      repositoryReviewerId: "studio-admin-reviewer",
+    },
   });
   const role = await database.role.findUniqueOrThrow({
     where: { code: "ADMINISTRATOR" },

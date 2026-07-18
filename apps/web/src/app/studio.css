@@ -910,6 +910,33 @@ summary:focus-visible {
   cursor: pointer;
   font-weight: 750;
 }
+.diffLegend {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.diffLegendItem {
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--line);
+  font-weight: 750;
+}
+.diffLegendItem.removed {
+  border-color: rgba(196, 90, 62, 0.34);
+  background: #fde9e3;
+  color: #7a2d1c;
+}
+.diffLegendItem.added {
+  border-color: rgba(95, 123, 82, 0.38);
+  background: #e8f2e3;
+  color: #315a34;
+}
+.diffScrollLinked {
+  margin-left: auto;
+  font-weight: 700;
+}
 .diffGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -923,16 +950,70 @@ summary:focus-visible {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.diffGrid pre {
+.diffScroller {
   max-height: 28rem;
   overflow: auto;
   margin: 0;
-  padding: 0.8rem;
   border: 1px solid var(--line);
   background: white;
   font-size: 0.7rem;
   line-height: 1.45;
-  white-space: pre-wrap;
+  scrollbar-gutter: stable;
+}
+.diffScroller:focus-visible {
+  outline: 3px solid rgba(29, 73, 58, 0.3);
+  outline-offset: 2px;
+}
+.diffLines {
+  min-width: max-content;
+  padding: 0.65rem 0;
+}
+.diffLine {
+  display: grid;
+  grid-template-columns: 3.3rem minmax(max-content, 1fr);
+  min-width: 100%;
+  min-height: 1.45em;
+  white-space: pre;
+}
+.diffLineNumber {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding: 0 0.55rem 0 0.3rem;
+  border-right: 1px solid rgba(20, 38, 31, 0.1);
+  background: #f3f1eb;
+  color: #78847f;
+  text-align: right;
+  user-select: none;
+}
+.diffLine code {
+  padding: 0 0.75rem;
+  font: inherit;
+}
+.diffLine.removed {
+  background: #fde9e3;
+  color: #6f291b;
+}
+.diffLine.removed .diffLineNumber {
+  background: #f7d6cd;
+  color: #853421;
+}
+.diffLine.added {
+  background: #e8f2e3;
+  color: #264c2b;
+}
+.diffLine.added .diffLineNumber {
+  background: #d4e7cd;
+  color: #315a34;
+}
+.diffLine.empty {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(20, 38, 31, 0.025),
+    rgba(20, 38, 31, 0.025) 4px,
+    transparent 4px,
+    transparent 8px
+  );
 }
 .commentPanel .field textarea {
   min-height: 6rem;
@@ -1698,7 +1779,8 @@ summary:focus-visible {
   }
   .workspaceSummary,
   .dependencyGroups,
-  .dangerArea {
+  .dangerArea,
+  .diffGrid {
     grid-template-columns: 1fr;
   }
   .workspaceSummary > div {

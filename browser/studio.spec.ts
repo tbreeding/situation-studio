@@ -634,7 +634,9 @@ test("a synthetic proposal remains unmistakably separate from the published base
       createHash("sha256")
         .update(`${label}:${testInfo.project.name}:${Date.now()}`)
         .digest("hex");
-    const bundleBody = candidateBody.replace(sentinel, bundleSentinel);
+    const bundleBody = candidateBody
+      .replace(sentinel, bundleSentinel)
+      .replace("preparationTime: 15 minutes", "preparationTime: 20 minutes");
     const bundleCandidateHash = createHash("sha256")
       .update(bundleBody)
       .digest("hex");
@@ -744,6 +746,33 @@ test("a synthetic proposal remains unmistakably separate from the published base
     await expect(page.locator(".artifactStateNotice.candidate")).toContainText(
       "not published",
     );
+    const comparison = page.locator(".diffPanel");
+    await comparison.getByText("Compare published and proposal bytes").click();
+    await expect(comparison.locator(".diffLine.removed").first()).toBeVisible();
+    await expect(comparison.locator(".diffLine.added").first()).toBeVisible();
+    await expect(comparison.getByText("Scroll linked ↕")).toBeVisible();
+    const publishedDiff = comparison.locator(".diffScroller").nth(0);
+    const candidateDiff = comparison.locator(".diffScroller").nth(1);
+    await publishedDiff.evaluate((element) => {
+      element.scrollTop = 240;
+      element.scrollLeft = 80;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    await expect
+      .poll(() =>
+        candidateDiff.evaluate((element) => ({
+          left: element.scrollLeft,
+          top: element.scrollTop,
+        })),
+      )
+      .toEqual({ left: 80, top: 240 });
+    await candidateDiff.evaluate((element) => {
+      element.scrollTop = 120;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    await expect
+      .poll(() => publishedDiff.evaluate((element) => element.scrollTop))
+      .toBe(120);
 
     await page.getByRole("button", { name: "Sign out" }).click();
     await login(page);

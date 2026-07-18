@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ReauthenticationDialog } from "@/components/reauthentication-dialog";
 import { RenderedGuidance } from "@/components/rendered-guidance";
+import { SynchronizedDiff } from "@/components/synchronized-diff";
 
 type Props = {
   situationId: string;
@@ -810,20 +811,15 @@ export function WorkspaceEditor(props: Props) {
               Compare published and {props.displayedArtifactState.toLowerCase()}{" "}
               bytes
             </summary>
-            <div className="diffGrid">
-              <section>
-                <h3>Published</h3>
-                <pre>{props.publishedBody}</pre>
-              </section>
-              <section>
-                <h3>
-                  {props.displayedArtifactState === "PROPOSAL"
-                    ? "Exact proposal"
-                    : "Draft revision"}
-                </h3>
-                <pre>{body}</pre>
-              </section>
-            </div>
+            <SynchronizedDiff
+              candidate={body}
+              candidateLabel={
+                props.displayedArtifactState === "PROPOSAL"
+                  ? "Exact proposal"
+                  : "Draft revision"
+              }
+              published={props.publishedBody}
+            />
           </details>
         )}
         {props.bundle && (

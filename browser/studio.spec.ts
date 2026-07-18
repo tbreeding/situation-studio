@@ -23,3 +23,12 @@ test("unauthenticated protected routes return to Studio login", async ({
   await expect(page).toHaveURL(/\/login\?expired=1$/u);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
 });
+
+test("private-host root probe exposes readiness only", async ({ request }) => {
+  const response = await request.get("/", {
+    headers: { host: "192.168.1.120:3015" },
+    maxRedirects: 0,
+  });
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toEqual({ status: "origin-ready" });
+});

@@ -20,6 +20,16 @@ export function proxy(request: NextRequest) {
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", contentSecurityPolicy);
   const configuredOrigin = process.env.SITUATION_STUDIO_ORIGIN;
+  const configuredHost = process.env.SITUATION_STUDIO_HOST;
+  if (
+    request.nextUrl.pathname === "/" &&
+    configuredHost &&
+    request.headers.get("host") !== configuredHost
+  ) {
+    const response = NextResponse.json({ status: "origin-ready" });
+    response.headers.set("Content-Security-Policy", contentSecurityPolicy);
+    return response;
+  }
   const isAuthenticationPage =
     request.nextUrl.pathname === "/login" ||
     request.nextUrl.pathname.startsWith("/activate/");

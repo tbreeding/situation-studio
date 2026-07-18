@@ -765,7 +765,7 @@ model ProposedBundle {
   snapshotId          String                    @map("snapshot_id") @db.Uuid
   draftId             String                    @map("draft_id") @db.Uuid
   briefId             String?                   @map("brief_id") @db.Uuid
-  aiJobId             String?                   @map("ai_job_id") @db.Uuid
+  aiJobId             String?                   @unique @map("ai_job_id") @db.Uuid
   baseCommit          String                    @map("base_commit") @db.Char(40)
   baseManifestHash    String                    @map("base_manifest_hash") @db.Char(64)
   briefHash           String?                   @map("brief_hash") @db.Char(64)

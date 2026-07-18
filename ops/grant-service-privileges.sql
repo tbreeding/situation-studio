@@ -44,7 +44,7 @@ GRANT INSERT, UPDATE ON
   validation_runs
 TO situation_studio_ai;
 
-GRANT INSERT ON audit_events TO situation_studio_ai;
+GRANT SELECT, INSERT ON audit_events TO situation_studio_ai;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO situation_studio_ai;
 
 GRANT SELECT ON
@@ -57,7 +57,7 @@ GRANT SELECT ON
 TO situation_studio_validator;
 
 GRANT INSERT, UPDATE ON validation_runs TO situation_studio_validator;
-GRANT INSERT ON audit_events TO situation_studio_validator;
+GRANT SELECT, INSERT ON audit_events TO situation_studio_validator;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO situation_studio_validator;
 
 GRANT SELECT ON
@@ -97,8 +97,9 @@ TO situation_studio_publisher;
 GRANT INSERT ON
   situation_versions,
   version_artifacts,
-  publications,
-  audit_events
+  publications
 TO situation_studio_publisher;
+
+GRANT SELECT, INSERT ON audit_events TO situation_studio_publisher;
 
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO situation_studio_publisher;

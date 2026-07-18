@@ -442,6 +442,11 @@ async function createBundle(
   roleOutputs: unknown[],
   candidateBodies: Map<string, string>,
 ) {
+  const existing = await database.proposedBundle.findUnique({
+    where: { aiJobId: jobId },
+  });
+  if (existing) return existing;
+
   const job = await database.aiJob.findUniqueOrThrow({
     where: { id: jobId },
     include: {

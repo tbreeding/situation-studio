@@ -13,7 +13,7 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Current deployed implementation commit: `ecf18f7` (`Bind approvals to exact reviewer provenance`).
+- Current deployed implementation commit: `a16ed8d` (`Resume sensitive actions after reauthentication`).
 - The acceptance-report commit follows the runtime commits and records the deployed state.
 - Leadership baseline commit: `9a870e5c70fef9ae71506cb3138745b88363a190`.
 - Approved desktop UX specification: `SPEC-desktop-ui-ux-improvements.md`. The requested implementation is committed, deployed, and live-verified.
@@ -30,7 +30,7 @@ Before new work, run `git status --short`, read this file and `artifacts/reports
 - PM2 processes: `situation-studio-web` and `situation-studio-worker`.
 - Release root: `/home/admin/projects/situation-studio/releases`.
 - Active symlink: `/home/admin/projects/situation-studio/current`.
-- Current recorded release: `20260718T195022Z`.
+- Current recorded release: `20260718T201015Z`.
 - Stable launchers: `/home/admin/projects/situation-studio/current/ops/start-web.sh` and `ops/start-worker.sh`.
 - Shared environment files: `/home/admin/projects/situation-studio/shared/web.env`, `worker.env`, and `migrator.env`, mode 0600.
 
@@ -84,6 +84,9 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 - Release `20260718T195022Z` fixes the human-review trust boundary. Proposal state now renders `bundle_artifacts.content`, exposes all five exact artifact bodies and candidate hashes, and labels the canonical bundle hash. A mapped reviewer must create an immutable provenance-finalized child bundle before approval; the child carries open comments, updates changed public MDX reviewer/date fields, recalculates hashes, and reruns four exact-hash validations. Approval, staging, and publisher gates require that provenance.
 - The 2026-07-18 production smoke test used the existing `agent` session read-only. It visibly rendered the revised escalation and checkpoint language from bundle `7c7379dcd992…`, showed five immutable artifacts with one changed, and displayed a disabled **Reviewer identity required** control. No preparation, comment resolution, approval, checkout, or publication occurred.
 - The verified pre-deploy backup for this release is `/home/admin/projects/situation-studio/shared/predeploy-backups/20260718T195004Z.dump`, mode 0600.
+- Release `20260718T201015Z`/commit `a16ed8d` replaces the raw `recent reauthentication required` workspace error with a keyboard-contained password prompt. A successful confirmation updates the existing session and automatically resumes the exact pending preparation, approval, staging, publication confirmation, lifecycle, or rollback action. Failed attempts are throttled and audited; cancellation performs no retry.
+- The aged-session browser regression proves the initial preparation request returns 403 without creating a child bundle, the prompt appears, password confirmation succeeds, and the retried preparation returns 201. The complete 36-case browser matrix passes. The live route returns the expected unauthenticated denial, both PM2 processes are online with zero restarts, and production bundle `7c7379dcd992…` remains the sole `HUMAN_REVIEW` revision.
+- The verified pre-deploy backup for the reauthentication release is `/home/admin/projects/situation-studio/shared/predeploy-backups/20260718T201009Z.dump`, mode 0600.
 
 ## Remaining work
 

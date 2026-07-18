@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-18T19:55:04Z",
+  "recordedAt": "2026-07-18T20:14:38Z",
   "source": {
     "leadershipCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
     "leadershipRepositoryModified": false,
@@ -174,9 +174,27 @@
     "productionPublicationExercised": false,
     "leadershipArtifactBytesModified": false
   },
+  "recentReauthentication": {
+    "status": "production-deployed-and-route-verified",
+    "verifiedAt": "2026-07-18T20:14:38Z",
+    "release": "20260718T201015Z",
+    "commit": "a16ed8d",
+    "windowMinutes": 15,
+    "expiredSessionRequestDeniedBeforeMutation": true,
+    "passwordPromptDisplayed": "passed-disposable-browser-fixture",
+    "exactPendingActionResumed": "passed-disposable-browser-fixture",
+    "retriedPreparationStatus": 201,
+    "keyboardContainment": "passed",
+    "failedAttemptsThrottled": true,
+    "successAndDenialAudited": true,
+    "productionEndpointUnauthenticatedDenial": 401,
+    "productionOriginalBundleUnchanged": true,
+    "productionHumanReauthenticationExercised": false,
+    "leadershipArtifactBytesModified": false
+  },
   "externalBeta": {
     "originDeployed": true,
-    "release": "20260718T195022Z",
+    "release": "20260718T201015Z",
     "privateOrigin": "http://192.168.1.120:3015",
     "outerGateRegistered": true,
     "providerExecution": "openai-service-api-enabled",

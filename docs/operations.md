@@ -8,7 +8,7 @@
 - Active symlink: `/home/admin/projects/situation-studio/current`.
 - Shared environment: `/home/admin/projects/situation-studio/shared`.
 - PM2 processes: `situation-studio-web` and `situation-studio-worker`.
-- Current recorded release: `20260718T195022Z`.
+- Current recorded release: `20260718T201015Z`.
 
 The route, first administrator, and OpenAI/Codex-first review worker are active. Publisher Git/release authority remains disabled. Backup automation and a clean restore rehearsal remain required operational work.
 
@@ -81,5 +81,13 @@ reviewer/date provenance, reruns deterministic validation, preserves open
 comments, and exposes all exact artifact bodies and hashes for inspection. The
 separate **Approve exact bundle** action appears only for the same mapped user;
 blocking comments must still be resolved first.
+
+Recent authentication is required for preparation, approval, staging, final
+publication confirmation, lifecycle changes, and rollback. If the 15-minute
+window has elapsed, the workspace asks for the current Studio password and
+automatically retries the original action after successful confirmation.
+Cancelling the prompt sends no retry and makes no workflow change. Failed
+confirmation attempts use the login throttle and produce generic audited
+denials.
 
 See `rp1-assessment.md` for the observed host capacity, database listener risk, and concrete external-beta blockers.

@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "1",
+  "recordedAt": "2026-07-18T09:33:00Z",
+  "source": {
+    "leadershipCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
+    "leadershipRepositoryModified": false,
+    "baselineFiles": 29,
+    "graphNodes": 37,
+    "graphEdges": 126
+  },
+  "verification": {
+    "format": "passed",
+    "lint": "passed",
+    "typecheck": "passed",
+    "prismaSchema": "passed",
+    "secretScan": "passed",
+    "productionBuild": "passed",
+    "unitContractTests": 23,
+    "browserTests": {
+      "passed": 4,
+      "desktop": 2,
+      "mobile": 2
+    },
+    "database": {
+      "postgresVersion": "16.12",
+      "migrations": 4,
+      "historicalUpgrade": "passed",
+      "idempotentRedeploy": "passed",
+      "checkoutRace": "one-winner",
+      "appendOnlyAudit": "passed"
+    }
+  },
+  "inAppBrowser": {
+    "runtime": "production-build",
+    "consoleErrors": 0,
+    "importedSituations": 15,
+    "authenticatedInventory": "passed",
+    "workspace": "passed",
+    "administration": "passed",
+    "newSituationDiscovery": "passed",
+    "newSituationHumanConfirmation": "passed",
+    "completeReviewRoles": 22,
+    "approval": "passed",
+    "staging": "passed",
+    "publication": "passed",
+    "archiveRestore": "passed-in-prior-clean-acceptance-run",
+    "rollback": "passed-in-prior-clean-acceptance-run",
+    "nonceContentSecurityPolicy": "passed"
+  },
+  "publicationEvidence": {
+    "fixtureSlug": "hold-the-agreement-boundary",
+    "bundleHash": "c83a49e4fde0df39c0a5411cd08db5ebca1f22de7aa0c4e85fe288d01d4efcd2",
+    "fakeCommit": "0b13d96fec55449841aaf092b3cf9804d336f3e1",
+    "leadershipFrontmatterSchema": "passed",
+    "orderedSections": "passed",
+    "relatedSituationCount": 2,
+    "exactCandidateBytesPreserved": true,
+    "mode": "deterministic-local-acceptance-only"
+  },
+  "externalBeta": {
+    "deployed": false,
+    "reason": "Fail-closed pending non-chat interactive administrator bootstrap, role-separated service credentials, real provider qualification, restricted publisher identity, backup/restore proof, and outer-gate registration after origin health.",
+    "rp1Mutated": false
+  }
+}

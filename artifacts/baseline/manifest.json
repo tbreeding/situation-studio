@@ -1,0 +1,212 @@
+{
+  "artifacts": [
+    {
+      "byteLength": 4253,
+      "contentHash": "11116fd4105132fc8a3673332d93f74b0cb5611d1d081d3ca9bdd02c3f9b69e5",
+      "logicalId": "situation:defensive-about-feedback",
+      "path": "content/situations/defensive-about-feedback.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4271,
+      "contentHash": "53bbf94695ae7da7edbefb173dad8fbce6a73f36a4ce05351d19759fd9839d0b",
+      "logicalId": "situation:delegated-work-wrong-result",
+      "path": "content/situations/delegated-work-wrong-result.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4430,
+      "contentHash": "57d8a12970ffe02d52af37d858aaf544ded58a2244fd5351b78f322b309a5253",
+      "logicalId": "situation:dominates-team-meetings",
+      "path": "content/situations/dominates-team-meetings.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4763,
+      "contentHash": "95ac2d313d78066e78179fa15023203a1aa78791f82a003f0248f4302cb73f83",
+      "logicalId": "situation:high-performer-hurting-team",
+      "path": "content/situations/high-performer-hurting-team.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 5070,
+      "contentHash": "e42dbcc560711687606bfceda0e693f44ee56c191bf8cf82fa19bca06a5f88a3",
+      "logicalId": "situation:make-bad-attitude-specific",
+      "path": "content/situations/make-bad-attitude-specific.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4397,
+      "contentHash": "f03b2f2792b4c016df59de2f08bb3d39c5a2bc658e3197db9846f9bfc5898ff8",
+      "logicalId": "situation:managing-former-peers",
+      "path": "content/situations/managing-former-peers.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4368,
+      "contentHash": "a373f30406335af505a9227e27603a09ebd8bcad71231229e702bf073446ffe1",
+      "logicalId": "situation:nothing-in-one-on-ones",
+      "path": "content/situations/nothing-in-one-on-ones.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4209,
+      "contentHash": "b660a083321439b06f39a4f109e778c1df90643e86f667abcfa0d644ecd86208",
+      "logicalId": "situation:one-on-ones-became-status-updates",
+      "path": "content/situations/one-on-ones-became-status-updates.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4341,
+      "contentHash": "757daa0c71e8ed4d7d4d44023ee6ca5e711854c157554747dc1c10634aba0066",
+      "logicalId": "situation:persistent-peer-conflict",
+      "path": "content/situations/persistent-peer-conflict.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4523,
+      "contentHash": "41b702bfcb94a50e31ab895f1a9bde3cc898e85bcca83365ece793362bd7d4b4",
+      "logicalId": "situation:promotion-not-ready",
+      "path": "content/situations/promotion-not-ready.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4216,
+      "contentHash": "b2b93ad09f22c0517a5d9c74ab4224a5995062f0205ce9e7a6731e24ab151f73",
+      "logicalId": "situation:repair-cancelled-one-on-ones",
+      "path": "content/situations/repair-cancelled-one-on-ones.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4300,
+      "contentHash": "6b5777f95d768eda6c4bc5b619a477aadd528914973b6049a70e70077fb64de1",
+      "logicalId": "situation:repeatedly-misses-commitments",
+      "path": "content/situations/repeatedly-misses-commitments.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 5361,
+      "contentHash": "b4445752d749df9489aab74458ecf0b24ba8844849590bd2794bf85bed266c6f",
+      "logicalId": "situation:repeatedly-misses-deadlines",
+      "path": "content/situations/repeatedly-misses-deadlines.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4263,
+      "contentHash": "5164e3c799b2bddb46de2f8cf59b1dab4dbb7c6a21a564859e687a3004404025",
+      "logicalId": "situation:stop-taking-delegated-work-back",
+      "path": "content/situations/stop-taking-delegated-work-back.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 4484,
+      "contentHash": "160af3d41e971c69a901a6d12b37df22e87b5447dd0261de049b84e12b6681ba",
+      "logicalId": "situation:tears-during-difficult-conversation",
+      "path": "content/situations/tears-during-difficult-conversation.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "byteLength": 2581,
+      "contentHash": "ff8194ea171d4a82d59ac63f275ea695d895a4aaa65f62755e731e71869f6614",
+      "logicalId": "guide:feedback-and-difficult-conversations",
+      "path": "content/guides/feedback-and-difficult-conversations.mdx",
+      "type": "GUIDE"
+    },
+    {
+      "byteLength": 2525,
+      "contentHash": "c91272f89dc0727bba775d7a0adb680d2986a54fddbb21da8b18cabc74dad536",
+      "logicalId": "guide:new-manager-first-90-days",
+      "path": "content/guides/new-manager-first-90-days.mdx",
+      "type": "GUIDE"
+    },
+    {
+      "byteLength": 2141,
+      "contentHash": "28b53bc8ac41db1eb134b43e5341905346de4e3bd8d84238ddc841cde2f20bce",
+      "logicalId": "guide:one-on-ones",
+      "path": "content/guides/one-on-ones.mdx",
+      "type": "GUIDE"
+    },
+    {
+      "byteLength": 3434,
+      "contentHash": "edcafdfc76fb77f8b75f5923d721b0acb5fef27b6af903a08ef298c37d4dad1a",
+      "logicalId": "practice:coaching-choice",
+      "path": "content/practices/coaching-choice.json",
+      "type": "PRACTICE"
+    },
+    {
+      "byteLength": 3306,
+      "contentHash": "b4f9c65480c603768a71161089485ae2138eb2c4846f8d739ca1d4cf7381dfe0",
+      "logicalId": "practice:feedback-fork",
+      "path": "content/practices/feedback-fork.json",
+      "type": "PRACTICE"
+    },
+    {
+      "byteLength": 3266,
+      "contentHash": "f168de5a3b95a78bce38f4f300719e0be9307fdc22e8bd8c2a95ecef1ac92678",
+      "logicalId": "practice:listen-first",
+      "path": "content/practices/listen-first.json",
+      "type": "PRACTICE"
+    },
+    {
+      "byteLength": 1526,
+      "contentHash": "9627066701b9298c5075821963d157d54186ecdff58027866c399793999dd02b",
+      "logicalId": "source:catalog",
+      "path": "content/bibliography/sources.json",
+      "type": "SOURCE"
+    },
+    {
+      "byteLength": 238,
+      "contentHash": "e0c2e9a2535059d10030081cd8982f0a214ad46f3e9de6a03ba13b9b3e39823f",
+      "logicalId": "author:catalog",
+      "path": "content/authors/authors.json",
+      "type": "AUTHOR"
+    },
+    {
+      "byteLength": 5178,
+      "contentHash": "0e8448ffd733457c3f704c99fddeb7cb66374636a27c9fb18624356b00c1b00e",
+      "logicalId": "tool:catalog",
+      "path": "lib/tools.ts",
+      "type": "TOOL"
+    },
+    {
+      "byteLength": 13648,
+      "contentHash": "7a29be8ec95198b0dc0d39d01d1cd3e43cb2c5fa7d60dec7def688682d8180d4",
+      "logicalId": "lesson_plan:000-syllabus",
+      "path": "sourceMaterial/leadership-workshops-master/000_Syllabus.md",
+      "type": "LESSON_PLAN"
+    },
+    {
+      "byteLength": 15440,
+      "contentHash": "5ee17f5bdd3ee1f45c843556eada8d72bf22b38d7f1dec718c46413e713f96e1",
+      "logicalId": "lesson_plan:001-manager-tools-three-pillars-of-leadership",
+      "path": "sourceMaterial/leadership-workshops-master/lesson-plans/001 Manager Tools - Three Pillars of Leadership.md",
+      "type": "LESSON_PLAN"
+    },
+    {
+      "byteLength": 12680,
+      "contentHash": "594cf9f829cd05d3311478ff582eec8e691c34d3e7865c9c10229582f094d9eb",
+      "logicalId": "lesson_plan:002-manager-tools-power-triangle-and-trinity",
+      "path": "sourceMaterial/leadership-workshops-master/lesson-plans/002 Manager Tools - Power Triangle and Trinity.md",
+      "type": "LESSON_PLAN"
+    },
+    {
+      "byteLength": 11203,
+      "contentHash": "4514ca909ef26ae85a739ed3a21f7ed679aee6d8af993b4aaafc4bc10289f40b",
+      "logicalId": "lesson_plan:003-manager-tools-the-trinity-and-1on1s",
+      "path": "sourceMaterial/leadership-workshops-master/lesson-plans/003 Manager Tools - The Trinity and 1on1s.md",
+      "type": "LESSON_PLAN"
+    },
+    {
+      "byteLength": 7397,
+      "contentHash": "89ea651396ef13c4ee348a7566bafb278f044322c595d09164b9b110781b7b30",
+      "logicalId": "preparation_prompt:prompt-lesson-plan-generator",
+      "path": "sourceMaterial/leadership-workshops-master/misc/prompt-lesson-plan-generator.md",
+      "type": "PREPARATION_PROMPT"
+    }
+  ],
+  "commit": "9a870e5c70fef9ae71506cb3138745b88363a190",
+  "expectedCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
+  "parserVersion": "studio-baseline-v1",
+  "schemaVersion": "1",
+  "sourceRepository": "git@github.com:tbreeding/leadership-field-guide.git"
+}

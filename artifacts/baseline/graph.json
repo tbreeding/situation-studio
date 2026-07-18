@@ -1,0 +1,983 @@
+{
+  "edges": [
+    {
+      "evidence": "content/guides/feedback-and-difficult-conversations.mdx",
+      "source": "guide:feedback-and-difficult-conversations",
+      "target": "route:guides",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/guides/feedback-and-difficult-conversations.mdx:practiceId",
+      "source": "guide:feedback-and-difficult-conversations",
+      "target": "practice:feedback-fork",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/guides/feedback-and-difficult-conversations.mdx:relatedSituationIds",
+      "source": "guide:feedback-and-difficult-conversations",
+      "target": "situation:defensive-about-feedback",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/guides/feedback-and-difficult-conversations.mdx:relatedSituationIds",
+      "source": "guide:feedback-and-difficult-conversations",
+      "target": "situation:high-performer-hurting-team",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/guides/feedback-and-difficult-conversations.mdx:relatedSituationIds",
+      "source": "guide:feedback-and-difficult-conversations",
+      "target": "situation:make-bad-attitude-specific",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/guides/feedback-and-difficult-conversations.mdx:relatedSituationIds",
+      "source": "guide:feedback-and-difficult-conversations",
+      "target": "situation:repeatedly-misses-deadlines",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/guides/feedback-and-difficult-conversations.mdx:relatedSituationIds",
+      "source": "guide:feedback-and-difficult-conversations",
+      "target": "situation:tears-during-difficult-conversation",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "guide:feedback-and-difficult-conversations",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/guides/new-manager-first-90-days.mdx",
+      "source": "guide:new-manager-first-90-days",
+      "target": "route:guides",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/guides/new-manager-first-90-days.mdx:practiceId",
+      "source": "guide:new-manager-first-90-days",
+      "target": "practice:coaching-choice",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/guides/new-manager-first-90-days.mdx:relatedSituationIds",
+      "source": "guide:new-manager-first-90-days",
+      "target": "situation:managing-former-peers",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/guides/new-manager-first-90-days.mdx:relatedSituationIds",
+      "source": "guide:new-manager-first-90-days",
+      "target": "situation:nothing-in-one-on-ones",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/guides/new-manager-first-90-days.mdx:relatedSituationIds",
+      "source": "guide:new-manager-first-90-days",
+      "target": "situation:one-on-ones-became-status-updates",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/guides/new-manager-first-90-days.mdx:relatedSituationIds",
+      "source": "guide:new-manager-first-90-days",
+      "target": "situation:promotion-not-ready",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/guides/new-manager-first-90-days.mdx:relatedSituationIds",
+      "source": "guide:new-manager-first-90-days",
+      "target": "situation:stop-taking-delegated-work-back",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "guide:new-manager-first-90-days",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/guides/one-on-ones.mdx",
+      "source": "guide:one-on-ones",
+      "target": "route:guides",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/guides/one-on-ones.mdx:practiceId",
+      "source": "guide:one-on-ones",
+      "target": "practice:listen-first",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/guides/one-on-ones.mdx:relatedSituationIds",
+      "source": "guide:one-on-ones",
+      "target": "situation:defensive-about-feedback",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/guides/one-on-ones.mdx:relatedSituationIds",
+      "source": "guide:one-on-ones",
+      "target": "situation:nothing-in-one-on-ones",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/guides/one-on-ones.mdx:relatedSituationIds",
+      "source": "guide:one-on-ones",
+      "target": "situation:one-on-ones-became-status-updates",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/guides/one-on-ones.mdx:relatedSituationIds",
+      "source": "guide:one-on-ones",
+      "target": "situation:repair-cancelled-one-on-ones",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "guide:one-on-ones",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "app/practice/[slug]/page.tsx",
+      "source": "practice:coaching-choice",
+      "target": "route:practice",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "practice:coaching-choice",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "app/practice/[slug]/page.tsx",
+      "source": "practice:feedback-fork",
+      "target": "route:practice",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "practice:feedback-fork",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "app/page.tsx:weeklyPractice",
+      "source": "practice:listen-first",
+      "target": "route:home",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "app/practice/[slug]/page.tsx",
+      "source": "practice:listen-first",
+      "target": "route:practice",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "practice:listen-first",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/defensive-about-feedback.mdx:sourceReferences",
+      "source": "situation:defensive-about-feedback",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/defensive-about-feedback.mdx",
+      "source": "situation:defensive-about-feedback",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/defensive-about-feedback.mdx:practiceId",
+      "source": "situation:defensive-about-feedback",
+      "target": "practice:listen-first",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/defensive-about-feedback.mdx:relatedSituationIds",
+      "source": "situation:defensive-about-feedback",
+      "target": "situation:make-bad-attitude-specific",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/defensive-about-feedback.mdx:relatedSituationIds",
+      "source": "situation:defensive-about-feedback",
+      "target": "situation:tears-during-difficult-conversation",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:defensive-about-feedback",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/delegated-work-wrong-result.mdx:sourceReferences",
+      "source": "situation:delegated-work-wrong-result",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/delegated-work-wrong-result.mdx",
+      "source": "situation:delegated-work-wrong-result",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/delegated-work-wrong-result.mdx:practiceId",
+      "source": "situation:delegated-work-wrong-result",
+      "target": "practice:coaching-choice",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/delegated-work-wrong-result.mdx:relatedSituationIds",
+      "source": "situation:delegated-work-wrong-result",
+      "target": "situation:repeatedly-misses-deadlines",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/delegated-work-wrong-result.mdx:relatedSituationIds",
+      "source": "situation:delegated-work-wrong-result",
+      "target": "situation:stop-taking-delegated-work-back",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:delegated-work-wrong-result",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/dominates-team-meetings.mdx:sourceReferences",
+      "source": "situation:dominates-team-meetings",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/dominates-team-meetings.mdx:sourceReferences",
+      "source": "situation:dominates-team-meetings",
+      "target": "source:edmondson-psychological-safety",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/dominates-team-meetings.mdx",
+      "source": "situation:dominates-team-meetings",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/dominates-team-meetings.mdx:practiceId",
+      "source": "situation:dominates-team-meetings",
+      "target": "practice:feedback-fork",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/dominates-team-meetings.mdx:relatedSituationIds",
+      "source": "situation:dominates-team-meetings",
+      "target": "situation:high-performer-hurting-team",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/dominates-team-meetings.mdx:relatedSituationIds",
+      "source": "situation:dominates-team-meetings",
+      "target": "situation:make-bad-attitude-specific",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:dominates-team-meetings",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/high-performer-hurting-team.mdx:sourceReferences",
+      "source": "situation:high-performer-hurting-team",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/high-performer-hurting-team.mdx:sourceReferences",
+      "source": "situation:high-performer-hurting-team",
+      "target": "source:edmondson-psychological-safety",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/high-performer-hurting-team.mdx",
+      "source": "situation:high-performer-hurting-team",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/high-performer-hurting-team.mdx:practiceId",
+      "source": "situation:high-performer-hurting-team",
+      "target": "practice:feedback-fork",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/high-performer-hurting-team.mdx:relatedSituationIds",
+      "source": "situation:high-performer-hurting-team",
+      "target": "situation:dominates-team-meetings",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/high-performer-hurting-team.mdx:relatedSituationIds",
+      "source": "situation:high-performer-hurting-team",
+      "target": "situation:persistent-peer-conflict",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:high-performer-hurting-team",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/make-bad-attitude-specific.mdx:sourceReferences",
+      "source": "situation:make-bad-attitude-specific",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/make-bad-attitude-specific.mdx",
+      "source": "situation:make-bad-attitude-specific",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/make-bad-attitude-specific.mdx:practiceId",
+      "source": "situation:make-bad-attitude-specific",
+      "target": "practice:feedback-fork",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/make-bad-attitude-specific.mdx:relatedSituationIds",
+      "source": "situation:make-bad-attitude-specific",
+      "target": "situation:defensive-about-feedback",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/make-bad-attitude-specific.mdx:relatedSituationIds",
+      "source": "situation:make-bad-attitude-specific",
+      "target": "situation:dominates-team-meetings",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:make-bad-attitude-specific",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/managing-former-peers.mdx:sourceReferences",
+      "source": "situation:managing-former-peers",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/managing-former-peers.mdx",
+      "source": "situation:managing-former-peers",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/managing-former-peers.mdx:practiceId",
+      "source": "situation:managing-former-peers",
+      "target": "practice:coaching-choice",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/managing-former-peers.mdx:relatedSituationIds",
+      "source": "situation:managing-former-peers",
+      "target": "situation:promotion-not-ready",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/managing-former-peers.mdx:relatedSituationIds",
+      "source": "situation:managing-former-peers",
+      "target": "situation:repair-cancelled-one-on-ones",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:managing-former-peers",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/nothing-in-one-on-ones.mdx:sourceReferences",
+      "source": "situation:nothing-in-one-on-ones",
+      "target": "source:one-on-one-lesson",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/nothing-in-one-on-ones.mdx",
+      "source": "situation:nothing-in-one-on-ones",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/nothing-in-one-on-ones.mdx:practiceId",
+      "source": "situation:nothing-in-one-on-ones",
+      "target": "practice:listen-first",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/nothing-in-one-on-ones.mdx:relatedSituationIds",
+      "source": "situation:nothing-in-one-on-ones",
+      "target": "situation:one-on-ones-became-status-updates",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/nothing-in-one-on-ones.mdx:relatedSituationIds",
+      "source": "situation:nothing-in-one-on-ones",
+      "target": "situation:repair-cancelled-one-on-ones",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "sourceReference:one-on-one-lesson",
+      "source": "situation:nothing-in-one-on-ones",
+      "target": "lesson_plan:003-manager-tools-the-trinity-and-1on1s",
+      "type": "TAUGHT_BY_LESSON"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:nothing-in-one-on-ones",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/one-on-ones-became-status-updates.mdx:sourceReferences",
+      "source": "situation:one-on-ones-became-status-updates",
+      "target": "source:one-on-one-lesson",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/one-on-ones-became-status-updates.mdx",
+      "source": "situation:one-on-ones-became-status-updates",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/one-on-ones-became-status-updates.mdx:practiceId",
+      "source": "situation:one-on-ones-became-status-updates",
+      "target": "practice:listen-first",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/one-on-ones-became-status-updates.mdx:relatedSituationIds",
+      "source": "situation:one-on-ones-became-status-updates",
+      "target": "situation:nothing-in-one-on-ones",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/one-on-ones-became-status-updates.mdx:relatedSituationIds",
+      "source": "situation:one-on-ones-became-status-updates",
+      "target": "situation:repair-cancelled-one-on-ones",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "sourceReference:one-on-one-lesson",
+      "source": "situation:one-on-ones-became-status-updates",
+      "target": "lesson_plan:003-manager-tools-the-trinity-and-1on1s",
+      "type": "TAUGHT_BY_LESSON"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:one-on-ones-became-status-updates",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/persistent-peer-conflict.mdx:sourceReferences",
+      "source": "situation:persistent-peer-conflict",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/persistent-peer-conflict.mdx:sourceReferences",
+      "source": "situation:persistent-peer-conflict",
+      "target": "source:edmondson-psychological-safety",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/persistent-peer-conflict.mdx",
+      "source": "situation:persistent-peer-conflict",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/persistent-peer-conflict.mdx:practiceId",
+      "source": "situation:persistent-peer-conflict",
+      "target": "practice:listen-first",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/persistent-peer-conflict.mdx:relatedSituationIds",
+      "source": "situation:persistent-peer-conflict",
+      "target": "situation:dominates-team-meetings",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/persistent-peer-conflict.mdx:relatedSituationIds",
+      "source": "situation:persistent-peer-conflict",
+      "target": "situation:high-performer-hurting-team",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:persistent-peer-conflict",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/promotion-not-ready.mdx:sourceReferences",
+      "source": "situation:promotion-not-ready",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/promotion-not-ready.mdx",
+      "source": "situation:promotion-not-ready",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/promotion-not-ready.mdx:practiceId",
+      "source": "situation:promotion-not-ready",
+      "target": "practice:coaching-choice",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/promotion-not-ready.mdx:relatedSituationIds",
+      "source": "situation:promotion-not-ready",
+      "target": "situation:delegated-work-wrong-result",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/promotion-not-ready.mdx:relatedSituationIds",
+      "source": "situation:promotion-not-ready",
+      "target": "situation:managing-former-peers",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:promotion-not-ready",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/repair-cancelled-one-on-ones.mdx:sourceReferences",
+      "source": "situation:repair-cancelled-one-on-ones",
+      "target": "source:one-on-one-lesson",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/repair-cancelled-one-on-ones.mdx",
+      "source": "situation:repair-cancelled-one-on-ones",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/repair-cancelled-one-on-ones.mdx:practiceId",
+      "source": "situation:repair-cancelled-one-on-ones",
+      "target": "practice:feedback-fork",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/repair-cancelled-one-on-ones.mdx:relatedSituationIds",
+      "source": "situation:repair-cancelled-one-on-ones",
+      "target": "situation:nothing-in-one-on-ones",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/repair-cancelled-one-on-ones.mdx:relatedSituationIds",
+      "source": "situation:repair-cancelled-one-on-ones",
+      "target": "situation:one-on-ones-became-status-updates",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "sourceReference:one-on-one-lesson",
+      "source": "situation:repair-cancelled-one-on-ones",
+      "target": "lesson_plan:003-manager-tools-the-trinity-and-1on1s",
+      "type": "TAUGHT_BY_LESSON"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:repair-cancelled-one-on-ones",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/repeatedly-misses-commitments.mdx:sourceReferences",
+      "source": "situation:repeatedly-misses-commitments",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/repeatedly-misses-commitments.mdx",
+      "source": "situation:repeatedly-misses-commitments",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/repeatedly-misses-commitments.mdx:practiceId",
+      "source": "situation:repeatedly-misses-commitments",
+      "target": "practice:feedback-fork",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/repeatedly-misses-commitments.mdx:relatedSituationIds",
+      "source": "situation:repeatedly-misses-commitments",
+      "target": "situation:repeatedly-misses-deadlines",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/repeatedly-misses-commitments.mdx:relatedSituationIds",
+      "source": "situation:repeatedly-misses-commitments",
+      "target": "situation:stop-taking-delegated-work-back",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:repeatedly-misses-commitments",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/repeatedly-misses-deadlines.mdx:sourceReferences",
+      "source": "situation:repeatedly-misses-deadlines",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/repeatedly-misses-deadlines.mdx",
+      "source": "situation:repeatedly-misses-deadlines",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/repeatedly-misses-deadlines.mdx:practiceId",
+      "source": "situation:repeatedly-misses-deadlines",
+      "target": "practice:feedback-fork",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/repeatedly-misses-deadlines.mdx:relatedSituationIds",
+      "source": "situation:repeatedly-misses-deadlines",
+      "target": "situation:delegated-work-wrong-result",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/repeatedly-misses-deadlines.mdx:relatedSituationIds",
+      "source": "situation:repeatedly-misses-deadlines",
+      "target": "situation:repeatedly-misses-commitments",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:repeatedly-misses-deadlines",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/stop-taking-delegated-work-back.mdx:sourceReferences",
+      "source": "situation:stop-taking-delegated-work-back",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/stop-taking-delegated-work-back.mdx",
+      "source": "situation:stop-taking-delegated-work-back",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/stop-taking-delegated-work-back.mdx:practiceId",
+      "source": "situation:stop-taking-delegated-work-back",
+      "target": "practice:coaching-choice",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/stop-taking-delegated-work-back.mdx:relatedSituationIds",
+      "source": "situation:stop-taking-delegated-work-back",
+      "target": "situation:delegated-work-wrong-result",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/stop-taking-delegated-work-back.mdx:relatedSituationIds",
+      "source": "situation:stop-taking-delegated-work-back",
+      "target": "situation:repeatedly-misses-commitments",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:stop-taking-delegated-work-back",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    },
+    {
+      "evidence": "content/situations/tears-during-difficult-conversation.mdx:sourceReferences",
+      "source": "situation:tears-during-difficult-conversation",
+      "target": "source:course-syllabus",
+      "type": "CITES_SOURCE"
+    },
+    {
+      "evidence": "content/situations/tears-during-difficult-conversation.mdx",
+      "source": "situation:tears-during-difficult-conversation",
+      "target": "route:situations",
+      "type": "CONSUMED_BY_ROUTE"
+    },
+    {
+      "evidence": "content/situations/tears-during-difficult-conversation.mdx:practiceId",
+      "source": "situation:tears-during-difficult-conversation",
+      "target": "practice:listen-first",
+      "type": "EMBEDS_PRACTICE"
+    },
+    {
+      "evidence": "content/situations/tears-during-difficult-conversation.mdx:relatedSituationIds",
+      "source": "situation:tears-during-difficult-conversation",
+      "target": "situation:defensive-about-feedback",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "content/situations/tears-during-difficult-conversation.mdx:relatedSituationIds",
+      "source": "situation:tears-during-difficult-conversation",
+      "target": "situation:promotion-not-ready",
+      "type": "LINKS_TO"
+    },
+    {
+      "evidence": "lib/content.ts",
+      "source": "situation:tears-during-difficult-conversation",
+      "target": "validator:content-graph",
+      "type": "VALIDATED_BY"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "author:catalog",
+      "label": "catalog",
+      "path": "content/authors/authors.json",
+      "type": "AUTHOR"
+    },
+    {
+      "id": "guide:feedback-and-difficult-conversations",
+      "label": "feedback-and-difficult-conversations",
+      "path": "content/guides/feedback-and-difficult-conversations.mdx",
+      "type": "GUIDE"
+    },
+    {
+      "id": "guide:new-manager-first-90-days",
+      "label": "new-manager-first-90-days",
+      "path": "content/guides/new-manager-first-90-days.mdx",
+      "type": "GUIDE"
+    },
+    {
+      "id": "guide:one-on-ones",
+      "label": "one-on-ones",
+      "path": "content/guides/one-on-ones.mdx",
+      "type": "GUIDE"
+    },
+    {
+      "id": "lesson_plan:000-syllabus",
+      "label": "000-syllabus",
+      "path": "sourceMaterial/leadership-workshops-master/000_Syllabus.md",
+      "type": "LESSON_PLAN"
+    },
+    {
+      "id": "lesson_plan:001-manager-tools-three-pillars-of-leadership",
+      "label": "001-manager-tools-three-pillars-of-leadership",
+      "path": "sourceMaterial/leadership-workshops-master/lesson-plans/001 Manager Tools - Three Pillars of Leadership.md",
+      "type": "LESSON_PLAN"
+    },
+    {
+      "id": "lesson_plan:002-manager-tools-power-triangle-and-trinity",
+      "label": "002-manager-tools-power-triangle-and-trinity",
+      "path": "sourceMaterial/leadership-workshops-master/lesson-plans/002 Manager Tools - Power Triangle and Trinity.md",
+      "type": "LESSON_PLAN"
+    },
+    {
+      "id": "lesson_plan:003-manager-tools-the-trinity-and-1on1s",
+      "label": "003-manager-tools-the-trinity-and-1on1s",
+      "path": "sourceMaterial/leadership-workshops-master/lesson-plans/003 Manager Tools - The Trinity and 1on1s.md",
+      "type": "LESSON_PLAN"
+    },
+    {
+      "id": "practice:coaching-choice",
+      "label": "coaching-choice",
+      "path": "content/practices/coaching-choice.json",
+      "type": "PRACTICE"
+    },
+    {
+      "id": "practice:feedback-fork",
+      "label": "feedback-fork",
+      "path": "content/practices/feedback-fork.json",
+      "type": "PRACTICE"
+    },
+    {
+      "id": "practice:listen-first",
+      "label": "listen-first",
+      "path": "content/practices/listen-first.json",
+      "type": "PRACTICE"
+    },
+    {
+      "id": "preparation_prompt:prompt-lesson-plan-generator",
+      "label": "prompt-lesson-plan-generator",
+      "path": "sourceMaterial/leadership-workshops-master/misc/prompt-lesson-plan-generator.md",
+      "type": "PREPARATION_PROMPT"
+    },
+    {
+      "id": "route:guides",
+      "label": "/guides",
+      "type": "ROUTE"
+    },
+    {
+      "id": "route:home",
+      "label": "/",
+      "type": "ROUTE"
+    },
+    {
+      "id": "route:practice",
+      "label": "/practice",
+      "type": "ROUTE"
+    },
+    {
+      "id": "route:situations",
+      "label": "/situations",
+      "type": "ROUTE"
+    },
+    {
+      "id": "situation:defensive-about-feedback",
+      "label": "defensive-about-feedback",
+      "path": "content/situations/defensive-about-feedback.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:delegated-work-wrong-result",
+      "label": "delegated-work-wrong-result",
+      "path": "content/situations/delegated-work-wrong-result.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:dominates-team-meetings",
+      "label": "dominates-team-meetings",
+      "path": "content/situations/dominates-team-meetings.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:high-performer-hurting-team",
+      "label": "high-performer-hurting-team",
+      "path": "content/situations/high-performer-hurting-team.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:make-bad-attitude-specific",
+      "label": "make-bad-attitude-specific",
+      "path": "content/situations/make-bad-attitude-specific.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:managing-former-peers",
+      "label": "managing-former-peers",
+      "path": "content/situations/managing-former-peers.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:nothing-in-one-on-ones",
+      "label": "nothing-in-one-on-ones",
+      "path": "content/situations/nothing-in-one-on-ones.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:one-on-ones-became-status-updates",
+      "label": "one-on-ones-became-status-updates",
+      "path": "content/situations/one-on-ones-became-status-updates.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:persistent-peer-conflict",
+      "label": "persistent-peer-conflict",
+      "path": "content/situations/persistent-peer-conflict.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:promotion-not-ready",
+      "label": "promotion-not-ready",
+      "path": "content/situations/promotion-not-ready.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:repair-cancelled-one-on-ones",
+      "label": "repair-cancelled-one-on-ones",
+      "path": "content/situations/repair-cancelled-one-on-ones.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:repeatedly-misses-commitments",
+      "label": "repeatedly-misses-commitments",
+      "path": "content/situations/repeatedly-misses-commitments.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:repeatedly-misses-deadlines",
+      "label": "repeatedly-misses-deadlines",
+      "path": "content/situations/repeatedly-misses-deadlines.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:stop-taking-delegated-work-back",
+      "label": "stop-taking-delegated-work-back",
+      "path": "content/situations/stop-taking-delegated-work-back.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "situation:tears-during-difficult-conversation",
+      "label": "tears-during-difficult-conversation",
+      "path": "content/situations/tears-during-difficult-conversation.mdx",
+      "type": "SITUATION"
+    },
+    {
+      "id": "source:catalog",
+      "label": "catalog",
+      "path": "content/bibliography/sources.json",
+      "type": "SOURCE"
+    },
+    {
+      "id": "source:course-syllabus",
+      "label": "course-syllabus",
+      "path": "content/bibliography/sources.json",
+      "type": "SOURCE"
+    },
+    {
+      "id": "source:edmondson-psychological-safety",
+      "label": "edmondson-psychological-safety",
+      "path": "content/bibliography/sources.json",
+      "type": "SOURCE"
+    },
+    {
+      "id": "source:one-on-one-lesson",
+      "label": "one-on-one-lesson",
+      "path": "content/bibliography/sources.json",
+      "type": "SOURCE"
+    },
+    {
+      "id": "tool:catalog",
+      "label": "catalog",
+      "path": "lib/tools.ts",
+      "type": "TOOL"
+    },
+    {
+      "id": "validator:content-graph",
+      "label": "Content graph validator",
+      "path": "lib/content.ts",
+      "type": "VALIDATOR"
+    }
+  ],
+  "parserVersion": "studio-baseline-v1",
+  "schemaVersion": "1",
+  "sourceCommit": "9a870e5c70fef9ae71506cb3138745b88363a190"
+}

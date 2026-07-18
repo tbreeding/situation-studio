@@ -1,0 +1,44 @@
+{
+  "name": "situation-studio",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": "24.14.0",
+    "pnpm": "11.9.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @situation-studio/web dev",
+    "build": "pnpm --filter @situation-studio/web build",
+    "start": "pnpm --filter @situation-studio/web start",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "vitest run",
+    "test:db": "tsx packages/testing/src/db-invariants.ts",
+    "test:browser": "playwright test",
+    "db:generate": "prisma generate --config packages/db/prisma.config.ts",
+    "db:validate": "prisma validate --config packages/db/prisma.config.ts",
+    "db:migrate:deploy": "prisma migrate deploy --config packages/db/prisma.config.ts",
+    "db:migrate:dev": "prisma migrate dev --config packages/db/prisma.config.ts",
+    "baseline:generate": "tsx packages/testing/src/generate-baseline.ts",
+    "baseline:verify": "tsx packages/testing/src/verify-baseline.ts",
+    "legacy:dry-run": "tsx packages/testing/src/legacy-import-dry-run.ts",
+    "admin:bootstrap": "tsx apps/web/scripts/bootstrap-admin.ts",
+    "admin:reset": "tsx apps/web/scripts/reset-admin.ts",
+    "security:secrets": "tsx packages/testing/src/secret-scan.ts",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm db:validate && pnpm baseline:verify && pnpm test && pnpm security:secrets && pnpm build"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "@types/node": "24.13.3",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.2.10",
+    "prettier": "3.9.5",
+    "prisma": "7.8.0",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

@@ -15,6 +15,7 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Branch: `main`.
 - Current implementation commit: `0c569ef57b62c7eb21a477b13d9ad5ec9036eac6` (`Clarify final publication decision`).
 - Current RP1 release: `20260719T070439Z`.
+- `main` contains newer visual-cleanup and deployment-safety changes that are intentionally not deployed. Do not deploy them without explicit human approval for the exact commit.
 - The worktree was clean after the release.
 - The complete local gate passed: formatting, lint, strict TypeScript, Prisma validation, immutable-baseline verification, 39 tests, secret scan, and the production web build.
 - The 36-case Chromium matrix most recently passed 28 applicable cases with 8 intentional desktop-only mobile skips.
@@ -96,6 +97,7 @@ Do not trigger final publication without explicit human direction. Production Gi
 
 ## Completed evidence
 
+- At 2026-07-19 07:17 UTC, the former workspace-wide deploy transfer began copying an 878 MB / 40,101-file payload that included ignored `artifacts/runtime` data. RP1 stopped answering IP traffic after 318 MB transferred; the deploy never reached dependency installation, build, symlink cutover, or PM2 reload. A physical power cycle at 07:28 UTC restored the preserved Studio release `20260719T070439Z`, preserved Leadership candidate release, all PM2 processes, and healthy PostgreSQL. The exact kernel-level cause is unproven because the previous boot journal was not persistent. The deploy path is now guarded by exact-commit approval, clean/pushed-main checks, a healthy-host preflight, a 50 MB source-archive cap, and Git-committed-source-only transfer.
 - The branded SVG favicon is live at `/icon.svg` with the expected `image/svg+xml` content type. Its deployed SHA-256 exactly matches the committed source, and the mark remains legible in a 16×16 raster check.
 - Production review job `8fd6d658-8d64-4722-87dc-7699c61f7075` completed 22/22 durable roles using `gpt-5.6-sol`, with zero fallbacks, one proposal bundle, and 3/3 validations.
 - The reviewer-provenance flow created revision 2, wrote `timothy-breeding` and review date `2026-07-18` into the exact changed MDX, reran exact-byte validation, and produced the approved bundle above.
@@ -127,11 +129,13 @@ pnpm verify
 pnpm test:browser
 ```
 
-Deploy committed `main`:
+Deploy an explicitly approved, committed, and pushed `main` SHA. The script refuses
+unapproved commits, dirty worktrees, unhealthy hosts, and oversized source archives;
+it transfers committed Git source only:
 
 ```sh
 cd /Users/timothybreeding/projects/situation-studio
-./deploy.sh
+SITUATION_STUDIO_APPROVED_COMMIT="$(git rev-parse HEAD)" ./deploy.sh
 ```
 
 Read-only RP1 checks:

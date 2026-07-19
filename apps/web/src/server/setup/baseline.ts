@@ -20,6 +20,37 @@ type BaselineGraph = {
   edges: { source: string; target: string; type: string; evidence: string }[];
 };
 
+type BaselineInventory = {
+  exactSnapshotId: string | null;
+  latestSnapshotId: string | null;
+  snapshots: number;
+  situations: number;
+  artifacts: number;
+};
+
+export function baselineImportDisposition(
+  inventory: BaselineInventory,
+): { action: "IMPORT" } | { action: "SKIP"; snapshotId: string } {
+  const initialized =
+    inventory.snapshots > 0 &&
+    inventory.situations > 0 &&
+    inventory.artifacts > 0;
+  const empty =
+    inventory.snapshots === 0 &&
+    inventory.situations === 0 &&
+    inventory.artifacts === 0;
+  if (empty) return { action: "IMPORT" };
+  if (initialized) {
+    const snapshotId = inventory.exactSnapshotId ?? inventory.latestSnapshotId;
+    if (!snapshotId)
+      throw new Error("Initialized baseline is missing a repository snapshot");
+    return { action: "SKIP", snapshotId };
+  }
+  throw new Error(
+    "Baseline database is partially initialized; refusing an unsafe import",
+  );
+}
+
 export async function importLegacyBaseline(
   database: DatabaseClient,
   studioRoot: string,
@@ -38,15 +69,29 @@ export async function importLegacyBaseline(
   const graph = JSON.parse(graphBody) as BaselineGraph;
   const manifestHash = createHash("sha256").update(manifestBody).digest("hex");
   const graphHash = createHash("sha256").update(graphBody).digest("hex");
-  const existing = await database.repositorySnapshot.findUnique({
-    where: { commitSha: manifest.commit },
+  const [existing, latest, snapshots, situations, artifacts] =
+    await Promise.all([
+      database.repositorySnapshot.findUnique({
+        where: { commitSha: manifest.commit },
+      }),
+      database.repositorySnapshot.findFirst({ orderBy: { createdAt: "desc" } }),
+      database.repositorySnapshot.count(),
+      database.situation.count(),
+      database.artifact.count(),
+    ]);
+  const disposition = baselineImportDisposition({
+    exactSnapshotId: existing?.id ?? null,
+    latestSnapshotId: latest?.id ?? null,
+    snapshots,
+    situations,
+    artifacts,
   });
-  if (existing)
+  if (disposition.action === "SKIP")
     return {
       imported: false,
-      snapshotId: existing.id,
-      situations: await database.situation.count(),
-      artifacts: await database.artifact.count(),
+      snapshotId: disposition.snapshotId,
+      situations,
+      artifacts,
     };
 
   return database.$transaction(

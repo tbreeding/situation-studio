@@ -1,9 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { PublicationConfirmationDialog } from "@/components/publication-confirmation-dialog";
 import { ReauthenticationDialog } from "@/components/reauthentication-dialog";
 import { RenderedGuidance } from "@/components/rendered-guidance";
 import { SynchronizedDiff } from "@/components/synchronized-diff";
+import {
+  isAwaitingHumanConfirmation,
+  publicationProgressSteps,
+  shouldPollPublication,
+} from "@/lib/publication-presentation";
 
 type Props = {
   situationId: string;
@@ -18,6 +25,7 @@ type Props = {
   artifact: { id: string; body: string } | null;
   displayedArtifactState: "PUBLISHED" | "DRAFT" | "PROPOSAL";
   publishedBody: string | null;
+  publishedCommitSha: string | null;
   revision: number | null;
   csrfToken: string;
   bundle: {
@@ -41,6 +49,7 @@ type Props = {
   publicationRequest: {
     id: string;
     state: string;
+    currentStep: string;
     previewCommitSha: string | null;
     finalConfirmed: boolean;
   } | null;
@@ -51,6 +60,7 @@ type Props = {
 };
 
 export function WorkspaceEditor(props: Props) {
+  const router = useRouter();
   const ownsCheckout =
     props.checkout?.holderUserId === props.userId &&
     props.checkout.custody === "USER";
@@ -65,6 +75,16 @@ export function WorkspaceEditor(props: Props) {
   const [body, setBody] = useState(props.artifact?.body ?? "");
   const [checkInPending, setCheckInPending] = useState(false);
   const [preparationPending, setPreparationPending] = useState(false);
+  const [publicationConfirmationOpen, setPublicationConfirmationOpen] =
+    useState(false);
+  const [publicationSubmitting, setPublicationSubmitting] = useState(false);
+  const [
+    publicationConfirmationSubmitted,
+    setPublicationConfirmationSubmitted,
+  ] = useState(false);
+  const [publishedCandidateCommit, setPublishedCandidateCommit] = useState<
+    string | null
+  >(null);
   const [reauthenticationRequest, setReauthenticationRequest] = useState<{
     actionLabel: string;
     retry: () => Promise<void>;
@@ -86,6 +106,34 @@ export function WorkspaceEditor(props: Props) {
   const [lifecycleAttempted, setLifecycleAttempted] = useState(false);
   const [commentBody, setCommentBody] = useState("");
   const [blockingComment, setBlockingComment] = useState(true);
+  const awaitingHumanConfirmation = Boolean(
+    props.publicationRequest &&
+    isAwaitingHumanConfirmation(
+      props.publicationRequest.state,
+      props.publicationRequest.finalConfirmed,
+    ),
+  );
+  const publicationProgressVisible = Boolean(
+    props.publicationRequest &&
+    [
+      "AWAITING_CONFIRMATION",
+      "CUTOVER",
+      "LIVE_VERIFIED",
+      "RECONCILED",
+    ].includes(props.publicationRequest.state) &&
+    (publicationConfirmationSubmitted ||
+      props.publicationRequest.finalConfirmed ||
+      props.publicationRequest.state !== "AWAITING_CONFIRMATION"),
+  );
+  const progressSteps = props.publicationRequest
+    ? publicationProgressSteps(
+        props.publicationRequest.state,
+        props.publicationRequest.finalConfirmed,
+        publicationConfirmationSubmitted,
+      )
+    : [];
+  const publicationSucceeded =
+    publicationConfirmationSubmitted && !props.publicationRequest;
   const lifecycleReasonError =
     lifecycleAttempted && archiveReason.trim().length < 8
       ? "Enter a specific reason of at least 8 characters."
@@ -167,6 +215,20 @@ export function WorkspaceEditor(props: Props) {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [closeExpandedSource, sourceExpanded]);
+
+  useEffect(() => {
+    if (!props.publicationRequest) return;
+    if (
+      !shouldPollPublication(
+        props.publicationRequest.state,
+        props.publicationRequest.finalConfirmed,
+        publicationConfirmationSubmitted,
+      )
+    )
+      return;
+    const timer = window.setInterval(() => router.refresh(), 2_500);
+    return () => window.clearInterval(timer);
+  }, [props.publicationRequest, publicationConfirmationSubmitted, router]);
 
   async function checkout() {
     setStatus("Acquiring exclusive checkout…");
@@ -390,28 +452,62 @@ export function WorkspaceEditor(props: Props) {
 
   async function confirmPublication() {
     if (!props.publicationRequest) return;
-    setStatus("Publishing the exact staged commit and finalizing its record…");
-    const response = await fetch(
-      `/api/publications/${props.publicationRequest.id}/confirm`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-csrf-token": props.csrfToken,
+    setPublicationSubmitting(true);
+    setPublishedCandidateCommit(props.publicationRequest.previewCommitSha);
+    setStatus("Recording final confirmation for the exact staged candidate…");
+    let response: Response;
+    try {
+      response = await fetch(
+        `/api/publications/${props.publicationRequest.id}/confirm`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-csrf-token": props.csrfToken,
+          },
+          body: "{}",
         },
-        body: "{}",
-      },
-    );
+      );
+    } catch {
+      setPublicationSubmitting(false);
+      setPublicationConfirmationOpen(false);
+      setStatus(
+        "Publication confirmation could not connect. No confirmation was recorded.",
+      );
+      return;
+    }
     if (
       await requestReauthentication(
         response,
         "publish this reviewed bundle",
         confirmPublication,
       )
-    )
+    ) {
+      setPublicationConfirmationOpen(false);
+      setPublicationSubmitting(false);
       return;
-    if (response.ok) location.reload();
-    else setStatus("Final publication confirmation failed.");
+    }
+    if (response.ok) {
+      setPublicationConfirmationOpen(false);
+      setPublicationSubmitting(false);
+      setPublicationConfirmationSubmitted(true);
+      setStatus(
+        "Confirmation recorded. The trusted publisher is advancing the official baseline…",
+      );
+      router.refresh();
+    } else {
+      const result = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      setPublicationSubmitting(false);
+      setPublicationConfirmationOpen(false);
+      setStatus(
+        result?.error === "confirmation preconditions failed"
+          ? "Publication state changed before confirmation. Reload before continuing."
+          : (result?.error ??
+              "Final publication confirmation failed before any change was recorded."),
+      );
+    }
   }
 
   const publicationPending =
@@ -419,6 +515,7 @@ export function WorkspaceEditor(props: Props) {
     ![
       "AWAITING_CONFIRMATION",
       "FAILED_PREVIEW",
+      "AUTO_ROLLED_BACK",
       "RECONCILIATION_REQUIRED",
       "RECONCILED",
     ].includes(props.publicationRequest.state);
@@ -550,9 +647,140 @@ export function WorkspaceEditor(props: Props) {
         </h2>
       </div>
       <div className="panelBody">
+        {publicationSucceeded && (
+          <section
+            className="publicationDecisionCard success"
+            aria-labelledby="publication-success-title"
+            role="status"
+          >
+            <div>
+              <p className="eyebrow">Publication complete</p>
+              <h3 id="publication-success-title">Published successfully</h3>
+              <p>
+                Candidate{" "}
+                <code>
+                  {publishedCandidateCommit?.slice(0, 8) ?? "verified"}
+                </code>{" "}
+                is now the official baseline. Leadership has been verified and
+                publisher custody has been released.
+              </p>
+            </div>
+          </section>
+        )}
+
+        {props.publicationRequest && awaitingHumanConfirmation && (
+          <section
+            className="publicationDecisionCard ready"
+            aria-labelledby="publication-decision-title"
+          >
+            <div className="publicationDecisionCopy">
+              <p className="eyebrow">Ready for final publication</p>
+              <h3 id="publication-decision-title">
+                Leadership is displaying the staged candidate
+              </h3>
+              <p>
+                It is reviewed and verified, but it is not yet the official
+                published baseline. Protected Git main has not moved.
+              </p>
+            </div>
+            <div
+              className="publicationVersionChange compact"
+              aria-label="Current baseline and staged candidate"
+            >
+              <div>
+                <span>Official baseline</span>
+                <strong>
+                  {props.publishedCommitSha?.slice(0, 8) ?? "Unavailable"}
+                </strong>
+                <small>Protected Git main</small>
+              </div>
+              <span aria-hidden="true">→</span>
+              <div>
+                <span>Staged candidate</span>
+                <strong>
+                  {props.publicationRequest.previewCommitSha?.slice(0, 8) ??
+                    "Preparing"}
+                </strong>
+                <small>Currently displayed on Leadership</small>
+              </div>
+            </div>
+            <div className="publicationDecisionFooter">
+              <p className="publicationCustodyNote">
+                <strong>Publisher custody:</strong> holding the exact reviewed
+                bytes during this decision.
+              </p>
+              <div className="publicationDecisionActions">
+                <a
+                  className="button secondary"
+                  href="https://leadership.timsprototypes.com"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Review candidate ↗
+                </a>
+                {props.permissions.includes("publication.publish") && (
+                  <button
+                    className="button warn"
+                    disabled={!props.publicationRequest.previewCommitSha}
+                    type="button"
+                    onClick={() => setPublicationConfirmationOpen(true)}
+                  >
+                    Confirm and publish{" "}
+                    {props.publicationRequest.previewCommitSha?.slice(0, 8) ??
+                      "candidate"}
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {props.publicationRequest && publicationProgressVisible && (
+          <section
+            className="publicationDecisionCard publishing"
+            aria-labelledby="publication-progress-title"
+            aria-live="polite"
+            role="status"
+          >
+            <div className="publicationDecisionCopy">
+              <p className="eyebrow">Final publication in progress</p>
+              <h3 id="publication-progress-title">
+                Publishing candidate{" "}
+                {props.publicationRequest.previewCommitSha?.slice(0, 8)}
+              </h3>
+              <p>
+                Confirmation is recorded. This status updates automatically; no
+                additional action is required.
+              </p>
+            </div>
+            <ol className="publicationProgress">
+              {progressSteps.map((step, index) => (
+                <li className={step.status} key={step.key}>
+                  <span aria-hidden="true">
+                    {step.status === "complete" ? "✓" : index + 1}
+                  </span>
+                  <div>
+                    <strong>{step.label}</strong>
+                    <small>{step.description}</small>
+                  </div>
+                </li>
+              ))}
+            </ol>
+            <p className="publicationProgressFootnote">
+              Previous official baseline{" "}
+              <code>
+                {props.publishedCommitSha?.slice(0, 8) ?? "unavailable"}
+              </code>{" "}
+              remains recoverable until reconciliation completes.
+            </p>
+          </section>
+        )}
+
         <div className="saveBar primaryActionBar">
           <span role="status" aria-live="polite">
-            {status}
+            {publicationSucceeded
+              ? `Published successfully${publishedCandidateCommit ? ` · official baseline ${publishedCandidateCommit.slice(0, 8)}` : ""}`
+              : status}
           </span>
           <div className="workspaceActions">
             {!props.checkout &&
@@ -641,17 +869,6 @@ export function WorkspaceEditor(props: Props) {
                   Stage approved bundle
                 </button>
               )}
-            {props.publicationRequest?.state === "AWAITING_CONFIRMATION" &&
-              !props.publicationRequest.finalConfirmed &&
-              props.permissions.includes("publication.publish") && (
-                <button
-                  className="button warn"
-                  type="button"
-                  onClick={confirmPublication}
-                >
-                  Publish this reviewed bundle
-                </button>
-              )}
             {publicationPending && (
               <button
                 className="button secondary"
@@ -664,40 +881,30 @@ export function WorkspaceEditor(props: Props) {
           </div>
         </div>
 
-        {props.publicationRequest && (
-          <p className="artifactStateNotice candidate" role="status">
-            {props.publicationRequest.state === "AWAITING_CONFIRMATION"
-              ? props.publicationRequest.finalConfirmed
-                ? "Final confirmation recorded. The trusted publisher is finalizing the exact staged release."
-                : "Candidate staged on Leadership. Inspect it, then explicitly publish this exact commit."
-              : props.publicationRequest.state === "FAILED_PREVIEW"
+        {props.publicationRequest &&
+          !awaitingHumanConfirmation &&
+          !publicationProgressVisible && (
+            <p className="artifactStateNotice candidate" role="status">
+              {props.publicationRequest.state === "FAILED_PREVIEW"
                 ? "Candidate staging failed. The previous Leadership release was restored and your checkout has been returned."
-                : props.publicationRequest.state === "RECONCILIATION_REQUIRED"
-                  ? "Cutover needs reconciliation. Further publication is blocked until Git, the live marker, and Studio agree."
-                  : props.publicationRequest.state === "RECONCILED"
-                    ? "Publication reconciled against the live release marker."
-                    : `Publisher stage: ${props.publicationRequest.state.toLowerCase().replaceAll("_", " ")}.`}{" "}
-            {props.publicationRequest.previewCommitSha && (
-              <>
-                Candidate commit{" "}
-                <code>
-                  {props.publicationRequest.previewCommitSha.slice(0, 12)}
-                </code>
-                .{" "}
-                {props.publicationRequest.state === "AWAITING_CONFIRMATION" &&
-                  !props.publicationRequest.finalConfirmed && (
-                    <a
-                      href="https://leadership.timsprototypes.com"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open staged Leadership
-                    </a>
-                  )}
-              </>
-            )}
-          </p>
-        )}
+                : props.publicationRequest.state === "AUTO_ROLLED_BACK"
+                  ? "Final publication did not verify. The previous Leadership release was restored safely."
+                  : props.publicationRequest.state === "RECONCILIATION_REQUIRED"
+                    ? "Cutover needs reconciliation. Further publication is blocked until Git, the live marker, and Studio agree."
+                    : props.publicationRequest.state === "RECONCILED"
+                      ? "Publication reconciled against the live release marker."
+                      : `Preparing the staged candidate: ${props.publicationRequest.state.toLowerCase().replaceAll("_", " ")}.`}{" "}
+              {props.publicationRequest.previewCommitSha && (
+                <>
+                  Candidate commit{" "}
+                  <code>
+                    {props.publicationRequest.previewCommitSha.slice(0, 12)}
+                  </code>
+                  .
+                </>
+              )}
+            </p>
+          )}
         {props.rollbackRequest && (
           <p className="artifactStateNotice candidate" role="status">
             {props.rollbackRequest.state === "RECONCILED"
@@ -1001,6 +1208,23 @@ export function WorkspaceEditor(props: Props) {
             </div>
           )}
       </div>
+      {publicationConfirmationOpen &&
+        props.publicationRequest?.previewCommitSha &&
+        props.publishedCommitSha && (
+          <PublicationConfirmationDialog
+            baselineCommitSha={props.publishedCommitSha}
+            candidateCommitSha={props.publicationRequest.previewCommitSha}
+            submitting={publicationSubmitting}
+            onCancel={() => {
+              if (publicationSubmitting) return;
+              setPublicationConfirmationOpen(false);
+              setStatus(
+                "Publication confirmation cancelled. No change was made.",
+              );
+            }}
+            onConfirm={confirmPublication}
+          />
+        )}
       {reauthenticationRequest && (
         <ReauthenticationDialog
           actionLabel={reauthenticationRequest.actionLabel}

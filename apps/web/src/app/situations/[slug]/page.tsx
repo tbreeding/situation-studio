@@ -9,6 +9,7 @@ import {
   exactArtifactsMatchStoredHashes,
   readPreparedReviewProvenance,
 } from "@/server/workflows/review-provenance";
+import { publicationDecisionLabel } from "@/lib/publication-presentation";
 
 export default async function SituationWorkspace({
   params,
@@ -107,6 +108,16 @@ export default async function SituationWorkspace({
       (item) => item.artifact.logicalId === `situation:${slug}`,
     ) ?? null;
   const bundle = draft?.bundles[0] ?? null;
+  const publicationRequest = bundle?.publicationRequests[0] ?? null;
+  const publishedCommitSha =
+    publicationRequest?.baseCommit ??
+    situation.currentPublication?.commitSha ??
+    situation.publications[0]?.commitSha ??
+    null;
+  const candidateCommitSha =
+    publicationRequest?.steps.find(
+      (step) => step.step === "COMMITTED" && step.state === "SUCCEEDED",
+    )?.externalId ?? null;
   const bundleArtifactEntry =
     bundle?.artifacts.find(
       (item) => item.artifact.logicalId === `situation:${slug}`,
@@ -162,15 +173,26 @@ export default async function SituationWorkspace({
   );
   const ownsCheckout =
     checkout?.holderUserId === session.userId && checkout.custody === "USER";
-  const nextAction = checkout
-    ? ownsCheckout
-      ? draft
-        ? "Continue the checked-out draft, then save, start review, or check in to release it."
-        : "This checkout is yours; continue the workflow or check in to release it."
-      : `Read the published guidance while ${checkout.holder?.displayName ?? "another operator"} holds the exclusive checkout.`
-    : session.permissions.has("draft.update")
-      ? "Check out this situation when you are ready to create or continue a draft."
-      : "Read the published guidance. Your current permissions do not include editing.";
+  const nextAction = publicationRequest
+    ? publicationRequest.state === "AWAITING_CONFIRMATION" &&
+      !publicationRequest.finalConfirmedAt
+      ? session.permissions.has("publication.publish")
+        ? "Review the staged candidate, then explicitly confirm this exact commit."
+        : "The staged candidate is awaiting confirmation from an authorized publisher."
+      : publicationRequest.state === "FAILED_PREVIEW"
+        ? "Candidate staging failed safely; inspect the recorded failure before retrying."
+        : publicationRequest.state === "RECONCILIATION_REQUIRED"
+          ? "Publication is blocked until Git, Leadership, and Studio are reconciled."
+          : "No action required while the trusted publisher completes and verifies publication."
+    : checkout
+      ? ownsCheckout
+        ? draft
+          ? "Continue the checked-out draft, then save, start review, or check in to release it."
+          : "This checkout is yours; continue the workflow or check in to release it."
+        : `Read the official baseline while ${checkout.holder?.displayName ?? "another operator"} holds the exclusive checkout.`
+      : session.permissions.has("draft.update")
+        ? "Check out this situation when you are ready to create or continue a draft."
+        : "Read the official baseline. Your current permissions do not include editing.";
   const passedValidations =
     bundle?.validations.filter((item) => item.state === "PASSED").length ?? 0;
   const failedValidations =
@@ -189,19 +211,38 @@ export default async function SituationWorkspace({
       <div className="workspaceTop">
         <div>
           <p className="eyebrow">
-            Situation workspace · published base{" "}
-            {situation.publications[0]?.commitSha.slice(0, 8)}
+            Situation workspace · official baseline{" "}
+            {publishedCommitSha?.slice(0, 8) ?? "unavailable"}
           </p>
           <h1>{situation.title}</h1>
         </div>
         <div className="workspaceActions">
-          <span className="badge ink">{situation.publicationState}</span>
-          {draft && <span className="badge gold">{draft.state}</span>}
-          {checkout && (
-            <span className="badge rust">
-              {checkout.mode} ·{" "}
-              {checkout.holder?.displayName ?? checkout.custody}
-            </span>
+          {publicationRequest ? (
+            <>
+              <span className="badge ink">Official baseline</span>
+              <span className="badge gold">
+                {candidateCommitSha
+                  ? "Candidate staged"
+                  : "Candidate preparing"}
+              </span>
+              <span className="badge rust">
+                {publicationDecisionLabel(
+                  publicationRequest.state,
+                  Boolean(publicationRequest.finalConfirmedAt),
+                )}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="badge ink">{situation.publicationState}</span>
+              {draft && <span className="badge gold">{draft.state}</span>}
+              {checkout && (
+                <span className="badge rust">
+                  {checkout.mode} ·{" "}
+                  {checkout.holder?.displayName ?? checkout.custody}
+                </span>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -210,28 +251,49 @@ export default async function SituationWorkspace({
         aria-label="Current situation state"
       >
         <div>
-          <span>Published baseline</span>
+          <span>Official baseline</span>
           <strong>
-            {situation.publicationState.toLowerCase().replaceAll("_", " ")}
+            {publishedCommitSha ? "Published" : "No official publication"}
           </strong>
           <small>
-            Commit{" "}
-            {situation.publications[0]?.commitSha.slice(0, 8) ??
-              "not published"}
+            Protected Git main ·{" "}
+            {publishedCommitSha?.slice(0, 8) ?? "not published"}
           </small>
         </div>
-        <div>
-          <span>Exclusive checkout</span>
-          <strong>{checkout ? "In use" : "Available"}</strong>
-          <small>
-            {checkout
-              ? `${checkout.mode.toLowerCase().replaceAll("_", " ")} · ${checkout.holder?.displayName ?? checkout.custody.toLowerCase()}`
-              : "No active owner"}
-          </small>
-        </div>
+        {publicationRequest ? (
+          <div>
+            <span>Leadership display</span>
+            <strong>
+              {candidateCommitSha ? "Staged candidate" : "Preparing candidate"}
+            </strong>
+            <small>
+              {candidateCommitSha
+                ? `Commit ${candidateCommitSha.slice(0, 8)} · not yet official`
+                : "Publisher is preparing the exact approved bytes"}
+            </small>
+          </div>
+        ) : (
+          <div>
+            <span>Exclusive checkout</span>
+            <strong>{checkout ? "In use" : "Available"}</strong>
+            <small>
+              {checkout
+                ? `${checkout.mode.toLowerCase().replaceAll("_", " ")} · ${checkout.holder?.displayName ?? checkout.custody.toLowerCase()}`
+                : "No active owner"}
+            </small>
+          </div>
+        )}
         <div className="nextActionSummary">
-          <span>Next valid action</span>
+          <span>
+            {publicationRequest ? "Publication decision" : "Next valid action"}
+          </span>
           <strong>{nextAction}</strong>
+          {publicationRequest && (
+            <small>
+              Publisher custody protects the reviewed candidate during this
+              decision.
+            </small>
+          )}
         </div>
         <div>
           <span>Blast radius</span>
@@ -239,7 +301,8 @@ export default async function SituationWorkspace({
           <small>Detail remains available below</small>
         </div>
       </section>
-      {checkout &&
+      {!publicationRequest &&
+        checkout &&
         (checkout.holderUserId !== session.userId ||
           checkout.custody !== "USER") && (
           <p className="alert" role="status">
@@ -284,6 +347,7 @@ export default async function SituationWorkspace({
                   : "PUBLISHED"
             }
             publishedBody={publishedArtifactEntry?.content.body ?? null}
+            publishedCommitSha={publishedCommitSha}
             revision={bundle?.revision ?? draft?.currentRevision ?? null}
             csrfToken={session.csrfToken}
             bundle={
@@ -314,18 +378,14 @@ export default async function SituationWorkspace({
             }
             approvalId={bundle?.approvals[0]?.id ?? null}
             publicationRequest={
-              bundle?.publicationRequests[0]
+              publicationRequest
                 ? {
-                    id: bundle.publicationRequests[0].id,
-                    state: bundle.publicationRequests[0].state,
-                    previewCommitSha:
-                      bundle.publicationRequests[0].steps.find(
-                        (step) =>
-                          step.step === "COMMITTED" &&
-                          step.state === "SUCCEEDED",
-                      )?.externalId ?? null,
+                    id: publicationRequest.id,
+                    state: publicationRequest.state,
+                    currentStep: publicationRequest.currentStep,
+                    previewCommitSha: candidateCommitSha,
                     finalConfirmed: Boolean(
-                      bundle.publicationRequests[0].finalConfirmedAt,
+                      publicationRequest.finalConfirmedAt,
                     ),
                   }
                 : null
@@ -406,42 +466,64 @@ export default async function SituationWorkspace({
           </div>
           <div className="panelBody">
             <p className="lifecycleExplanation">
-              Candidate workflow is layered over the valid published baseline;
-              an empty later stage does not invalidate what is already live.
+              One official baseline remains in force while a separate candidate
+              moves through review and publication.
             </p>
             <ol className="lifecycleList">
               <li className="complete">
                 <span>1</span>
                 <div>
-                  <strong>Published baseline</strong>
-                  <small>Exact source is read-only until checkout.</small>
-                </div>
-              </li>
-              <li className={draft ? "current" : undefined}>
-                <span>2</span>
-                <div>
-                  <strong>Draft</strong>
+                  <strong>Official baseline</strong>
                   <small>
-                    {draft
-                      ? `Revision ${draft.currentRevision} · ${draft.state.toLowerCase().replaceAll("_", " ")}`
-                      : "No current candidate draft."}
+                    Protected Git main ·{" "}
+                    {publishedCommitSha?.slice(0, 8) ?? "unavailable"}
                   </small>
                 </div>
               </li>
-              <li className={bundle ? "current" : undefined}>
-                <span>3</span>
+              <li
+                className={bundle ? "complete" : draft ? "current" : undefined}
+              >
+                <span>2</span>
                 <div>
-                  <strong>Proposal</strong>
+                  <strong>Candidate created</strong>
                   <small>
                     {bundle
-                      ? `${bundle.state.toLowerCase().replaceAll("_", " ")} · ${bundle.canonicalHash.slice(0, 10)}…`
+                      ? `Revision ${bundle.revision} immutable candidate`
+                      : draft
+                        ? `Draft revision ${draft.currentRevision} in progress`
+                        : "No current candidate draft."}
+                  </small>
+                </div>
+              </li>
+              <li
+                className={
+                  bundle?.approvals[0]
+                    ? "complete"
+                    : bundle
+                      ? "current"
+                      : undefined
+                }
+              >
+                <span>3</span>
+                <div>
+                  <strong>Review bundle</strong>
+                  <small>
+                    {bundle
+                      ? `Exact bundle ${bundle.canonicalHash.slice(0, 10)}…`
                       : "Awaiting a candidate bundle."}
                   </small>
                 </div>
               </li>
               <li
                 className={
-                  failedValidations ? "blocked" : bundle ? "current" : undefined
+                  failedValidations
+                    ? "blocked"
+                    : bundle?.validations.length &&
+                        passedValidations === bundle.validations.length
+                      ? "complete"
+                      : bundle
+                        ? "current"
+                        : undefined
                 }
               >
                 <span>4</span>
@@ -456,10 +538,20 @@ export default async function SituationWorkspace({
                   </small>
                 </div>
               </li>
-              <li className={bundle?.approvals[0] ? "complete" : undefined}>
+              <li
+                className={
+                  bundle?.approvals[0]
+                    ? "complete"
+                    : bundle &&
+                        !failedValidations &&
+                        passedValidations === bundle.validations.length
+                      ? "current"
+                      : undefined
+                }
+              >
                 <span>5</span>
                 <div>
-                  <strong>Approval</strong>
+                  <strong>Human approval</strong>
                   <small>
                     {bundle?.approvals[0]
                       ? "The exact validated bundle is approved."
@@ -469,17 +561,31 @@ export default async function SituationWorkspace({
               </li>
               <li
                 className={
-                  bundle?.publicationRequests[0] ? "current" : undefined
+                  publicationRequest
+                    ? [
+                        "FAILED_PREVIEW",
+                        "AUTO_ROLLED_BACK",
+                        "RECONCILIATION_REQUIRED",
+                      ].includes(publicationRequest.state)
+                      ? "blocked"
+                      : publicationRequest.state === "RECONCILED"
+                        ? "complete"
+                        : "current"
+                    : undefined
                 }
               >
                 <span>6</span>
                 <div>
-                  <strong>Publication</strong>
+                  <strong>Final publication</strong>
                   <small>
-                    {bundle?.publicationRequests[0]
-                      ? bundle.publicationRequests[0].state
-                          .toLowerCase()
-                          .replaceAll("_", " ")
+                    {publicationRequest
+                      ? publicationRequest.state === "AWAITING_CONFIRMATION" &&
+                        !publicationRequest.finalConfirmedAt
+                        ? `Candidate ${candidateCommitSha?.slice(0, 8) ?? ""} staged · awaiting you`
+                        : publicationDecisionLabel(
+                            publicationRequest.state,
+                            Boolean(publicationRequest.finalConfirmedAt),
+                          )
                       : "No candidate publication is pending."}
                   </small>
                 </div>

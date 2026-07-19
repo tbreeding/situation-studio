@@ -786,7 +786,7 @@ test("a synthetic proposal remains unmistakably separate from the published base
       ),
     ).toBeVisible();
     await expect(page.locator(".workspaceSummary")).toContainText(
-      "Published baseline",
+      "Official baseline",
     );
     const sessionCookie = (await page.context().cookies()).find(
       (cookie) => cookie.name === "situation_studio_dev",
@@ -994,9 +994,10 @@ test("a synthetic proposal remains unmistakably separate from the published base
       expect(stageResponse.status()).toBe(201);
       const staged = await database.query<{
         custody: string;
+        id: string;
         state: string;
       }>(
-        `SELECT checkout.custody, request.state
+        `SELECT checkout.custody, request.id, request.state
          FROM publication_requests AS request
          JOIN situation_checkouts AS checkout
            ON checkout.custody_reference = request.id
@@ -1004,9 +1005,128 @@ test("a synthetic proposal remains unmistakably separate from the published base
            AND checkout.released_at IS NULL`,
         [preparedBundleId],
       );
-      expect(staged.rows).toEqual([
-        { custody: "PUBLISHER", state: "REQUESTED" },
-      ]);
+      expect(staged.rows).toHaveLength(1);
+      expect(staged.rows[0]).toMatchObject({
+        custody: "PUBLISHER",
+        state: "REQUESTED",
+      });
+      const stagedRequestId = staged.rows[0]?.id;
+      expect(stagedRequestId).toBeDefined();
+      if (!stagedRequestId) return;
+      const stagedCommit = "b".repeat(40);
+      await database.query("BEGIN");
+      try {
+        await database.query(
+          `UPDATE publication_requests
+           SET state = 'AWAITING_CONFIRMATION',
+               current_step = 'PREVIEW_VERIFIED'
+           WHERE id = $1`,
+          [stagedRequestId],
+        );
+        await database.query(
+          `UPDATE drafts
+           SET state = 'PUBLISHING'
+           WHERE id = (
+             SELECT draft_id
+             FROM proposed_bundles
+             WHERE id = $1
+           )`,
+          [preparedBundleId],
+        );
+        await database.query(
+          `INSERT INTO publication_steps
+           (id, request_id, step, attempt, fence, external_id, state, input_hash,
+            finished_at)
+           VALUES ($1, $2, 'COMMITTED', 1, 1, $3, 'SUCCEEDED', $4, NOW())`,
+          [randomUUID(), stagedRequestId, stagedCommit, fixtureHash("commit")],
+        );
+        await database.query("COMMIT");
+      } catch (error) {
+        await database.query("ROLLBACK");
+        throw error;
+      }
+
+      await page.goto(`/situations/${slug}`);
+      await expect(
+        page.getByRole("heading", {
+          name: "Leadership is displaying the staged candidate",
+        }),
+      ).toBeVisible();
+      await expect(page.locator(".workspaceSummary")).toContainText(
+        "Official baseline",
+      );
+      await expect(page.locator(".workspaceSummary")).toContainText(
+        "Staged candidate",
+      );
+      await expect(page.locator(".workspaceSummary")).toContainText(
+        "not yet official",
+      );
+      await page
+        .getByRole("button", { name: "Confirm and publish bbbbbbbb" })
+        .click();
+      const publicationDialog = page.getByRole("dialog");
+      await expect(publicationDialog).toContainText(
+        "Leadership already displays this reviewed candidate",
+      );
+      await expect(publicationDialog).toContainText(
+        "It will not build another version",
+      );
+      const reviewConfirmation = page.getByLabel(
+        "I reviewed the staged candidate and want to publish it.",
+      );
+      await expect(reviewConfirmation).toBeFocused();
+      const publishConfirmation = publicationDialog.getByRole("button", {
+        name: "Confirm and publish bbbbbbbb",
+      });
+      await expect(publishConfirmation).toBeDisabled();
+      const modalAccessibility = await new AxeBuilder({ page })
+        .include(".publicationConfirmationDialog")
+        .analyze();
+      expect(
+        modalAccessibility.violations.filter((violation) =>
+          ["critical", "serious"].includes(violation.impact ?? ""),
+        ),
+      ).toEqual([]);
+      await reviewConfirmation.check();
+      await expect(publishConfirmation).toBeEnabled();
+      await page.getByRole("button", { name: "Cancel" }).click();
+      await expect(publicationDialog).toHaveCount(0);
+      const unconfirmed = await database.query<{
+        final_confirmed_at: Date | null;
+      }>(
+        `SELECT final_confirmed_at
+         FROM publication_requests
+         WHERE id = $1`,
+        [stagedRequestId],
+      );
+      expect(unconfirmed.rows[0]?.final_confirmed_at).toBeNull();
+      await database.query(
+        `UPDATE publication_requests
+         SET final_confirmed_at = NOW()
+         WHERE id = $1`,
+        [stagedRequestId],
+      );
+      await page.goto(`/situations/${slug}`);
+      await expect(
+        page.getByRole("heading", {
+          name: "Publishing candidate bbbbbbbb",
+        }),
+      ).toBeVisible();
+      await expect(
+        page.locator(".publicationProgress li.complete"),
+      ).toHaveCount(1);
+      await expect(page.locator(".publicationProgress li.current")).toHaveCount(
+        1,
+      );
+      await database.query(
+        `UPDATE publication_requests
+         SET state = 'CUTOVER', current_step = 'CUTOVER'
+         WHERE id = $1`,
+        [stagedRequestId],
+      );
+      await expect(
+        page.locator(".publicationProgress li.complete"),
+      ).toHaveCount(2, { timeout: 8_000 });
     }
   } finally {
     const releasedAt = new Date();

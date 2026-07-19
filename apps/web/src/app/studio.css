@@ -697,6 +697,174 @@ summary:focus-visible {
   color: #5f4a10;
   font-weight: 700;
 }
+.publicationDecisionCard {
+  display: grid;
+  gap: 1rem;
+  margin: 0 0 1rem;
+  padding: clamp(1rem, 2vw, 1.4rem);
+  border: 1px solid rgba(229, 185, 79, 0.72);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 246, 217, 0.96),
+    rgba(255, 253, 247, 0.96)
+  );
+  box-shadow: 0 0.8rem 2.5rem rgba(95, 74, 16, 0.08);
+}
+.publicationDecisionCard.publishing {
+  border-color: rgba(95, 123, 82, 0.62);
+  background: linear-gradient(
+    135deg,
+    rgba(219, 228, 210, 0.75),
+    rgba(255, 253, 247, 0.96)
+  );
+}
+.publicationDecisionCard.success {
+  border-color: var(--moss);
+  background: rgba(219, 228, 210, 0.72);
+}
+.publicationDecisionCard .eyebrow {
+  margin-bottom: 0.35rem;
+}
+.publicationDecisionCard h3 {
+  margin: 0;
+  font-family: Georgia, serif;
+  font-size: clamp(1.45rem, 2.4vw, 2rem);
+  font-weight: 500;
+  line-height: 1.1;
+}
+.publicationDecisionCard p {
+  margin: 0.55rem 0 0;
+  color: #4f5e57;
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+.publicationDecisionCopy {
+  max-width: 52rem;
+}
+.publicationVersionChange {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0.8rem;
+}
+.publicationVersionChange > div {
+  display: grid;
+  align-content: start;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+}
+.publicationVersionChange > span {
+  align-self: center;
+  color: var(--moss);
+  font-size: 1.4rem;
+  font-weight: 800;
+}
+.publicationVersionChange span:not([aria-hidden]) {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.publicationVersionChange strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.1rem;
+}
+.publicationVersionChange small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.publicationVersionChange.compact > div {
+  padding: 0.75rem 0.85rem;
+}
+.publicationCustodyNote {
+  margin: 0 !important;
+  padding: 0.7rem 0.8rem;
+  border-left: 3px solid var(--gold);
+  background: rgba(255, 255, 255, 0.56);
+  color: #5f4a10 !important;
+}
+.publicationDecisionFooter {
+  display: grid;
+  grid-template-columns: minmax(15rem, 1fr) auto;
+  align-items: center;
+  gap: 0.8rem;
+}
+.publicationDecisionActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+.publicationProgress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.publicationProgress li {
+  display: grid;
+  grid-template-columns: 1.8rem minmax(0, 1fr);
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.66);
+}
+.publicationProgress li > span {
+  width: 1.8rem;
+  height: 1.8rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+.publicationProgress li.complete > span {
+  border-color: var(--moss);
+  background: var(--moss);
+  color: white;
+}
+.publicationProgress li.current {
+  border-color: rgba(229, 185, 79, 0.8);
+  background: #fff8e4;
+}
+.publicationProgress li.current > span {
+  border-color: var(--gold);
+  background: #f8e8b9;
+  color: #6e5512;
+  animation: publicationPulse 1.5s ease-in-out infinite;
+}
+.publicationProgress strong,
+.publicationProgress small {
+  display: block;
+}
+.publicationProgress strong {
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+.publicationProgress small {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+.publicationProgressFootnote {
+  margin: 0 !important;
+}
+@keyframes publicationPulse {
+  50% {
+    box-shadow: 0 0 0 0.3rem rgba(229, 185, 79, 0.22);
+  }
+}
 .viewTabs {
   display: inline-flex;
   gap: 0.25rem;
@@ -801,6 +969,71 @@ summary:focus-visible {
   border: 1px solid var(--line);
   background: var(--paper);
   box-shadow: 0 2rem 6rem rgba(0, 0, 0, 0.32);
+}
+.publicationConfirmationDialog {
+  width: min(100%, 46rem);
+  max-height: calc(100vh - 2.5rem);
+  overflow-y: auto;
+  padding: clamp(1.4rem, 4vw, 2.25rem);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  box-shadow: 0 2rem 6rem rgba(0, 0, 0, 0.32);
+}
+.publicationConfirmationDialog h2 {
+  margin: 0.25rem 0 0.65rem;
+  font-family: Georgia, serif;
+  font-size: clamp(1.75rem, 4vw, 2.35rem);
+  font-weight: 500;
+}
+.publicationConfirmationDialog > p:not(.eyebrow):not(.publicationReviewLink) {
+  margin: 0 0 1.25rem;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.publicationEffects {
+  margin: 1rem 0;
+  padding: 0.9rem 1rem;
+  border-left: 3px solid var(--moss);
+  background: rgba(219, 228, 210, 0.5);
+  font-size: 0.875rem;
+}
+.publicationEffects ul {
+  margin: 0.45rem 0;
+  padding-left: 1.25rem;
+  line-height: 1.6;
+}
+.publicationEffects p {
+  margin: 0;
+  color: #53635b;
+  line-height: 1.55;
+}
+.publicationReviewLink {
+  display: inline-block;
+  margin-bottom: 1rem;
+  color: var(--forest);
+  font-size: 0.875rem;
+  font-weight: 750;
+  text-underline-offset: 3px;
+}
+.publicationReviewConfirmation {
+  display: grid;
+  grid-template-columns: 1.1rem minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+  margin: 0 0 1.1rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(196, 90, 62, 0.35);
+  background: #fff6ed;
+  color: #6d382b;
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+.publicationReviewConfirmation input {
+  margin: 0.2rem 0 0;
+}
+.publicationConfirmationDialog .workspaceActions {
+  justify-content: flex-end;
 }
 .reauthenticationDialog h2 {
   margin: 0.25rem 0 0.65rem;
@@ -1687,6 +1920,9 @@ summary:focus-visible {
   .workspaceSummary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .publicationProgress {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .workspaceSummary > div:nth-child(2) {
     border-right: 0;
   }
@@ -1780,7 +2016,19 @@ summary:focus-visible {
   .workspaceSummary,
   .dependencyGroups,
   .dangerArea,
-  .diffGrid {
+  .diffGrid,
+  .publicationProgress,
+  .publicationVersionChange {
+    grid-template-columns: 1fr;
+  }
+  .publicationVersionChange > span {
+    justify-self: center;
+    transform: rotate(90deg);
+  }
+  .publicationDecisionActions {
+    justify-content: flex-start;
+  }
+  .publicationDecisionFooter {
     grid-template-columns: 1fr;
   }
   .workspaceSummary > div {

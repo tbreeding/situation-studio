@@ -379,7 +379,7 @@ export function WorkspaceEditor(props: Props) {
         result?.error === "another checkout owns this situation"
           ? "Staging is blocked because another checkout owns this situation. Reload to see the current owner."
           : result?.error === "another publication is already being staged"
-            ? "Staging is temporarily blocked while another approved bundle uses the protected preview."
+            ? "Staging is temporarily blocked while another approved bundle uses the Leadership preview."
             : result?.error === "publication preconditions failed"
               ? "Staging is blocked because this approval, validation, or exact bundle is no longer current."
               : (result?.error ??
@@ -669,7 +669,7 @@ export function WorkspaceEditor(props: Props) {
             {props.publicationRequest.state === "AWAITING_CONFIRMATION"
               ? props.publicationRequest.finalConfirmed
                 ? "Final confirmation recorded. The trusted publisher is promoting the exact previewed release."
-                : "Preview verified. Inspect the protected preview, then explicitly publish this exact commit."
+                : "Preview verified. Inspect the Leadership preview, then explicitly publish this exact commit."
               : props.publicationRequest.state === "FAILED_PREVIEW"
                 ? "Preview staging failed before cutover. The live release is unchanged and your checkout has been returned."
                 : props.publicationRequest.state === "RECONCILIATION_REQUIRED"
@@ -691,7 +691,7 @@ export function WorkspaceEditor(props: Props) {
                       target="_blank"
                       rel="noreferrer"
                     >
-                      Open protected preview
+                      Open Leadership preview
                     </a>
                   )}
               </>

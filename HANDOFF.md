@@ -1,6 +1,6 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-19 05:56 UTC
+Last updated: 2026-07-19 06:07 UTC
 
 ## Purpose and authority
 
@@ -13,8 +13,8 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Current implementation commit: `974e6db4f8ae073b55570dd3e6a9900fe04ec8a7` (`Use candidate terminology throughout Studio`).
-- Current RP1 release: `20260719T055257Z`.
+- Current implementation commit: `207f9a031b80eb4031a5ff3a0e21d256711b7d4c` (`Add Situation Studio favicon`).
+- Current RP1 release: `20260719T060442Z`.
 - The worktree was clean after the release.
 - The complete local gate passed: formatting, lint, strict TypeScript, Prisma validation, immutable-baseline verification, 35 tests, secret scan, and the production web build.
 - The 36-case Chromium matrix most recently passed 28 applicable cases with 8 intentional desktop-only mobile skips.
@@ -96,6 +96,7 @@ Do not trigger final publication without explicit human direction. Production Gi
 
 ## Completed evidence
 
+- The branded SVG favicon is live at `/icon.svg` with the expected `image/svg+xml` content type. Its deployed SHA-256 exactly matches the committed source, and the mark remains legible in a 16×16 raster check.
 - Production review job `8fd6d658-8d64-4722-87dc-7699c61f7075` completed 22/22 durable roles using `gpt-5.6-sol`, with zero fallbacks, one proposal bundle, and 3/3 validations.
 - The reviewer-provenance flow created revision 2, wrote `timothy-breeding` and review date `2026-07-18` into the exact changed MDX, reran exact-byte validation, and produced the approved bundle above.
 - Visible Check in, saved-revision preservation, unsaved-change cancellation, recent reauthentication, active-job cancellation, publisher custody transfer, and immutable approval gates are implemented and production exercised.

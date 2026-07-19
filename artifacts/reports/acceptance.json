@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-19T05:56:58Z",
+  "recordedAt": "2026-07-19T06:07:15Z",
   "source": {
     "leadershipCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
     "leadershipRepositoryModified": true,
@@ -221,9 +221,9 @@
   },
   "singleLeadershipCandidateRuntime": {
     "status": "production-deployed-and-live-verified",
-    "verifiedAt": "2026-07-19T05:56:58Z",
-    "studioRelease": "20260719T055257Z",
-    "studioCommit": "974e6db4f8ae073b55570dd3e6a9900fe04ec8a7",
+    "verifiedAt": "2026-07-19T06:07:15Z",
+    "studioRelease": "20260719T060442Z",
+    "studioCommit": "207f9a031b80eb4031a5ff3a0e21d256711b7d4c",
     "situation": "repeatedly-misses-deadlines",
     "bundleHash": "9caa2f0ac652015fcba0839fd83f87d0ebe19a0e675b97cc9114c6b237688aeb",
     "publicationRequestId": "d6e3b43c-2d8a-4881-b056-908bf907b30a",
@@ -247,9 +247,21 @@
     "generatedCandidateContainsRetiredHostname": false,
     "unitContractTests": 35
   },
+  "favicon": {
+    "status": "production-deployed-and-live-verified",
+    "verifiedAt": "2026-07-19T06:07:15Z",
+    "release": "20260719T060442Z",
+    "commit": "207f9a031b80eb4031a5ff3a0e21d256711b7d4c",
+    "route": "/icon.svg",
+    "contentType": "image/svg+xml",
+    "sha256": "df9ac769ce580d5f2ce55f50b1f16f20b4d1e6979f304c2accd95f1aac72eafd",
+    "productionBytesMatchSource": true,
+    "smallSizeRasterReview": ["16x16", "32x32"],
+    "nextStaticMetadataRoute": true
+  },
   "externalBeta": {
     "originDeployed": true,
-    "release": "20260719T055257Z",
+    "release": "20260719T060442Z",
     "privateOrigin": "http://192.168.1.120:3015",
     "outerGateRegistered": true,
     "providerExecution": "openai-service-api-enabled",

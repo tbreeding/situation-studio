@@ -8,7 +8,7 @@
 - Active symlink: `/home/admin/projects/situation-studio/current`.
 - Shared environment: `/home/admin/projects/situation-studio/shared`.
 - PM2 processes: `situation-studio-web`, `situation-studio-worker`, and `situation-studio-publisher`.
-- Current recorded release: `20260719T052129Z`.
+- Current recorded release: `20260719T055257Z` (implementation commit `974e6db`).
 
 The route, first administrator, and OpenAI/Codex-first review worker are active. The publisher runs with a least-privilege database login, a repository-scoped Leadership deploy key, and one fixed Leadership candidate activation target. Backup automation and a clean restore rehearsal remain required operational work.
 
@@ -18,7 +18,7 @@ The recorded production release runs the real AI worker with OpenAI/Codex first 
 
 The publisher consumes immutable approvals, validates exact candidate bytes, runs trusted Leadership install/lint/typecheck/content/test/build commands, creates one structured commit, stages that release on the single `leadership.timsprototypes.com` candidate runtime, waits for final human confirmation, compare-and-swap advances remote `main`, and reconciles PostgreSQL without building or operating a second site. Rollback creates a new forward-history commit with the exact prior tree and repeats validation/build/activation. See `ops/publisher.env.example` and `ops/grant-service-privileges.sql`.
 
-An isolated 2026-07-18 rehearsal completed 22 Codex review roles, staging, final confirmation, reconciliation, and rollback without touching the real Leadership remote. Production job `8fd6d658-8d64-4722-87dc-7699c61f7075` separately completed 22/22 Codex roles, 3/3 validations, one proposal, custody return, and visible Check in on `repeatedly-misses-deadlines`. On 2026-07-19 the exact revision-2 bundle `9caa2f0ac652…` was human-approved and staged by request `d6e3b43c-2d8a-4881-b056-908bf907b30a`. The publisher created candidate commit `b6e40575eb823dc32c62644775895ad84a80d2d1`, activated and externally verified it on `https://leadership.timsprototypes.com`, and stopped in `AWAITING_CONFIRMATION`; protected Git `main` remains unchanged at `9a870e5c…`.
+An isolated 2026-07-18 rehearsal completed 22 Codex review roles, staging, final confirmation, reconciliation, and rollback without touching the real Leadership remote. Production job `8fd6d658-8d64-4722-87dc-7699c61f7075` separately completed 22/22 Codex roles, 3/3 validations, one proposal, custody return, and visible Check in on `repeatedly-misses-deadlines`. On 2026-07-19 the exact revision-2 bundle `9caa2f0ac652…` was human-approved and staged by request `d6e3b43c-2d8a-4881-b056-908bf907b30a`. The publisher created candidate commit `b6e40575eb823dc32c62644775895ad84a80d2d1`, activated and externally verified it on `https://leadership.timsprototypes.com`, and stopped in `AWAITING_CONFIRMATION`; protected Git `main` remains unchanged at `9a870e5c…`. The retired duplicate route is archived and returns 404; its process, listener, runtime directory, and symlink are removed.
 
 ## Allocations
 
@@ -48,6 +48,8 @@ Database backup alone is incomplete: preserve the protected Git remote and relea
 Frozen install and complete local verification precede every release. The production sequence is backup, migration, compatible worker health, web symlink cutover, outer-gate check, Studio login, readiness/SSE, and one safe read. Studio rollback repoints to the prior schema-compatible release; no automatic down migration occurs.
 
 `deploy.sh` implements the versioned release, migration, explicit web/service grants, idempotent baseline import, build, symlink cutover, deterministic web/worker/publisher PM2 restart, the single Leadership process configuration, health gates, and automatic Studio application rollback. It deliberately does not create credentials, bootstrap passwords, register outer-gate routes, configure backups, or grant Git publication authority. Those are separate security-boundary operations.
+
+For this prototype topology, staging changes what the sole Leadership runtime serves while leaving protected Git `main` unchanged. Final publication re-verifies the same release, compare-and-swap advances `main`, and reconciles Studio; it does not build or deploy a second runtime. The internal `PREVIEW_*` saga names are retained for database compatibility and mean pre-publication candidate build/verification.
 
 The first administrator is created only from an interactive RP1 TTY:
 

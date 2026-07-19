@@ -33,7 +33,7 @@ On 2026-07-18 the full publication/rollback flow completed against a disposable 
 
 The approved desktop UI/UX pass is deployed and verified at 1280×800 and 1440×900. It adds capability-aware/current navigation, searchable attention-first inventory controls, a four-section immutable creation brief, rendered guidance with exact expandable MDX source, a plain-language candidate lifecycle, navigable situation dependencies, validated archive confirmation, and action-oriented Jobs and Capacity states.
 
-The pass did not change published Leadership artifact bytes or the workflow/RBAC invariants. The production review created a candidate only; no Leadership repository or live publication bytes changed.
+The desktop pass did not change protected Leadership `main` or the workflow/RBAC invariants. The later production review created and activated a candidate on the prototype Leadership runtime, but protected Git `main` and the published record remain unchanged pending explicit final confirmation.
 
 ## Local verification
 

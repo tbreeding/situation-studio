@@ -1,9 +1,12 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-18T20:30:06Z",
+  "recordedAt": "2026-07-19T05:56:58Z",
   "source": {
     "leadershipCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
-    "leadershipRepositoryModified": false,
+    "leadershipRepositoryModified": true,
+    "leadershipPublishedMainModified": false,
+    "leadershipRemoteCandidateBranchCreated": true,
+    "leadershipCandidateCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1",
     "baselineFiles": 29,
     "graphNodes": 37,
     "graphEdges": 126
@@ -15,7 +18,7 @@
     "prismaSchema": "passed",
     "secretScan": "passed",
     "productionBuild": "passed",
-    "unitContractTests": 30,
+    "unitContractTests": 35,
     "browserTests": {
       "total": 36,
       "passed": 28,
@@ -118,7 +121,7 @@
       "requiredRoleCompletion": "passed"
     },
     "runningJobCancellation": "passed-with-custody-return",
-    "publisherFailureGate": "passed-build-rejected-before-preview",
+    "publisherFailureGate": "passed-build-rejected-before-candidate-activation",
     "approvalInvalidationAfterEdit": "passed",
     "publication": {
       "state": "RECONCILED",
@@ -152,7 +155,9 @@
       "activeCheckoutsAfterCheckIn": 0
     },
     "productionMutated": true,
-    "realLeadershipRemoteMutated": false
+    "realLeadershipRemoteMutated": true,
+    "realLeadershipMainMutated": false,
+    "realLeadershipCandidateCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1"
   },
   "humanReviewProvenance": {
     "status": "production-deployed-and-live-verified",
@@ -169,10 +174,13 @@
     "reviewerAndDateRewritten": "passed-disposable-browser-fixture",
     "exactHashValidationCount": 4,
     "approvalStagingPublisherFailClosed": true,
-    "productionPreparationExercised": false,
-    "productionApprovalExercised": false,
+    "productionPreparationExercised": true,
+    "productionApprovalExercised": true,
+    "productionStagingExercised": true,
     "productionPublicationExercised": false,
-    "leadershipArtifactBytesModified": false
+    "productionApprovedBundleHash": "9caa2f0ac652015fcba0839fd83f87d0ebe19a0e675b97cc9114c6b237688aeb",
+    "leadershipArtifactBytesModified": true,
+    "leadershipPublishedMainModified": false
   },
   "recentReauthentication": {
     "status": "production-deployed-and-route-verified",
@@ -211,15 +219,43 @@
     "productionDiffVerificationMutatedWorkflow": false,
     "leadershipArtifactBytesModified": false
   },
+  "singleLeadershipCandidateRuntime": {
+    "status": "production-deployed-and-live-verified",
+    "verifiedAt": "2026-07-19T05:56:58Z",
+    "studioRelease": "20260719T055257Z",
+    "studioCommit": "974e6db4f8ae073b55570dd3e6a9900fe04ec8a7",
+    "situation": "repeatedly-misses-deadlines",
+    "bundleHash": "9caa2f0ac652015fcba0839fd83f87d0ebe19a0e675b97cc9114c6b237688aeb",
+    "publicationRequestId": "d6e3b43c-2d8a-4881-b056-908bf907b30a",
+    "publicationUuid": "ae9f5987-017e-4a80-8c47-c10b5de8b994",
+    "publicationState": "AWAITING_CONFIRMATION",
+    "currentStep": "PREVIEW_VERIFIED",
+    "finalConfirmationRecorded": false,
+    "candidateCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1",
+    "protectedMain": "9a870e5c70fef9ae71506cb3138745b88363a190",
+    "protectedMainAdvanced": false,
+    "publicUrl": "https://leadership.timsprototypes.com",
+    "privateOrigin": "http://192.168.1.120:3005",
+    "candidateReviewedDate": "2026-07-18",
+    "pm2Process": "leadership-field-guide",
+    "leadershipProcessCount": 1,
+    "duplicateListenerPresent": false,
+    "retiredDuplicatePrototype": "archived-returns-404",
+    "retiredRuntimeDirectoryPresent": false,
+    "stablePublisherActivationLauncher": "passed-active-pid",
+    "publisherConfigurationTargetsSingleRuntime": true,
+    "generatedCandidateContainsRetiredHostname": false,
+    "unitContractTests": 35
+  },
   "externalBeta": {
     "originDeployed": true,
-    "release": "20260718T202708Z",
+    "release": "20260719T055257Z",
     "privateOrigin": "http://192.168.1.120:3015",
     "outerGateRegistered": true,
     "providerExecution": "openai-service-api-enabled",
-    "publisherExecution": "disabled-pending-restricted-git-authority",
+    "publisherExecution": "enabled-candidate-staged-awaiting-human-confirmation",
     "administratorBootstrapped": true,
-    "reason": "The protected route, desktop workflow, Codex-first worker, immutable proposal rendering, and human reviewer-provenance gate are active. A real 22-role review completed and its exact candidate is now visible. Preparation, approval, and publication were not exercised in production; the publisher remains fail-closed until restricted Leadership Git and release authority are provisioned.",
+    "reason": "The protected Studio route, Codex-first worker, immutable proposal review, reviewer provenance, approval, trusted candidate staging, and sole Leadership candidate runtime are active. The exact candidate is visible on Leadership while protected Git main remains unchanged. Final publication is intentionally paused for explicit human confirmation; backup/restore automation and coordinated PostgreSQL network hardening remain outstanding.",
     "rp1Mutated": true
   }
 }

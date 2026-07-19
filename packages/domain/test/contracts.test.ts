@@ -18,6 +18,9 @@ import {
   sha256,
   situationLifecycleTransitions,
   type BundleManifest,
+  type DraftState,
+  type PublicationSagaState,
+  type SituationLifecycle,
 } from "../src/index";
 
 const hash = sha256("fixture");
@@ -137,5 +140,150 @@ describe("executable domain contracts", () => {
       detectSensitiveText("A manager needs help making a request specific.")
         .blocked,
     ).toBe(false);
+  });
+});
+
+const publicationStates = [
+  "REQUESTED",
+  "WORKTREE_READY",
+  "APPLIED",
+  "VALIDATED",
+  "COMMITTED",
+  "PUSHED",
+  "PREVIEW_BUILT",
+  "PREVIEW_VERIFIED",
+  "AWAITING_CONFIRMATION",
+  "CUTOVER",
+  "LIVE_VERIFIED",
+  "RECONCILED",
+  "FAILED_PREVIEW",
+  "AUTO_ROLLED_BACK",
+  "RECONCILIATION_REQUIRED",
+] as const satisfies readonly PublicationSagaState[];
+
+const allowedPublicationEdges = new Set([
+  "REQUESTED>WORKTREE_READY",
+  "REQUESTED>RECONCILIATION_REQUIRED",
+  "WORKTREE_READY>APPLIED",
+  "WORKTREE_READY>RECONCILIATION_REQUIRED",
+  "APPLIED>VALIDATED",
+  "APPLIED>RECONCILIATION_REQUIRED",
+  "VALIDATED>COMMITTED",
+  "VALIDATED>FAILED_PREVIEW",
+  "VALIDATED>RECONCILIATION_REQUIRED",
+  "COMMITTED>PUSHED",
+  "COMMITTED>RECONCILIATION_REQUIRED",
+  "PUSHED>PREVIEW_BUILT",
+  "PUSHED>FAILED_PREVIEW",
+  "PUSHED>RECONCILIATION_REQUIRED",
+  "PREVIEW_BUILT>PREVIEW_VERIFIED",
+  "PREVIEW_BUILT>FAILED_PREVIEW",
+  "PREVIEW_BUILT>RECONCILIATION_REQUIRED",
+  "PREVIEW_VERIFIED>AWAITING_CONFIRMATION",
+  "PREVIEW_VERIFIED>FAILED_PREVIEW",
+  "AWAITING_CONFIRMATION>CUTOVER",
+  "AWAITING_CONFIRMATION>FAILED_PREVIEW",
+  "CUTOVER>LIVE_VERIFIED",
+  "CUTOVER>AUTO_ROLLED_BACK",
+  "CUTOVER>RECONCILIATION_REQUIRED",
+  "LIVE_VERIFIED>RECONCILED",
+  "LIVE_VERIFIED>AUTO_ROLLED_BACK",
+  "LIVE_VERIFIED>RECONCILIATION_REQUIRED",
+  "AUTO_ROLLED_BACK>RECONCILED",
+  "AUTO_ROLLED_BACK>RECONCILIATION_REQUIRED",
+  "RECONCILIATION_REQUIRED>RECONCILED",
+  "RECONCILIATION_REQUIRED>AUTO_ROLLED_BACK",
+]);
+
+const draftStates = [
+  "DISCOVERY",
+  "DRAFTING",
+  "READY_FOR_AI_REVIEW",
+  "AI_REVIEW_QUEUED",
+  "AI_REVIEW_RUNNING",
+  "PROPOSAL_READY",
+  "HUMAN_REVIEW",
+  "CHANGES_REQUESTED",
+  "APPROVED",
+  "PUBLISHING",
+  "PUBLISHED",
+  "FAILED",
+] as const satisfies readonly DraftState[];
+
+const allowedDraftEdges = new Set([
+  "DISCOVERY>DRAFTING",
+  "DISCOVERY>READY_FOR_AI_REVIEW",
+  "DRAFTING>READY_FOR_AI_REVIEW",
+  "DRAFTING>HUMAN_REVIEW",
+  "READY_FOR_AI_REVIEW>AI_REVIEW_QUEUED",
+  "READY_FOR_AI_REVIEW>DRAFTING",
+  "AI_REVIEW_QUEUED>AI_REVIEW_RUNNING",
+  "AI_REVIEW_QUEUED>DRAFTING",
+  "AI_REVIEW_QUEUED>FAILED",
+  "AI_REVIEW_RUNNING>PROPOSAL_READY",
+  "AI_REVIEW_RUNNING>FAILED",
+  "AI_REVIEW_RUNNING>DRAFTING",
+  "PROPOSAL_READY>HUMAN_REVIEW",
+  "PROPOSAL_READY>CHANGES_REQUESTED",
+  "PROPOSAL_READY>DRAFTING",
+  "HUMAN_REVIEW>APPROVED",
+  "HUMAN_REVIEW>CHANGES_REQUESTED",
+  "HUMAN_REVIEW>DRAFTING",
+  "CHANGES_REQUESTED>DRAFTING",
+  "CHANGES_REQUESTED>READY_FOR_AI_REVIEW",
+  "CHANGES_REQUESTED>HUMAN_REVIEW",
+  "APPROVED>PUBLISHING",
+  "APPROVED>DRAFTING",
+  "PUBLISHING>PUBLISHED",
+  "PUBLISHING>FAILED",
+  "PUBLISHING>APPROVED",
+  "PUBLISHED>DRAFTING",
+  "FAILED>DISCOVERY",
+  "FAILED>DRAFTING",
+  "FAILED>READY_FOR_AI_REVIEW",
+  "FAILED>APPROVED",
+]);
+
+const lifecycleStates = [
+  "UNPUBLISHED",
+  "ACTIVE",
+  "ARCHIVED",
+] as const satisfies readonly SituationLifecycle[];
+
+const allowedLifecycleEdges = new Set([
+  "UNPUBLISHED>ACTIVE",
+  "UNPUBLISHED>ARCHIVED",
+  "ACTIVE>ARCHIVED",
+  "ARCHIVED>UNPUBLISHED",
+  "ARCHIVED>ACTIVE",
+]);
+
+describe("exhaustive state-transition matrices", () => {
+  it.each(
+    publicationStates.flatMap((from) =>
+      publicationStates.map((to) => [from, to] as const),
+    ),
+  )("publication %s -> %s follows the fail-closed contract", (from, to) => {
+    expect(canTransition(publicationSagaTransitions, from, to)).toBe(
+      allowedPublicationEdges.has(`${from}>${to}`),
+    );
+  });
+
+  it.each(
+    draftStates.flatMap((from) => draftStates.map((to) => [from, to] as const)),
+  )("draft %s -> %s follows the workflow contract", (from, to) => {
+    expect(canTransition(draftTransitions, from, to)).toBe(
+      allowedDraftEdges.has(`${from}>${to}`),
+    );
+  });
+
+  it.each(
+    lifecycleStates.flatMap((from) =>
+      lifecycleStates.map((to) => [from, to] as const),
+    ),
+  )("situation %s -> %s follows the lifecycle contract", (from, to) => {
+    expect(canTransition(situationLifecycleTransitions, from, to)).toBe(
+      allowedLifecycleEdges.has(`${from}>${to}`),
+    );
   });
 });

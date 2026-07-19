@@ -480,6 +480,7 @@ test("affected desktop pages have no critical or serious accessibility violation
 test("a synthetic proposal remains unmistakably separate from the published baseline", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(60_000);
   skipUnlessDesktop(testInfo);
   const databaseUrl = process.env.DATABASE_URL;
   test.skip(
@@ -766,6 +767,10 @@ test("a synthetic proposal remains unmistakably separate from the published base
         })),
       )
       .toEqual({ left: 80, top: 240 });
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
     await candidateDiff.evaluate((element) => {
       element.scrollTop = 120;
       element.dispatchEvent(new Event("scroll"));
@@ -773,6 +778,30 @@ test("a synthetic proposal remains unmistakably separate from the published base
     await expect
       .poll(() => publishedDiff.evaluate((element) => element.scrollTop))
       .toBe(120);
+
+    const reviewSpacing = await page
+      .locator(".exactBundlePanel")
+      .evaluate((panel) => {
+        const summary = panel.querySelector(":scope > summary");
+        const title = summary?.querySelector(".exactBundleSummaryCopy strong");
+        const description = summary?.querySelector(
+          ".exactBundleSummaryCopy small",
+        );
+        const summaryBounds = summary?.getBoundingClientRect();
+        const titleBounds = title?.getBoundingClientRect();
+        const descriptionBounds = description?.getBoundingClientRect();
+        return {
+          summaryDisplay: summary ? getComputedStyle(summary).display : null,
+          summaryHeight: summaryBounds?.height ?? 0,
+          titleDescriptionGap:
+            titleBounds && descriptionBounds
+              ? descriptionBounds.top - titleBounds.bottom
+              : 0,
+        };
+      });
+    expect(reviewSpacing.summaryDisplay).toBe("grid");
+    expect(reviewSpacing.summaryHeight).toBeGreaterThanOrEqual(70);
+    expect(reviewSpacing.titleDescriptionGap).toBeGreaterThanOrEqual(5);
 
     await page.getByRole("button", { name: "Sign out" }).click();
     await login(page);
@@ -785,6 +814,18 @@ test("a synthetic proposal remains unmistakably separate from the published base
         /Proposal candidate revision \d+ · read-only · not published/u,
       ),
     ).toBeVisible();
+    const confirmationActionGap = await page
+      .locator(".commentComposer")
+      .evaluate((composer) => {
+        const confirmation = composer.querySelector(".confirmation");
+        const actions = composer.querySelector(".commentActions");
+        const confirmationBounds = confirmation?.getBoundingClientRect();
+        const actionsBounds = actions?.getBoundingClientRect();
+        return confirmationBounds && actionsBounds
+          ? actionsBounds.top - confirmationBounds.bottom
+          : 0;
+      });
+    expect(confirmationActionGap).toBeGreaterThanOrEqual(12);
     await expect(page.locator(".workspaceSummary")).toContainText(
       "Official baseline",
     );
@@ -846,7 +887,12 @@ test("a synthetic proposal remains unmistakably separate from the published base
     ]);
     expect(reauthenticationResponse.status()).toBe(200);
     expect(prepareResponse.status()).toBe(201);
-    await page.getByRole("tab", { name: "Source MDX" }).click();
+    await expect(
+      page.getByText(/Reviewer studio-admin-reviewer · review date/u),
+    ).toBeVisible();
+    const sourceTab = page.getByRole("tab", { name: "Source MDX" });
+    await sourceTab.click();
+    await expect(sourceTab).toHaveAttribute("aria-selected", "true");
     await expect(page.getByLabel("Situation MDX")).toHaveValue(
       /reviewer: studio-admin-reviewer/u,
     );
@@ -1127,6 +1173,24 @@ test("a synthetic proposal remains unmistakably separate from the published base
       await expect(
         page.locator(".publicationProgress li.complete"),
       ).toHaveCount(2, { timeout: 8_000 });
+      await expect(page.locator(".publicationProgress li.current")).toHaveCount(
+        1,
+      );
+      await database.query(
+        `UPDATE publication_requests
+         SET state = 'LIVE_VERIFIED', current_step = 'LIVE_VERIFIED'
+         WHERE id = $1`,
+        [stagedRequestId],
+      );
+      await expect(
+        page.locator(".publicationProgress li.complete"),
+      ).toHaveCount(3, { timeout: 8_000 });
+      await expect(page.locator(".publicationProgress li.current")).toHaveCount(
+        1,
+      );
+      await expect(page.locator(".publicationProgress")).toContainText(
+        "Studio reconciled and custody released",
+      );
     }
   } finally {
     const releasedAt = new Date();

@@ -1,10 +1,13 @@
 import { execFile } from "node:child_process";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
   readlink,
   rm,
+  symlink,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -107,12 +110,51 @@ async function fixture(
   });
   return {
     root,
+    source,
     remote,
     artifactPath,
+    baseBody,
     candidateBody,
     publication,
     publisher,
   };
+}
+
+async function commitCandidate(item: Awaited<ReturnType<typeof fixture>>) {
+  await item.publisher.prepareWorktree(item.publication);
+  await item.publisher.apply(item.publication);
+  await item.publisher.validate(item.publication);
+  return item.publisher.commit(item.publication);
+}
+
+async function buildCandidatePreview(
+  item: Awaited<ReturnType<typeof fixture>>,
+) {
+  const commitSha = await commitCandidate(item);
+  await item.publisher.pushPreview(item.publication, commitSha);
+  const releasePath = await item.publisher.buildPreview(
+    item.publication,
+    commitSha,
+  );
+  return { commitSha, releasePath };
+}
+
+async function advanceRemote(item: Awaited<ReturnType<typeof fixture>>) {
+  await writeFile(
+    path.join(item.source, item.artifactPath),
+    `${item.baseBody}\nRemote advanced.\n`,
+  );
+  await execute("git", ["add", item.artifactPath], { cwd: item.source });
+  await execute("git", ["commit", "-m", "Advance fixture remote"], {
+    cwd: item.source,
+  });
+  const { stdout } = await execute("git", ["rev-parse", "HEAD"], {
+    cwd: item.source,
+  });
+  await execute("git", ["push", item.remote, "HEAD:main"], {
+    cwd: item.source,
+  });
+  return stdout.trim();
 }
 
 describe("trusted repository publisher", () => {
@@ -287,5 +329,236 @@ describe("trusted repository publisher", () => {
       "main",
     ]);
     expect(remoteHead.trim()).toBe(commitSha);
+  });
+
+  it("rejects a bundle hash that is not the canonical manifest hash", async () => {
+    const item = await fixture();
+    item.publication.bundleHash = "0".repeat(64);
+    await expect(
+      item.publisher.prepareWorktree(item.publication),
+    ).rejects.toThrow("Publication bundle hash is not canonical");
+  });
+
+  it.each([
+    ["publicationUuid", "not-a-uuid"],
+    ["baseCommit", "not-a-commit"],
+  ] as const)("rejects an invalid %s", async (field, value) => {
+    const item = await fixture();
+    Object.assign(item.publication, { [field]: value });
+    await expect(
+      item.publisher.prepareWorktree(item.publication),
+    ).rejects.toThrow("Publication identity or base commit is invalid");
+  });
+
+  it("rejects duplicate stored artifact bodies", async () => {
+    const item = await fixture();
+    await item.publisher.prepareWorktree(item.publication);
+    item.publication.artifacts.push({ ...item.publication.artifacts[0]! });
+    await expect(item.publisher.apply(item.publication)).rejects.toThrow(
+      "Publication contains duplicate artifact bodies",
+    );
+  });
+
+  it("rejects stored artifact bytes that are absent from the manifest", async () => {
+    const item = await fixture();
+    await item.publisher.prepareWorktree(item.publication);
+    item.publication.artifacts.push({
+      path: "content/situations/undeclared.mdx",
+      body: "Undeclared.\n",
+    });
+    await expect(item.publisher.apply(item.publication)).rejects.toThrow(
+      "Stored artifact bodies do not match the approved manifest",
+    );
+  });
+
+  it("rejects a manifest artifact whose approved body is missing", async () => {
+    const item = await fixture();
+    await item.publisher.prepareWorktree(item.publication);
+    item.publication.artifacts = [];
+    await expect(item.publisher.apply(item.publication)).rejects.toThrow(
+      "Stored artifact bodies do not match the approved manifest",
+    );
+  });
+
+  it("rejects candidate bytes that do not match the approved hash", async () => {
+    const item = await fixture();
+    await item.publisher.prepareWorktree(item.publication);
+    item.publication.artifacts[0]!.body = "Tampered candidate.\n";
+    await expect(item.publisher.apply(item.publication)).rejects.toThrow(
+      "Candidate body hash is invalid",
+    );
+  });
+
+  it("rejects an executable artifact in the publication worktree", async () => {
+    const item = await fixture();
+    await item.publisher.prepareWorktree(item.publication);
+    await chmod(
+      path.join(
+        item.publisher.worktreePath(item.publication.publicationUuid),
+        item.artifactPath,
+      ),
+      0o755,
+    );
+    await expect(item.publisher.apply(item.publication)).rejects.toThrow(
+      "Artifact is executable",
+    );
+  });
+
+  it("rejects a symlinked artifact parent", async () => {
+    const item = await fixture();
+    await item.publisher.prepareWorktree(item.publication);
+    const worktree = item.publisher.worktreePath(
+      item.publication.publicationUuid,
+    );
+    const situations = path.join(worktree, "content", "situations");
+    await rm(situations, { recursive: true });
+    await symlink(item.root, situations);
+    await expect(item.publisher.apply(item.publication)).rejects.toThrow(
+      "Unsafe artifact parent",
+    );
+  });
+
+  it("rejects a manifest path outside the approved repository surface", async () => {
+    const item = await fixture();
+    item.publication.manifest.artifacts[0]!.path = "../escape.mdx";
+    expect(() => canonicalBundleHash(item.publication.manifest)).toThrow();
+  });
+
+  it("rejects unrelated worktree changes before creating a commit", async () => {
+    const item = await fixture();
+    await item.publisher.prepareWorktree(item.publication);
+    await item.publisher.apply(item.publication);
+    const worktree = item.publisher.worktreePath(
+      item.publication.publicationUuid,
+    );
+    await writeFile(path.join(worktree, "unexpected.txt"), "Not approved.\n");
+    await expect(item.publisher.commit(item.publication)).rejects.toThrow(
+      "Worktree contains changes outside the approved artifact set",
+    );
+  });
+
+  it("rejects preview publication when protected main has advanced", async () => {
+    const item = await fixture();
+    const commitSha = await commitCandidate(item);
+    await advanceRemote(item);
+    await expect(
+      item.publisher.pushPreview(item.publication, commitSha),
+    ).rejects.toThrow("REMOTE_HEAD_ADVANCED");
+  });
+
+  it("rejects reuse of an immutable preview ref for different bytes", async () => {
+    const item = await fixture();
+    const commitSha = await commitCandidate(item);
+    await execute("git", [
+      `--git-dir=${item.remote}`,
+      "update-ref",
+      `refs/heads/studio/preview/${item.publication.publicationUuid}`,
+      item.publication.baseCommit,
+    ]);
+    await expect(
+      item.publisher.pushPreview(item.publication, commitSha),
+    ).rejects.toThrow("Immutable preview branch points at another commit");
+  });
+
+  it.each([
+    ["schemaVersion", "2"],
+    ["publicationUuid", "22222222-2222-4222-8222-222222222222"],
+    ["bundleHash", "0".repeat(64)],
+    ["commitSha", "0".repeat(40)],
+    ["releasePath", "/not/the/release"],
+  ] as const)(
+    "rejects a release marker with the wrong %s",
+    async (field, value) => {
+      const item = await fixture();
+      const { commitSha, releasePath } = await buildCandidatePreview(item);
+      const markerPath = path.join(releasePath, ".studio-publication.json");
+      const marker = JSON.parse(await readFile(markerPath, "utf8")) as Record<
+        string,
+        string
+      >;
+      marker[field] = value;
+      await chmod(markerPath, 0o644);
+      await writeFile(markerPath, `${JSON.stringify(marker)}\n`);
+      await expect(
+        item.publisher.verifyRelease(item.publication, commitSha, releasePath),
+      ).rejects.toThrow("Release marker does not match the exact publication");
+    },
+  );
+
+  it("rejects preview verification when the link moves to another release", async () => {
+    const item = await fixture();
+    const { commitSha, releasePath } = await buildCandidatePreview(item);
+    const other = path.join(item.root, "other-preview");
+    await mkdir(other);
+    const previewLink = path.join(item.root, "release-target", "preview");
+    await unlink(previewLink);
+    await symlink(other, previewLink);
+    await expect(
+      item.publisher.verifyPreview(item.publication, commitSha, releasePath),
+    ).rejects.toThrow("Preview link does not point at the staged release");
+  });
+
+  it("rejects cutover when protected main advances after preview verification", async () => {
+    const item = await fixture();
+    const { commitSha, releasePath } = await buildCandidatePreview(item);
+    await advanceRemote(item);
+    await expect(
+      item.publisher.cutover(item.publication, commitSha, releasePath),
+    ).rejects.toThrow("REMOTE_HEAD_ADVANCED");
+  });
+
+  it("rejects live verification when the link does not name the promoted release", async () => {
+    const item = await fixture();
+    const { commitSha, releasePath } = await buildCandidatePreview(item);
+    await item.publisher.cutover(item.publication, commitSha, releasePath);
+    const other = path.join(item.root, "other-live");
+    await mkdir(other);
+    const liveLink = path.join(item.root, "release-target", "current");
+    await unlink(liveLink);
+    await symlink(other, liveLink);
+    await expect(
+      item.publisher.verifyLive(item.publication, commitSha, releasePath),
+    ).rejects.toThrow("Live link does not point at the promoted release");
+  });
+
+  it("rejects a partially configured release activation", async () => {
+    const item = await fixture({ activationBinary: "/usr/bin/true" });
+    const commitSha = await commitCandidate(item);
+    await item.publisher.pushPreview(item.publication, commitSha);
+    await expect(
+      item.publisher.buildPreview(item.publication, commitSha),
+    ).rejects.toThrow("Publisher release activation is only partly configured");
+  });
+
+  it.each([
+    {
+      rollbackUuid: "invalid",
+      expectedHead: "a".repeat(40),
+      targetCommit: "b".repeat(40),
+      targetManifestHash: "c".repeat(64),
+    },
+    {
+      rollbackUuid: "22222222-2222-4222-8222-222222222222",
+      expectedHead: "invalid",
+      targetCommit: "b".repeat(40),
+      targetManifestHash: "c".repeat(64),
+    },
+    {
+      rollbackUuid: "22222222-2222-4222-8222-222222222222",
+      expectedHead: "a".repeat(40),
+      targetCommit: "invalid",
+      targetManifestHash: "c".repeat(64),
+    },
+    {
+      rollbackUuid: "22222222-2222-4222-8222-222222222222",
+      expectedHead: "a".repeat(40),
+      targetCommit: "b".repeat(40),
+      targetManifestHash: "invalid",
+    },
+  ])("rejects malformed rollback identity %#", async (rollback) => {
+    const item = await fixture();
+    await expect(item.publisher.prepareRollback(rollback)).rejects.toThrow(
+      "Rollback identity is invalid",
+    );
   });
 });

@@ -1104,29 +1104,31 @@ export function WorkspaceEditor(props: Props) {
             ) : (
               <p className="muted">No open comments.</p>
             )}
-            <label className="field">
-              New comment
-              <textarea
-                value={commentBody}
-                onChange={(event) => setCommentBody(event.target.value)}
-              />
-            </label>
-            <label className="confirmation">
-              <input
-                type="checkbox"
-                checked={blockingComment}
-                onChange={(event) => setBlockingComment(event.target.checked)}
-              />
-              <span>Block approval until this comment is resolved.</span>
-            </label>
-            <div className="commentActions">
-              <button
-                className="button secondary"
-                type="button"
-                onClick={addComment}
-              >
-                Add review comment
-              </button>
+            <div className="commentComposer">
+              <label className="field">
+                New comment
+                <textarea
+                  value={commentBody}
+                  onChange={(event) => setCommentBody(event.target.value)}
+                />
+              </label>
+              <label className="confirmation">
+                <input
+                  type="checkbox"
+                  checked={blockingComment}
+                  onChange={(event) => setBlockingComment(event.target.checked)}
+                />
+                <span>Block approval until this comment is resolved.</span>
+              </label>
+              <div className="commentActions">
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={addComment}
+                >
+                  Add review comment
+                </button>
+              </div>
             </div>
           </section>
         )}

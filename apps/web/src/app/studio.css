@@ -609,6 +609,194 @@ summary:focus-visible {
   font-size: 0.875rem;
   line-height: 1.4;
 }
+.reviewProgressCard {
+  display: grid;
+  gap: 1rem;
+  margin: 0 0 1rem;
+  padding: clamp(1.1rem, 2.5vw, 1.6rem);
+  border: 1px solid rgba(229, 185, 79, 0.72);
+  border-left: 5px solid var(--gold);
+  background: #fff9e9;
+  box-shadow: 0 0.8rem 2rem rgba(20, 38, 31, 0.06);
+}
+.reviewProgressCard.warning {
+  border-color: rgba(196, 90, 62, 0.42);
+  border-left-color: var(--rust);
+  background: #fff6ed;
+}
+.reviewProgressCard.success {
+  border-color: rgba(95, 123, 82, 0.52);
+  border-left-color: var(--moss);
+  background: #f1f6ed;
+}
+.reviewProgressCard.danger {
+  border-color: rgba(196, 90, 62, 0.6);
+  border-left-color: var(--rust);
+  background: #fcece6;
+}
+.reviewProgressHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.reviewProgressHeader h2 {
+  margin: 0.2rem 0 0;
+  font-family: Georgia, serif;
+  font-size: clamp(1.55rem, 2.5vw, 2.25rem);
+  font-weight: 500;
+  line-height: 1.08;
+}
+.reviewProgressHeader .eyebrow {
+  margin: 0;
+}
+.liveState {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 99rem;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+.liveState > span {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--gold);
+}
+.liveState.live > span {
+  background: #4b7c4d;
+  box-shadow: 0 0 0 0.22rem rgba(75, 124, 77, 0.16);
+}
+.liveState.reconnecting > span {
+  background: var(--rust);
+}
+.liveState.complete > span {
+  background: var(--moss);
+}
+.reviewProgressDetail {
+  max-width: 70rem;
+  margin: 0;
+  color: #34483f;
+  line-height: 1.55;
+}
+.reviewProgressMeter {
+  display: grid;
+  grid-template-columns: minmax(16rem, 0.45fr) minmax(18rem, 1fr);
+  align-items: center;
+  gap: 1rem;
+}
+.reviewProgressMeter > div {
+  display: grid;
+  gap: 0.2rem;
+}
+.reviewProgressMeter strong {
+  font-size: 0.85rem;
+}
+.reviewProgressMeter span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.reviewProgressMeter progress {
+  width: 100%;
+  height: 0.72rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 99rem;
+  accent-color: var(--moss);
+}
+.reviewProgressMeter progress::-webkit-progress-bar {
+  border-radius: 99rem;
+  background: rgba(20, 38, 31, 0.12);
+}
+.reviewProgressMeter progress::-webkit-progress-value {
+  border-radius: 99rem;
+  background: var(--moss);
+}
+.reviewProgressSteps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.reviewProgressSteps li {
+  display: grid;
+  grid-template-columns: 1.8rem minmax(0, 1fr);
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.7);
+}
+.reviewProgressSteps li > span {
+  width: 1.8rem;
+  height: 1.8rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+.reviewProgressSteps li.complete > span {
+  border-color: var(--moss);
+  background: var(--moss);
+  color: white;
+}
+.reviewProgressSteps li.current {
+  border-color: rgba(229, 185, 79, 0.8);
+  background: #fffdf7;
+}
+.reviewProgressSteps li.current > span {
+  border-color: var(--gold);
+  background: #f8e8b9;
+  color: #6e5512;
+  animation: publicationPulse 1.5s ease-in-out infinite;
+}
+.reviewProgressSteps strong,
+.reviewProgressSteps small {
+  display: block;
+}
+.reviewProgressSteps strong {
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+.reviewProgressSteps small {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+.reviewProgressFooter {
+  display: grid;
+  grid-template-columns: minmax(18rem, 1fr) minmax(18rem, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(20, 38, 31, 0.14);
+}
+.reviewProgressFooter p {
+  margin: 0;
+  color: #42554c;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.reviewProgressFooter a {
+  color: var(--forest);
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+  text-underline-offset: 3px;
+}
 .administrationGrid {
   display: grid;
   grid-template-columns:
@@ -1253,10 +1441,15 @@ summary:focus-visible {
   font-family: inherit;
   font-size: 0.875rem;
 }
+.commentComposer {
+  display: grid;
+  gap: 1rem;
+}
 .commentActions {
   display: flex;
   align-items: center;
-  margin-top: 0.8rem;
+  min-height: 3rem;
+  margin: 0;
 }
 .contextPanel {
   position: sticky;
@@ -1547,8 +1740,9 @@ summary:focus-visible {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 0.8rem;
-  padding: 0.85rem 1.1rem;
+  gap: 1rem;
+  min-height: 5rem;
+  padding: 1rem 1.25rem;
   cursor: pointer;
   list-style: none;
 }
@@ -1569,7 +1763,8 @@ summary:focus-visible {
 }
 .exactBundleSummaryCopy {
   display: grid;
-  gap: 0.18rem;
+  align-content: center;
+  gap: 0.4rem;
   min-width: 0;
 }
 .exactBundleSummaryCopy strong,
@@ -1579,8 +1774,8 @@ summary:focus-visible {
 }
 .exactBundleSummaryCopy small {
   color: var(--muted);
-  font-size: 0.78rem;
-  line-height: 1.4;
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 .exactBundleSummaryBadge {
   justify-self: end;
@@ -1971,6 +2166,15 @@ summary:focus-visible {
   .publicationProgress {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .reviewProgressSteps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .reviewProgressFooter {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .reviewProgressFooter a {
+    grid-column: 1 / -1;
+  }
   .workspaceSummary > div:nth-child(2) {
     border-right: 0;
   }
@@ -2066,8 +2270,17 @@ summary:focus-visible {
   .dangerArea,
   .diffGrid,
   .publicationProgress,
+  .reviewProgressSteps,
+  .reviewProgressMeter,
+  .reviewProgressFooter,
   .publicationVersionChange {
     grid-template-columns: 1fr;
+  }
+  .reviewProgressHeader {
+    flex-direction: column;
+  }
+  .reviewProgressFooter a {
+    grid-column: auto;
   }
   .publicationVersionChange > span {
     justify-self: center;

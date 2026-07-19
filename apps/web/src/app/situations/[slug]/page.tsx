@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { ReviewProgress } from "@/components/review-progress";
 import { WorkspaceEditor } from "@/components/workspace-editor";
 import { currentSession } from "@/server/auth/sessions";
 import { database } from "@/server/database";
@@ -10,6 +11,7 @@ import {
   readPreparedReviewProvenance,
 } from "@/server/workflows/review-provenance";
 import { publicationDecisionLabel } from "@/lib/publication-presentation";
+import { reviewJobSnapshotById } from "@/server/review-progress";
 
 export default async function SituationWorkspace({
   params,
@@ -93,6 +95,17 @@ export default async function SituationWorkspace({
     orderBy: { createdAt: "desc" },
   });
   const checkout = situation.checkouts[0] ?? null;
+  const reviewJobRecord =
+    checkout?.custody === "AI_JOB" && checkout.custodyReference
+      ? await reviewJobSnapshotById(checkout.custodyReference)
+      : null;
+  const reviewActive = Boolean(reviewJobRecord);
+  const reviewJob =
+    reviewJobRecord &&
+    (reviewJobRecord.ownerId === session.userId ||
+      session.permissions.has("system.admin"))
+      ? reviewJobRecord.snapshot
+      : null;
   const draft = situation.drafts[0] ?? null;
   const revision = draft?.revisions[0] ?? null;
   const publishedArtifactEntry =
@@ -184,15 +197,17 @@ export default async function SituationWorkspace({
         : publicationRequest.state === "RECONCILIATION_REQUIRED"
           ? "Publication is blocked until Git, Leadership, and Studio are reconciled."
           : "No action required while the trusted publisher completes and verifies publication."
-    : checkout
-      ? ownsCheckout
-        ? draft
-          ? "Continue the checked-out draft, then save, start review, or check in to release it."
-          : "This checkout is yours; continue the workflow or check in to release it."
-        : `Read the official baseline while ${checkout.holder?.displayName ?? "another operator"} holds the exclusive checkout.`
-      : session.permissions.has("draft.update")
-        ? "Check out this situation when you are ready to create or continue a draft."
-        : "Read the official baseline. Your current permissions do not include editing.";
+    : reviewActive
+      ? "No action required—your complete review is durable and this page updates automatically."
+      : checkout
+        ? ownsCheckout
+          ? draft
+            ? "Continue the checked-out draft, then save, start review, or check in to release it."
+            : "This checkout is yours; continue the workflow or check in to release it."
+          : `Read the official baseline while ${checkout.holder?.displayName ?? "another operator"} holds the exclusive checkout.`
+        : session.permissions.has("draft.update")
+          ? "Check out this situation when you are ready to create or continue a draft."
+          : "Read the official baseline. Your current permissions do not include editing.";
   const passedValidations =
     bundle?.validations.filter((item) => item.state === "PASSED").length ?? 0;
   const failedValidations =
@@ -235,8 +250,15 @@ export default async function SituationWorkspace({
           ) : (
             <>
               <span className="badge ink">{situation.publicationState}</span>
-              {draft && <span className="badge gold">{draft.state}</span>}
-              {checkout && (
+              {reviewActive ? (
+                <>
+                  <span className="badge gold">Complete review active</span>
+                  <span className="badge rust">Live progress below</span>
+                </>
+              ) : (
+                draft && <span className="badge gold">{draft.state}</span>
+              )}
+              {checkout && !reviewActive && (
                 <span className="badge rust">
                   {checkout.mode} ·{" "}
                   {checkout.holder?.displayName ?? checkout.custody}
@@ -275,11 +297,19 @@ export default async function SituationWorkspace({
         ) : (
           <div>
             <span>Exclusive checkout</span>
-            <strong>{checkout ? "In use" : "Available"}</strong>
+            <strong>
+              {reviewActive
+                ? "Protected during review"
+                : checkout
+                  ? "In use"
+                  : "Available"}
+            </strong>
             <small>
-              {checkout
-                ? `${checkout.mode.toLowerCase().replaceAll("_", " ")} · ${checkout.holder?.displayName ?? checkout.custody.toLowerCase()}`
-                : "No active owner"}
+              {reviewActive
+                ? "The review job has custody of the saved draft"
+                : checkout
+                  ? `${checkout.mode.toLowerCase().replaceAll("_", " ")} · ${checkout.holder?.displayName ?? checkout.custody.toLowerCase()}`
+                  : "No active owner"}
             </small>
           </div>
         )}
@@ -301,7 +331,35 @@ export default async function SituationWorkspace({
           <small>Detail remains available below</small>
         </div>
       </section>
+      {reviewJob && <ReviewProgress initialJob={reviewJob} />}
+      {reviewActive && !reviewJob && (
+        <section
+          aria-labelledby="review-progress-restricted-title"
+          className="reviewProgressCard"
+        >
+          <header className="reviewProgressHeader">
+            <div>
+              <p className="eyebrow">Complete review active</p>
+              <h2 id="review-progress-restricted-title">
+                Another operator’s review is in progress
+              </h2>
+            </div>
+          </header>
+          <p className="reviewProgressDetail">
+            The saved draft is protected while the durable review job runs.
+            Detailed live progress is available to the job owner and system
+            administrators.
+          </p>
+          <footer className="reviewProgressFooter">
+            <p>
+              <strong>What you should do:</strong> No action is required.
+            </p>
+            <p>The official published guidance remains live.</p>
+          </footer>
+        </section>
+      )}
       {!publicationRequest &&
+        !reviewActive &&
         checkout &&
         (checkout.holderUserId !== session.userId ||
           checkout.custody !== "USER") && (

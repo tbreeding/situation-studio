@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-19T08:02:06Z",
+  "recordedAt": "2026-07-19T09:48:18Z",
   "source": {
     "leadershipCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1",
     "leadershipRepositoryModified": true,
@@ -18,7 +18,7 @@
     "prismaSchema": "passed",
     "secretScan": "passed",
     "productionBuild": "passed",
-    "unitContractTests": 39,
+    "unitContractTests": 594,
     "browserTests": {
       "total": 36,
       "passed": 28,
@@ -320,9 +320,34 @@
     "smallSizeRasterReview": ["16x16", "32x32"],
     "nextStaticMetadataRoute": true
   },
+  "reviewProgressAndWorkspaceLayout": {
+    "status": "production-deployed-and-origin-verified",
+    "verifiedAt": "2026-07-19T09:48:18Z",
+    "studioRelease": "20260719T094530Z",
+    "studioCommit": "312bf7749a83388f3fe57433d9457efcdce4f743",
+    "committedArchiveBytes": 1341440,
+    "completeReviewSseEndpoint": true,
+    "durableReviewProgressPresentation": true,
+    "artifactSummaryMinimumHeightPx": 80,
+    "artifactTitleDescriptionMinimumGapPx": 5,
+    "commentActionMinimumGapPx": 12,
+    "localProductionShapedVisualReview": "passed",
+    "unitContractTests": 594,
+    "baselineRedeploy": "initialized-production-no-op-passed",
+    "baselineProductionInventory": {
+      "situations": 15,
+      "artifacts": 37,
+      "publishedCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1"
+    },
+    "firstAttemptStoppedBeforeBuildOrCutover": true,
+    "productionOriginLiveness": "passed",
+    "productionOriginReadiness": "passed",
+    "leadershipHealth": "passed",
+    "unrelatedRp1ProcessesPreserved": true
+  },
   "externalBeta": {
     "originDeployed": true,
-    "release": "20260719T070439Z",
+    "release": "20260719T094530Z",
     "privateOrigin": "http://192.168.1.120:3015",
     "outerGateRegistered": true,
     "providerExecution": "openai-service-api-enabled",

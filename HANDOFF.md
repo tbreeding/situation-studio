@@ -1,6 +1,6 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-19 08:02 UTC
+Last updated: 2026-07-19 09:48 UTC
 
 ## Purpose and authority
 
@@ -13,11 +13,10 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Current implementation commit: `0c569ef57b62c7eb21a477b13d9ad5ec9036eac6` (`Clarify final publication decision`).
-- Current RP1 release: `20260719T070439Z`.
-- `main` contains newer visual-cleanup and deployment-safety changes that are intentionally not deployed. Do not deploy them without explicit human approval for the exact commit.
-- The worktree was clean after the release.
-- The complete local gate passed: formatting, lint, strict TypeScript, Prisma validation, immutable-baseline verification, 39 tests, secret scan, and the production web build.
+- Current deployed implementation commit: `312bf7749a83388f3fe57433d9457efcdce4f743` (`Make baseline import safe for existing production data`).
+- Current RP1 release: `20260719T094530Z`.
+- The deployed release includes SSE-backed complete-review progress, clearer review/publication presentation, expanded workflow and deploy safety tests, and the corrected artifact-inspector/comment-composer spacing.
+- The complete local gate passed: formatting, lint, strict TypeScript, Prisma validation, immutable-baseline verification, 594 tests, secret scan, and the production web build.
 - The 36-case Chromium matrix most recently passed 28 applicable cases with 8 intentional desktop-only mobile skips.
 - Leadership protected `main` is `b6e40575eb823dc32c62644775895ad84a80d2d1`.
 
@@ -99,6 +98,7 @@ Production Git finalization has been exercised successfully. Production rollback
 ## Completed evidence
 
 - At 2026-07-19 07:17 UTC, the former workspace-wide deploy transfer began copying an 878 MB / 40,101-file payload that included ignored `artifacts/runtime` data. RP1 stopped answering IP traffic after 318 MB transferred; the deploy never reached dependency installation, build, symlink cutover, or PM2 reload. A physical power cycle at 07:28 UTC restored the preserved Studio release `20260719T070439Z`, preserved Leadership candidate release, all PM2 processes, and healthy PostgreSQL. The exact kernel-level cause is unproven because the previous boot journal was not persistent. The deploy path is now guarded by exact-commit approval, clean/pushed-main checks, a healthy-host preflight, a 50 MB source-archive cap, and Git-committed-source-only transfer.
+- At 2026-07-19 09:48 UTC, guarded release `20260719T094530Z` deployed commit `312bf7749a83388f3fe57433d9457efcdce4f743`. The transferred committed archive was 1,341,440 bytes. An initial release attempt stopped before build or cutover when the bootstrap-only baseline importer encountered the initialized production database; the live symlink and processes remained untouched. The importer now imports only into an empty database, safely no-ops for initialized production, and fails closed on partial initialization. The corrected attempt passed 594 tests, reported the existing 15 situations and 37 artifacts without rewriting them, built before atomic cutover, and verified Studio live/ready, PostgreSQL, Leadership, and all named PM2 processes. Unrelated RP1 process PIDs remained unchanged.
 - The branded SVG favicon is live at `/icon.svg` with the expected `image/svg+xml` content type. Its deployed SHA-256 exactly matches the committed source, and the mark remains legible in a 16×16 raster check.
 - Production review job `8fd6d658-8d64-4722-87dc-7699c61f7075` completed 22/22 durable roles using `gpt-5.6-sol`, with zero fallbacks, one proposal bundle, and 3/3 validations.
 - The reviewer-provenance flow created revision 2, wrote `timothy-breeding` and review date `2026-07-18` into the exact changed MDX, reran exact-byte validation, and produced the approved bundle above.

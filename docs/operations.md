@@ -8,7 +8,7 @@
 - Active symlink: `/home/admin/projects/situation-studio/current`.
 - Shared environment: `/home/admin/projects/situation-studio/shared`.
 - PM2 processes: `situation-studio-web`, `situation-studio-worker`, and `situation-studio-publisher`.
-- Current recorded release: `20260719T070439Z` (implementation commit `0c569ef`).
+- Current recorded release: `20260719T094530Z` (implementation commit `312bf77`).
 
 The route, first administrator, and OpenAI/Codex-first review worker are active. The publisher runs with a least-privilege database login, a repository-scoped Leadership deploy key, and one fixed Leadership candidate activation target. Backup automation and a clean restore rehearsal remain required operational work.
 

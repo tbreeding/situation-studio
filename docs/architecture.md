@@ -6,6 +6,8 @@ Situation Studio uses hybrid authority. PostgreSQL owns mutable workflow, identi
 
 The public Leadership runtime remains independent of the Studio database.
 
+`leadership.timsprototypes.com` is intentionally the only Leadership runtime in this prototype environment. Staging moves that candidate runtime to the exact approved release while protected Git `main` remains unchanged. Final publication advances `main` to the already-staged commit and reconciles the record; it does not create or deploy a second running version.
+
 ## Service split
 
 ```text
@@ -21,7 +23,7 @@ PostgreSQL queue
 
 Approved immutable bundle
   -> apps/validator (clean disposable Leadership worktree; no deploy authority)
-  -> apps/publisher (Git preview branch, release promotion, reconciliation; no AI/auth credential)
+  -> apps/publisher (Git candidate branch, single candidate runtime, publication reconciliation; no AI/auth credential)
 ```
 
 `packages/domain` has no Next.js, database, provider, Git, or deployment dependency. `packages/db` contains the reviewed schema and client only. Browser requests can select stable action identifiers; they cannot supply shell commands, provider models, paths, Git refs, or deployment targets.

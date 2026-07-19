@@ -28,11 +28,5 @@ module.exports = {
       3005,
       "https://leadership.timsprototypes.com",
     ),
-    leadershipProcess(
-      "leadership-field-guide-preview",
-      "/home/admin/projects/leadership-preview/current",
-      3016,
-      "https://leadership-preview.timsprototypes.com",
-    ),
   ],
 };

@@ -19,7 +19,7 @@ The RP1 host was inspected read-only before any deployment mutation.
 - Raspberry Pi 5-class ARM64 host, 4 CPU cores and 8 GB RAM; approximately 5.2 GB was available during inspection.
 - Approximately 458 GB filesystem capacity with 6% in use and 2 GB swap.
 - PostgreSQL 16.12 runs in the existing `postgres16` container with `max_connections = 100`; 44 connections were observed. Studio therefore keeps the documented small pools and must stay below the 70-connection warning threshold for the whole cluster.
-- Ports 3015 and 3016 were unused. Studio reserves 3015; the Leadership preview reserves 3016.
+- Port 3015 was unused and is reserved by Studio. Leadership continues to use its existing single runtime on port 3005.
 - The Leadership beta remains a versioned release/symlink deployment. Studio is a separate release tree and PM2 process.
 
 ## Gate and network evidence

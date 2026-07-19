@@ -379,7 +379,7 @@ export function WorkspaceEditor(props: Props) {
         result?.error === "another checkout owns this situation"
           ? "Staging is blocked because another checkout owns this situation. Reload to see the current owner."
           : result?.error === "another publication is already being staged"
-            ? "Staging is temporarily blocked while another approved bundle uses the Leadership preview."
+            ? "Staging is temporarily blocked while another approved bundle uses the Leadership candidate environment."
             : result?.error === "publication preconditions failed"
               ? "Staging is blocked because this approval, validation, or exact bundle is no longer current."
               : (result?.error ??
@@ -390,7 +390,7 @@ export function WorkspaceEditor(props: Props) {
 
   async function confirmPublication() {
     if (!props.publicationRequest) return;
-    setStatus("Confirming previewed commit and promoting the exact release…");
+    setStatus("Publishing the exact staged commit and finalizing its record…");
     const response = await fetch(
       `/api/publications/${props.publicationRequest.id}/confirm`,
       {
@@ -668,8 +668,8 @@ export function WorkspaceEditor(props: Props) {
           <p className="artifactStateNotice candidate" role="status">
             {props.publicationRequest.state === "AWAITING_CONFIRMATION"
               ? props.publicationRequest.finalConfirmed
-                ? "Final confirmation recorded. The trusted publisher is promoting the exact previewed release."
-                : "Preview verified. Inspect the Leadership preview, then explicitly publish this exact commit."
+                ? "Final confirmation recorded. The trusted publisher is finalizing the exact staged release."
+                : "Candidate staged on Leadership. Inspect it, then explicitly publish this exact commit."
               : props.publicationRequest.state === "FAILED_PREVIEW"
                 ? "Preview staging failed before cutover. The live release is unchanged and your checkout has been returned."
                 : props.publicationRequest.state === "RECONCILIATION_REQUIRED"
@@ -687,11 +687,11 @@ export function WorkspaceEditor(props: Props) {
                 {props.publicationRequest.state === "AWAITING_CONFIRMATION" &&
                   !props.publicationRequest.finalConfirmed && (
                     <a
-                      href="https://leadership-preview.timsprototypes.com"
+                      href="https://leadership.timsprototypes.com"
                       target="_blank"
                       rel="noreferrer"
                     >
-                      Open Leadership preview
+                      Open staged Leadership
                     </a>
                   )}
               </>

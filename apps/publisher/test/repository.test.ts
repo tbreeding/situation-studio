@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -244,5 +251,41 @@ describe("trusted repository publisher", () => {
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
+  });
+
+  it("stages and publishes through one candidate runtime", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "studio-runtime-test-"));
+    temporaryRoots.push(root);
+    const candidateLink = path.join(root, "leadership", "current");
+    const item = await fixture({
+      previewLink: candidateLink,
+      liveLink: candidateLink,
+    });
+    await item.publisher.prepareWorktree(item.publication);
+    await item.publisher.apply(item.publication);
+    await item.publisher.validate(item.publication);
+    const commitSha = await item.publisher.commit(item.publication);
+    await item.publisher.pushPreview(item.publication, commitSha);
+    const releasePath = await item.publisher.buildPreview(
+      item.publication,
+      commitSha,
+    );
+    await item.publisher.verifyPreview(
+      item.publication,
+      commitSha,
+      releasePath,
+    );
+    await item.publisher.cutover(item.publication, commitSha, releasePath);
+    await item.publisher.verifyLive(item.publication, commitSha, releasePath);
+
+    expect(
+      path.resolve(path.dirname(candidateLink), await readlink(candidateLink)),
+    ).toBe(releasePath);
+    const { stdout: remoteHead } = await execute("git", [
+      `--git-dir=${item.remote}`,
+      "rev-parse",
+      "main",
+    ]);
+    expect(remoteHead.trim()).toBe(commitSha);
   });
 });

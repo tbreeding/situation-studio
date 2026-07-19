@@ -76,7 +76,7 @@ const publisher = new RepositoryPublisher({
   validationEnvironment: {
     NEXT_PUBLIC_SITE_URL:
       config.PUBLISHER_PROFILE === "protected-beta"
-        ? "https://leadership-preview.timsprototypes.com"
+        ? "https://leadership.timsprototypes.com"
         : "http://127.0.0.1:3305",
   },
 });

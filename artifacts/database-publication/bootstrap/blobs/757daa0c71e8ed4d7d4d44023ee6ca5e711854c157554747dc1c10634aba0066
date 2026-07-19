@@ -1,0 +1,85 @@
+---
+slug: persistent-peer-conflict
+title: Two employees are in persistent conflict
+description: Intervene without becoming the judge of competing personalities, forcing false harmony, or carrying messages between two adults.
+stakes: Persistent conflict consumes coordination, recruits bystanders, and makes ordinary work decisions feel personal.
+primarySkill: team-dynamics
+tags: [peer conflict, mediation, team norms, repair]
+audience: [manager, technical-lead]
+preparationTime: 30 minutes
+emotionalLoad: high
+pattern: repeated-pattern
+scope: pair
+support: [hr, safety]
+published: 2026-07-16
+lastReviewed: 2026-07-16
+author: timothy-breeding
+reviewer: timothy-breeding
+sourceReferences: [course-syllabus, edmondson-psychological-safety]
+relatedSituationIds: [high-performer-hurting-team, dominates-team-meetings]
+practiceId: listen-first
+practiceVariant: competing-stories
+fieldNotePresent: true
+safetyEscalationNotePresent: true
+socialHook: Do not solve persistent peer conflict by deciding which personality is the problem.
+campaignCluster: team_dynamics_launch
+reviewStatus: human-approved
+---
+
+## The short answer
+
+Hear each person separately for facts, impact, and desired work outcome—not to collect ammunition. Decide whether a joint conversation is safe and appropriate. In the joint meeting, establish shared facts, the work that must succeed, specific future behaviors, and a follow-up. Do not force an apology or friendship.
+
+## When this guidance fits
+
+Use this for recurring work conflict where both people can participate safely and the issue is within management scope. Clarify decision rights and role overlap; persistent interpersonal friction often grows around a system ambiguity.
+
+> **Stop and get support:** do not mediate threats, harassment, discrimination, retaliation, violence, coercion, or serious power imbalance as ordinary peer conflict. Preserve information, follow policy, and involve HR, safety, security, legal, or emergency support as appropriate.
+
+## 1 — See
+
+Collect specific events from each perspective and distinguish direct observation from hearsay. Map the work dependency: decision, handoff, resource, or communication channel. Watch for triangulation—each person asking you to carry their interpretation to the other.
+
+## 2 — Choose
+
+Repair the operating system if ownership is unclear. Give individual feedback for behavior you directly manage. Use a joint conversation when both can discuss future work safely. Formal escalation is the right next move when the conflict crosses policy or the informal process has failed.
+
+## 3 — Say
+
+> “I am not asking either of you to agree on intent or become friends. I am asking us to make the deployment handoff workable. We will name the events we can verify, the effect on the handoff, and what each person will do next time. I will stop us if we move into character judgments.”
+
+Ask each person: “What do you need the other person to do, in observable terms, for the work to proceed?”
+
+## If they respond with…
+
+### “They started it.”
+
+“The history matters for context. Today we still need a future behavior each person controls.”
+
+### “I refuse to meet with them.”
+
+Ask what safety or process concern drives the refusal. Do not compel an unsafe mediation; choose individual expectations or formal support.
+
+### “We already tried this.”
+
+Review what was agreed and what follow-up occurred. A repeated conversation without ownership or consequences is not a completed intervention.
+
+## 4 — Sustain
+
+Write the two or three future behaviors, owners, and review date. Observe work outcomes, not rumors of whether they like each other. Intervene promptly when the agreed norm is broken and close the loop when coordination improves.
+
+## Two-minute practice
+
+<PracticeEmbed practiceId="listen-first" variant="competing-stories" surface="situation" compact />
+
+## I have my next move
+
+<PreparedAction scenario="persistent-peer-conflict" skill="team-dynamics" />
+
+## Field note
+
+The workshop uses speaker, listener, and observer roles for conflict practice. The observer makes a useful pattern visible: managers often reflect a judgment instead of the underlying fact, impact, or need, which hardens the competing stories.
+
+## Sources and next moves
+
+Source notes, review details, and two related situations follow below.

@@ -1,0 +1,85 @@
+---
+slug: stop-taking-delegated-work-back
+title: A manager keeps taking delegated work back
+description: Break the rescue loop by clarifying ownership, offering bounded support, and letting the other person do the thinking and the work.
+stakes: Repeated rescue trains the team to return uncertainty to the manager and keeps the manager as the bottleneck.
+primarySkill: delegation
+tags: [delegation, rescue loop, ownership, coaching]
+audience: [manager, technical-lead]
+preparationTime: 15 minutes
+emotionalLoad: medium
+pattern: repeated-pattern
+scope: individual
+support: []
+published: 2026-07-16
+lastReviewed: 2026-07-16
+author: timothy-breeding
+reviewer: timothy-breeding
+sourceReferences: [course-syllabus]
+relatedSituationIds: [delegated-work-wrong-result, repeatedly-misses-commitments]
+practiceId: coaching-choice
+practiceVariant: rescue-loop
+fieldNotePresent: true
+safetyEscalationNotePresent: true
+socialHook: Every time you rescue delegated work, you teach the path by which ownership returns to you.
+campaignCluster: delegation_launch
+reviewStatus: human-approved
+---
+
+## The short answer
+
+When work comes back, do not immediately solve it. Restate the outcome and decision rights, ask what the person has tried, clarify the constraint, and agree on the next checkpoint. Take work back only when the risk, urgency, or capability gap genuinely requires it—and explain that decision.
+
+## When this guidance fits
+
+Use this when a capable person brings ordinary uncertainty back to you and you habitually finish the task. Do not use “ownership” to abandon someone who lacks access, training, authority, or a safe escalation path.
+
+> **Stop and get support:** take appropriate control and involve security, safety, legal, HR, or a senior owner when the work creates imminent or regulated risk. Development is not more important than a necessary safety boundary.
+
+## 1 — See
+
+Map the hand-back sequence. What phrase triggers your rescue? What information or authority is missing? Did the original delegation define the outcome, success criteria, constraints, decision rights, resources, and check-ins—or only name a task?
+
+## 2 — Choose
+
+Coach when capability exists and consequence is bounded. Mentor when a specific experience will unblock learning. Direct when time or risk requires a decision. Repair the delegation brief when the original agreement was incomplete.
+
+## 3 — Say
+
+> “I can help you think this through, but I do not want to take the ownership back. Remind me of the outcome, tell me the options you have considered, and name the decision you need from me because it sits outside your authority.”
+
+If the brief was vague: “I did not define the decision boundary well. Let’s repair that now. You own the recommendation and execution; I own approval of any customer-facing scope change.”
+
+## If they respond with…
+
+### “It’s faster if you do it.”
+
+“It may be faster today and slower for every similar decision after today. We have enough time for you to take the next step; I’ll stay available at the checkpoint.”
+
+### “I don’t know what you want.”
+
+Treat that as a brief problem. Clarify the outcome and criteria without prescribing every step.
+
+### “You always change it anyway.”
+
+Examine the evidence. If you routinely override choices inside delegated authority, own that pattern and stop calling the work delegated.
+
+## 4 — Sustain
+
+Use one written brief and a predictable checkpoint. At the checkpoint, ask for the person’s assessment before giving yours. Track how often work returns and whether the missing piece is capability, clarity, authority, or your discomfort with a different method.
+
+## Two-minute practice
+
+<PracticeEmbed practiceId="coaching-choice" variant="rescue-loop" surface="situation" compact />
+
+## I have my next move
+
+<PreparedAction scenario="stop-taking-delegated-work-back" skill="delegation" />
+
+## Field note
+
+The delegation workshop asks participants to define outcome, success criteria, constraints, and check-ins before delegating. When a rescue loop appears in practice, one of those boxes is often empty—or the manager never truly released the method.
+
+## Sources and next moves
+
+Source notes, review details, and two related situations follow below.

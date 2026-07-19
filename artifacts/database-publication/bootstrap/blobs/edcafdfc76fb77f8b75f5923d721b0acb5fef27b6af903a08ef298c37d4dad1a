@@ -1,0 +1,70 @@
+{
+  "id": "coaching-choice",
+  "title": "Coaching Choice",
+  "description": "Choose when to ask, direct, mentor, or clarify a constraint.",
+  "estimatedTime": "2 minutes",
+  "rounds": [
+    {
+      "id": "ownership",
+      "setup": "A capable engineer asks, “Just tell me which architecture you want and I’ll build it.” The decision is reversible and the risk is contained.",
+      "prompt": "Which move best preserves useful ownership?",
+      "choices": [
+        {
+          "id": "ask",
+          "label": "What are the two strongest options, and what tradeoff matters most here?",
+          "consequenceId": "thinking_stays_with_owner",
+          "consequence": "The engineer has to make their reasoning visible without being left alone.",
+          "explanation": "When capability is present and risk is bounded, a focused question can build judgment and preserve accountability.",
+          "signal": "toward"
+        },
+        {
+          "id": "direct",
+          "label": "Use the event-driven option. That’s what I would do.",
+          "consequenceId": "speed_over_learning",
+          "consequence": "The immediate choice is fast, but the manager remains the decision bottleneck.",
+          "explanation": "Direction is appropriate when risk or urgency requires it. Here it spends an ownership opportunity without a clear need.",
+          "signal": "away"
+        },
+        {
+          "id": "vague",
+          "label": "I trust you. Figure it out.",
+          "consequenceId": "support_removed",
+          "consequence": "Freedom increases, but the decision criteria remain hidden.",
+          "explanation": "Coaching is not withdrawal. Useful autonomy needs a clear outcome, constraints, and a way to surface risk.",
+          "signal": "pause"
+        }
+      ]
+    },
+    {
+      "id": "risk",
+      "setup": "Now the same person proposes changing a production data path during an incident.",
+      "prompt": "How should the changed risk alter your response?",
+      "choices": [
+        {
+          "id": "direct",
+          "label": "Pause the change. Restore service with the tested path; we’ll review alternatives after the incident.",
+          "consequenceId": "constraint_made_explicit",
+          "consequence": "The decision boundary becomes clear while ownership of the later review remains possible.",
+          "explanation": "High consequence and time pressure justify direction. State the constraint and when broader ownership returns.",
+          "signal": "toward"
+        },
+        {
+          "id": "coach",
+          "label": "What do you think we should try?",
+          "consequenceId": "risk_underweighted",
+          "consequence": "An open coaching prompt adds ambiguity at the moment the team needs a crisp safety boundary.",
+          "explanation": "Coaching style should respond to consequence, urgency, and capability—not a rule that asking is always better.",
+          "signal": "away"
+        },
+        {
+          "id": "mentor",
+          "label": "Let me tell you about a similar incident I handled three years ago.",
+          "consequenceId": "story_delays_action",
+          "consequence": "A potentially useful lesson arrives before the urgent boundary is set.",
+          "explanation": "Mentoring belongs in the review. During the incident, give the necessary direction in the fewest useful words.",
+          "signal": "away"
+        }
+      ]
+    }
+  ]
+}

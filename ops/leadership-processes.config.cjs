@@ -9,6 +9,7 @@ function leadershipProcess(name, releaseLink, port, siteUrl) {
     env: {
       NODE_ENV: "production",
       LEADERSHIP_RELEASE_LINK: releaseLink,
+      LEADERSHIP_SHARED_DIR: "/home/admin/projects/leadership/shared",
       LEADERSHIP_BIND_ADDRESS: "192.168.1.120",
       LEADERSHIP_PORT: String(port),
       NEXT_PUBLIC_SITE_URL: siteUrl,

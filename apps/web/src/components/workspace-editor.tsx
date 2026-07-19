@@ -9,11 +9,14 @@ import { SynchronizedDiff } from "@/components/synchronized-diff";
 import {
   isAwaitingHumanConfirmation,
   publicationProgressSteps,
+  reconciliationDisagreement,
   shouldPollPublication,
 } from "@/lib/publication-presentation";
 
 type Props = {
   situationId: string;
+  situationSlug: string;
+  publicationBackend: "git" | "database";
   draftId: string | null;
   checkout: {
     id: string;
@@ -53,10 +56,20 @@ type Props = {
     previewCommitSha: string | null;
     finalConfirmed: boolean;
   } | null;
+  reconciliation: {
+    officialSnapshotHash: string | null;
+    observedSnapshotHash: string | null;
+    candidateSnapshotHash: string | null;
+  } | null;
   permissions: string[];
   lifecycle: string;
   rollbackTarget: { id: string; commitSha: string } | null;
-  rollbackRequest: { id: string; state: string; currentStep: string } | null;
+  rollbackRequest: {
+    id: string;
+    state: string;
+    currentStep: string;
+    candidateIdentity: string | null;
+  } | null;
 };
 
 export function WorkspaceEditor(props: Props) {
@@ -117,6 +130,7 @@ export function WorkspaceEditor(props: Props) {
     props.publicationRequest &&
     [
       "AWAITING_CONFIRMATION",
+      "OFFICIAL_POINTER_COMMITTED",
       "CUTOVER",
       "LIVE_VERIFIED",
       "RECONCILED",
@@ -130,6 +144,7 @@ export function WorkspaceEditor(props: Props) {
         props.publicationRequest.state,
         props.publicationRequest.finalConfirmed,
         publicationConfirmationSubmitted,
+        props.publicationBackend,
       )
     : [];
   const publicationSucceeded =
@@ -226,9 +241,35 @@ export function WorkspaceEditor(props: Props) {
       )
     )
       return;
+    const source = new EventSource(
+      `/api/publications/${props.publicationRequest.id}/events`,
+    );
+    let fallback: number | null = null;
+    source.addEventListener("publication", () => router.refresh());
+    source.onerror = () => {
+      fallback ??= window.setInterval(() => router.refresh(), 2_500);
+    };
+    return () => {
+      source.close();
+      if (fallback !== null) window.clearInterval(fallback);
+    };
+  }, [props.publicationRequest, publicationConfirmationSubmitted, router]);
+
+  useEffect(() => {
+    if (
+      !props.rollbackRequest ||
+      [
+        "AWAITING_CONFIRMATION",
+        "FAILED_PREVIEW",
+        "AUTO_ROLLED_BACK",
+        "RECONCILIATION_REQUIRED",
+        "RECONCILED",
+      ].includes(props.rollbackRequest.state)
+    )
+      return;
     const timer = window.setInterval(() => router.refresh(), 2_500);
     return () => window.clearInterval(timer);
-  }, [props.publicationRequest, publicationConfirmationSubmitted, router]);
+  }, [props.rollbackRequest, router]);
 
   async function checkout() {
     setStatus("Acquiring exclusive checkout…");
@@ -510,6 +551,110 @@ export function WorkspaceEditor(props: Props) {
     }
   }
 
+  async function exchangePrivateCandidate(
+    requestId: string,
+    requestKind: "publication" | "rollback",
+  ) {
+    const candidateWindow = window.open("about:blank", "leadership-candidate");
+    setStatus("Creating a one-time private candidate authorization…");
+    const response = await fetch(
+      `/api/${requestKind === "publication" ? "publications" : "rollbacks"}/${requestId}/candidate-authorization`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": props.csrfToken,
+        },
+        body: "{}",
+      },
+    );
+    if (
+      await requestReauthentication(
+        response,
+        "open this private candidate",
+        () => exchangePrivateCandidate(requestId, requestKind),
+      )
+    ) {
+      candidateWindow?.close();
+      return;
+    }
+    const result = (await response.json().catch(() => null)) as {
+      exchangeToken?: string;
+      candidateUrl?: string;
+      error?: string;
+    } | null;
+    if (!response.ok || !result?.exchangeToken || !result.candidateUrl) {
+      candidateWindow?.close();
+      setStatus(result?.error ?? "Private candidate authorization failed.");
+      return;
+    }
+    const form = document.createElement("form");
+    form.method = "post";
+    form.action = new URL(
+      "/candidate/exchange",
+      result.candidateUrl,
+    ).toString();
+    form.target = "leadership-candidate";
+    const fields = {
+      token: result.exchangeToken,
+      returnTo: `/situations/${props.situationSlug}`,
+    };
+    for (const [name, value] of Object.entries(fields)) {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value;
+      form.append(input);
+    }
+    document.body.append(form);
+    form.submit();
+    form.remove();
+    setStatus("Private candidate opened in Leadership for exact review.");
+  }
+
+  async function openPrivateCandidate() {
+    if (!props.publicationRequest) return;
+    await exchangePrivateCandidate(props.publicationRequest.id, "publication");
+  }
+
+  async function openRollbackCandidate() {
+    if (!props.rollbackRequest) return;
+    await exchangePrivateCandidate(props.rollbackRequest.id, "rollback");
+  }
+
+  async function confirmRollback() {
+    if (!props.rollbackRequest) return;
+    setStatus("Recording confirmation for the exact rollback snapshot…");
+    const response = await fetch(
+      `/api/rollbacks/${props.rollbackRequest.id}/confirm`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": props.csrfToken,
+        },
+        body: "{}",
+      },
+    );
+    if (
+      await requestReauthentication(
+        response,
+        "confirm this exact rollback snapshot",
+        confirmRollback,
+      )
+    )
+      return;
+    if (response.ok) {
+      setStatus(
+        "Rollback confirmation recorded. The publisher is selecting and verifying the exact prior snapshot.",
+      );
+      router.refresh();
+    } else
+      setStatus(
+        "Rollback confirmation failed before the official snapshot changed.",
+      );
+  }
+
   const publicationPending =
     props.publicationRequest &&
     ![
@@ -676,27 +821,40 @@ export function WorkspaceEditor(props: Props) {
             <div className="publicationDecisionCopy">
               <p className="eyebrow">Ready for final publication</p>
               <h3 id="publication-decision-title">
-                Leadership is displaying the staged candidate
+                Leadership is displaying the{" "}
+                {props.publicationBackend === "database" ? "private" : "staged"}{" "}
+                candidate
               </h3>
               <p>
                 It is reviewed and verified, but it is not yet the official
-                published baseline. Protected Git main has not moved.
+                published baseline.{" "}
+                {props.publicationBackend === "database"
+                  ? "The official database pointer has not moved."
+                  : "Protected Git main has not moved."}
               </p>
             </div>
             <div
               className="publicationVersionChange compact"
-              aria-label="Current baseline and staged candidate"
+              aria-label="Current baseline and private candidate"
             >
               <div>
                 <span>Official baseline</span>
                 <strong>
                   {props.publishedCommitSha?.slice(0, 8) ?? "Unavailable"}
                 </strong>
-                <small>Protected Git main</small>
+                <small>
+                  {props.publicationBackend === "database"
+                    ? "Database official snapshot"
+                    : "Protected Git main"}
+                </small>
               </div>
               <span aria-hidden="true">→</span>
               <div>
-                <span>Staged candidate</span>
+                <span>
+                  {props.publicationBackend === "database"
+                    ? "Private candidate"
+                    : "Staged candidate"}
+                </span>
                 <strong>
                   {props.publicationRequest.previewCommitSha?.slice(0, 8) ??
                     "Preparing"}
@@ -710,14 +868,24 @@ export function WorkspaceEditor(props: Props) {
                 bytes during this decision.
               </p>
               <div className="publicationDecisionActions">
-                <a
-                  className="button secondary"
-                  href="https://leadership.timsprototypes.com"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Review candidate ↗
-                </a>
+                {props.publicationBackend === "database" ? (
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={openPrivateCandidate}
+                  >
+                    Review private candidate ↗
+                  </button>
+                ) : (
+                  <a
+                    className="button secondary"
+                    href="https://leadership.timsprototypes.com"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Review candidate ↗
+                  </a>
+                )}
                 {props.permissions.includes("publication.publish") && (
                   <button
                     className="button warn"
@@ -745,7 +913,7 @@ export function WorkspaceEditor(props: Props) {
             <div className="publicationDecisionCopy">
               <p className="eyebrow">Final publication in progress</p>
               <h3 id="publication-progress-title">
-                Publishing candidate{" "}
+                Publishing exact candidate{" "}
                 {props.publicationRequest.previewCommitSha?.slice(0, 8)}
               </h3>
               <p>
@@ -866,7 +1034,9 @@ export function WorkspaceEditor(props: Props) {
               props.permissions.includes("publication.publish") &&
               !props.publicationRequest && (
                 <button className="button warn" type="button" onClick={stage}>
-                  Stage approved bundle
+                  {props.publicationBackend === "database"
+                    ? "Prepare private preview"
+                    : "Stage approved bundle"}
                 </button>
               )}
             {publicationPending && (
@@ -886,17 +1056,32 @@ export function WorkspaceEditor(props: Props) {
           !publicationProgressVisible && (
             <p className="artifactStateNotice candidate" role="status">
               {props.publicationRequest.state === "FAILED_PREVIEW"
-                ? "Candidate staging failed. The previous Leadership release was restored and your checkout has been returned."
+                ? props.publicationBackend === "database"
+                  ? "Private preview failed safely. Public content was unchanged and publisher custody was released."
+                  : "Candidate staging failed. The previous Leadership release was restored and your checkout has been returned."
                 : props.publicationRequest.state === "AUTO_ROLLED_BACK"
                   ? "Final publication did not verify. The previous Leadership release was restored safely."
                   : props.publicationRequest.state === "RECONCILIATION_REQUIRED"
-                    ? "Cutover needs reconciliation. Further publication is blocked until Git, the live marker, and Studio agree."
+                    ? props.publicationBackend === "database"
+                      ? reconciliationDisagreement({
+                          kind: "publication",
+                          officialSnapshotHash:
+                            props.reconciliation?.officialSnapshotHash ?? null,
+                          observedSnapshotHash:
+                            props.reconciliation?.observedSnapshotHash ?? null,
+                          candidateSnapshotHash:
+                            props.reconciliation?.candidateSnapshotHash ?? null,
+                        })
+                      : "Cutover needs reconciliation. Further publication is blocked until Git, the live marker, and Studio agree."
                     : props.publicationRequest.state === "RECONCILED"
                       ? "Publication reconciled against the live release marker."
-                      : `Preparing the staged candidate: ${props.publicationRequest.state.toLowerCase().replaceAll("_", " ")}.`}{" "}
+                      : `Preparing the ${props.publicationBackend === "database" ? "private" : "staged"} candidate: ${props.publicationRequest.state.toLowerCase().replaceAll("_", " ")}.`}{" "}
               {props.publicationRequest.previewCommitSha && (
                 <>
-                  Candidate commit{" "}
+                  Candidate{" "}
+                  {props.publicationBackend === "database"
+                    ? "snapshot"
+                    : "commit"}{" "}
                   <code>
                     {props.publicationRequest.previewCommitSha.slice(0, 12)}
                   </code>
@@ -906,15 +1091,47 @@ export function WorkspaceEditor(props: Props) {
             </p>
           )}
         {props.rollbackRequest && (
-          <p className="artifactStateNotice candidate" role="status">
-            {props.rollbackRequest.state === "RECONCILED"
-              ? "Rollback reconciled. The selected prior tree is live as a new audited publication."
-              : props.rollbackRequest.state === "FAILED_PREVIEW"
-                ? "Rollback staging failed. The current Leadership candidate is unchanged."
-                : props.rollbackRequest.state === "RECONCILIATION_REQUIRED"
-                  ? "Rollback cutover needs reconciliation before another publication action."
-                  : `Rollback in progress: ${props.rollbackRequest.currentStep.toLowerCase().replaceAll("_", " ")}.`}
-          </p>
+          <div className="artifactStateNotice candidate" role="status">
+            <p>
+              {props.rollbackRequest.state === "RECONCILED"
+                ? "Rollback reconciled. The selected prior snapshot is live as a new audited database publication."
+                : props.rollbackRequest.state === "FAILED_PREVIEW"
+                  ? "Rollback preview failed. The current official snapshot was unchanged."
+                  : props.rollbackRequest.state === "AUTO_ROLLED_BACK"
+                    ? "Rollback verification failed. The pre-rollback official snapshot was restored and verified."
+                    : props.rollbackRequest.state === "RECONCILIATION_REQUIRED"
+                      ? reconciliationDisagreement({
+                          kind: "rollback",
+                          officialSnapshotHash:
+                            props.reconciliation?.officialSnapshotHash ?? null,
+                          observedSnapshotHash:
+                            props.reconciliation?.observedSnapshotHash ?? null,
+                          candidateSnapshotHash:
+                            props.rollbackRequest.candidateIdentity,
+                        })
+                      : `Rollback in progress: ${props.rollbackRequest.currentStep.toLowerCase().replaceAll("_", " ")}.`}
+            </p>
+            {props.publicationBackend === "database" &&
+              props.rollbackRequest.state === "AWAITING_CONFIRMATION" && (
+                <div className="workspaceActions">
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={openRollbackCandidate}
+                  >
+                    Review rollback candidate ↗
+                  </button>
+                  <button
+                    className="button warn"
+                    type="button"
+                    onClick={confirmRollback}
+                  >
+                    Confirm rollback{" "}
+                    {props.rollbackRequest.candidateIdentity?.slice(0, 8)}
+                  </button>
+                </div>
+              )}
+          </div>
         )}
 
         <p
@@ -1218,6 +1435,7 @@ export function WorkspaceEditor(props: Props) {
           <PublicationConfirmationDialog
             baselineCommitSha={props.publishedCommitSha}
             candidateCommitSha={props.publicationRequest.previewCommitSha}
+            publicationBackend={props.publicationBackend}
             submitting={publicationSubmitting}
             onCancel={() => {
               if (publicationSubmitting) return;

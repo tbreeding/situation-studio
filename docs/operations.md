@@ -1,5 +1,25 @@
 # RP1 resource, network, backup, and recovery plan
 
+The five-minute RPO / 60-minute RTO plan required before database-authoritative
+content cutover is documented in `database-publication-checkpoint-1.md`. The
+legacy backup description below remains the current state, not the cutover
+acceptance level.
+
+Checkpoint 5's current production discovery, hard gates, recovery evidence
+template, minute-by-minute shadow/cutover runbook, and abort card are in
+`database-publication-checkpoint-5.md`. Discovery found `archive_mode=off` and
+no visible off-host WAL chain, so no database-reader cutover is currently
+authorized.
+
+Checkpoint 2's complete 32-artifact package, shared validation boundary, and
+disposable-database backfill evidence are documented in
+`database-publication-checkpoint-2.md`. Rebuild the deterministic package with
+`pnpm bootstrap:database-publication`. Verify it and its idempotent database
+backfill with `DATABASE_URL=<dedicated situation_studio_migration_test_* db>
+pnpm verify:database-publication`. These commands do not call Git or a Git
+remote. The backfill command refuses a database outside that explicit test-name
+pattern and never selects an official or candidate target.
+
 ## Live service record
 
 - Public protected route: `https://situation-studio.timsprototypes.com`.

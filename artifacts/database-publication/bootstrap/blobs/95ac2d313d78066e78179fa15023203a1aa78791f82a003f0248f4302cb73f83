@@ -1,0 +1,85 @@
+---
+slug: high-performer-hurting-team
+title: A high performer is hurting team relationships
+description: Address abrasive or undermining behavior without letting strong individual output excuse damage to the team’s ability to work.
+stakes: Excusing interpersonal damage teaches the team that results buy permission to make other people less effective.
+primarySkill: team-dynamics
+tags: [high performer, team relationships, abrasive behavior, standards]
+audience: [manager, technical-lead]
+preparationTime: 30 minutes
+emotionalLoad: high
+pattern: emerging-pattern
+scope: team
+support: [hr, senior-leader]
+published: 2026-07-16
+lastReviewed: 2026-07-16
+author: timothy-breeding
+reviewer: timothy-breeding
+sourceReferences: [course-syllabus, edmondson-psychological-safety]
+relatedSituationIds: [dominates-team-meetings, persistent-peer-conflict]
+practiceId: feedback-fork
+practiceVariant: team-impact
+fieldNotePresent: true
+safetyEscalationNotePresent: true
+socialHook: High output is not a waiver from the way the team must work together.
+campaignCluster: team_dynamics_launch
+reviewStatus: human-approved
+---
+
+## The short answer
+
+Treat how results are produced as part of performance. Use specific, recent behavior and its work impact; do not call the person “toxic” or ask them to be “nicer.” State the standard that applies to everyone, hear relevant context, and request a concrete replacement behavior. Strong output should make the conversation more important, not less.
+
+## When this guidance fits
+
+Use this for observable conduct such as dismissing colleagues, withholding information, personal attacks, repeated interruptions, or undoing decisions outside the agreed process. Check whether team roles and decision rights are contributing to the friction.
+
+> **Stop and get support:** promptly involve HR, security, legal counsel, or a senior leader for threats, harassment, discrimination, retaliation, sabotage, violence, or other policy and safety concerns. Do not investigate serious allegations alone.
+
+## 1 — See
+
+Replace “brilliant jerk” with dated observations. Who said or did what, in which forum, and what happened next? Distinguish discomfort with candid disagreement from behavior that blocks participation, creates rework, or violates policy. Look for a pattern without collecting a popularity vote.
+
+## 2 — Choose
+
+If the conduct is specific and within your remit, give direct feedback connected to team performance. If decision ambiguity or incentives reward lone-hero behavior, repair those systems too. If the behavior may cross a formal boundary, pause informal coaching and use the correct support channel.
+
+## 3 — Say
+
+> “In Tuesday’s review, you called Sam’s proposal ‘amateur’ and continued after I asked us to return to the design criteria. Sam stopped presenting, and the group did not review the remaining tradeoffs. Your technical contribution matters, and so does making it possible for the team to challenge ideas without attacking people. What was happening for you in that moment?”
+
+After listening, make the expectation behavioral: “Challenge the proposal with evidence, and leave judgments about the person out. If you think the review is off track, name the missing criterion or ask me to pause it.”
+
+## If they respond with…
+
+### “I’m just direct.”
+
+“Directness is useful. The issue is the personal judgment and the effect it had on the review. I am asking you to keep the rigor and change that behavior.”
+
+### “The team is too sensitive.”
+
+Return to the shared work: “We can discuss how the team handles challenge. This expectation does not depend on whether someone reports feeling offended.”
+
+### “Without me, nothing ships.”
+
+Do not argue status. “Your output is significant. Sustainable team performance also requires knowledge flow, review, and participation. Both are part of your role.”
+
+## 4 — Sustain
+
+Set a short review window and observe the named behavior in real settings. Do not recruit colleagues as covert monitors. Reinforce clean disagreement when you see it. If the pattern continues, document facts and move proportionately through the organization’s process.
+
+## Two-minute practice
+
+<PracticeEmbed practiceId="feedback-fork" variant="team-impact" surface="situation" compact />
+
+## I have my next move
+
+<PreparedAction scenario="high-performer-hurting-team" skill="team-dynamics" />
+
+## Field note
+
+In the workshop’s conflict exercises, the useful shift is from judging candor as “good” or “bad” to examining the observable behavior, its impact on the team’s work, and the standard needed for productive disagreement.
+
+## Sources and next moves
+
+Source notes, review details, and two related situations follow below.

@@ -43,6 +43,13 @@ export async function POST(request: NextRequest) {
     },
   });
   const approval = bundle?.approvals[0];
+  const databaseBackend = environment().PUBLICATION_BACKEND === "database";
+  const publicationTarget = databaseBackend
+    ? await database().publicationTarget.findUnique({
+        where: { code: "leadership-production" },
+        include: { officialSnapshot: true },
+      })
+    : null;
   if (
     !bundle ||
     !approval ||
@@ -61,7 +68,14 @@ export async function POST(request: NextRequest) {
         item.validator === "human-review-provenance" &&
         item.state === "PASSED" &&
         item.bundleHash === bundle.canonicalHash,
-    )
+    ) ||
+    (databaseBackend &&
+      (!publicationTarget?.officialSnapshot ||
+        approval.baseContentSnapshotId !==
+          publicationTarget.officialSnapshot.id ||
+        approval.baseContentSnapshotHash !==
+          publicationTarget.officialSnapshot.manifestHash ||
+        bundle.baseContentSnapshotId !== publicationTarget.officialSnapshot.id))
   )
     return NextResponse.json(
       { error: "publication preconditions failed" },
@@ -81,7 +95,8 @@ export async function POST(request: NextRequest) {
       state: existing.state,
       reused: true,
     });
-  const fake = environment().PROVIDER_EXECUTION_MODE === "fake";
+  const fake =
+    !databaseBackend && environment().PROVIDER_EXECUTION_MODE === "fake";
   const publicationUuid = randomUUID();
   let publicationRequest;
   let checkoutAcquired = false;
@@ -129,6 +144,12 @@ export async function POST(request: NextRequest) {
             bundleHash: bundle.canonicalHash,
             approvalId: approval.id,
             baseCommit: bundle.baseCommit,
+            publicationTargetId: publicationTarget?.id ?? null,
+            baseContentSnapshotId:
+              publicationTarget?.officialSnapshot?.id ?? null,
+            baseContentSnapshotHash:
+              publicationTarget?.officialSnapshot?.manifestHash ?? null,
+            targetGeneration: publicationTarget?.generation ?? null,
             state: fake ? "AWAITING_CONFIRMATION" : "REQUESTED",
             currentStep: fake ? "PREVIEW_VERIFIED" : "REQUESTED",
             requestedById: auth.session.userId,
@@ -261,7 +282,12 @@ export async function POST(request: NextRequest) {
     targetId: publicationRequest.id,
     targetVersion: bundle.canonicalHash,
     outcome: "SUCCEEDED",
-    after: { target: parsed.data.target, fake, checkoutAcquired },
+    after: {
+      target: parsed.data.target,
+      backend: databaseBackend ? "database" : "git",
+      fake,
+      checkoutAcquired,
+    },
   });
   return NextResponse.json(
     {

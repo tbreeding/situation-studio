@@ -1,0 +1,89 @@
+---
+slug: repeatedly-misses-deadlines
+title: An employee repeatedly misses deadlines but produces excellent work
+description: Prepare a fair, direct conversation when excellent output keeps arriving late and the uncertainty is hurting other people’s work.
+stakes: Late excellence can still damage planning, trust, and teammates who depend on the work.
+primarySkill: feedback
+tags: [missed deadlines, quality, reliability, planning]
+audience: [manager, technical-lead]
+preparationTime: 15 minutes
+emotionalLoad: medium
+pattern: repeated-pattern
+scope: individual
+support: [hr]
+published: 2026-07-16
+lastReviewed: 2026-07-18
+author: timothy-breeding
+reviewer: timothy-breeding
+sourceReferences: [course-syllabus]
+relatedSituationIds: [repeatedly-misses-commitments, delegated-work-wrong-result]
+practiceId: feedback-fork
+practiceVariant: deadline-reliability
+fieldNotePresent: true
+safetyEscalationNotePresent: true
+socialHook: When excellent work repeatedly arrives late, manage the reliability problem without denying the quality.
+campaignCluster: feedback_launch
+reviewStatus: human-approved
+---
+
+## The short answer
+
+Name both truths: the work is strong, and its late arrival creates a reliability problem. Bring two or three dated examples, explain the downstream effect, ask what is driving the pattern, then agree on an earlier risk signal and the next observable commitment. Do not dilute the concern with praise or prescribe a cause you have not investigated.
+
+## When this guidance fits
+
+Use this when the deadline and expected quality were reasonably clear, the person had a fair chance to raise risk, and the pattern matters to other work. First check whether priorities, staffing, approvals, or your own late changes made the date unrealistic.
+
+> **Stop and get support:** involve the appropriate HR or senior leader when formal discipline may be considered, when policy requires it, or when the person raises disability, leave, discrimination, retaliation, or another protected concern. This guide is preparation—not legal or HR advice.
+
+## 1 — See
+
+Write the record a camera and calendar could capture: “The API review was due May 8 and arrived May 12; the migration plan was due June 3 and arrived June 6.” Separate that from “they do not care about deadlines.” Note when risk was communicated, who depended on the work, and whether late scope changes altered the plan.
+
+Ask yourself whether this is a skill issue, a prioritization decision, perfectionism, hidden dependency, overloaded system, or an expectation gap. Those are hypotheses, not conclusions.
+
+## 2 — Choose
+
+Start with inquiry plus clear feedback. The likely next move is not a debate about whether quality or speed matters more. It is an agreement about the reliability the role requires: a realistic commitment, early warning when confidence drops, and a decision about scope before the date silently passes.
+
+If the person has already received clear feedback and available support, and the pattern continues after you have documented the corrective expectation and set a review checkpoint, follow your organization’s policy and documented performance process with appropriate support.
+
+## 3 — Say
+
+> “Your work on the API and migration plan was strong. Both also arrived after the dates we agreed, and I did not know the dates were at risk until they had passed. That left release planning and two teammates waiting. I want to understand what is driving the pattern, then agree on how you will signal risk earlier. What are you seeing?”
+
+Listen for changes in scope, confidence, competing commitments, review dependencies, and the quality bar they believed applied. Then make one request: “At each agreed checkpoint, tell me whether the commitment is still on track and, if it is at risk, bring a proposed tradeoff. If confidence drops after a checkpoint, tell me as soon as you know and bring the tradeoff then.”
+
+## If they respond with…
+
+### “But the result was excellent.”
+
+Agree without retreating: “It was. Quality is not the concern I am raising. I am raising the missed commitment and late signal because other work depends on both quality and predictability.”
+
+### “The deadline was impossible.”
+
+Ask when that became clear and what changed. If the date was unsound, own your part and repair the planning system. Still establish how risk will be raised before the next deadline passes.
+
+### “I did not want to deliver something half-done.”
+
+Clarify who owns the scope-quality-date tradeoff. Agree on a point when the person must surface options rather than silently choosing delay.
+
+## 4 — Sustain
+
+Record the next commitment, an earlier confidence checkpoint, and what evidence will show improvement. Review the system as well as the person: priority churn, approval latency, and oversized work can manufacture lateness. Recognize early risk signals when they happen; do not punish the behavior you asked for.
+
+## Two-minute practice
+
+<PracticeEmbed practiceId="feedback-fork" variant="deadline-reliability" surface="situation" compact />
+
+## I have my next move
+
+<PreparedAction scenario="repeatedly-misses-deadlines" skill="feedback" />
+
+## Field note
+
+The workshop sequence treats the conversation plan as incomplete until it includes who will do what by when. That final discipline often exposes a hidden gap: the manager has described disappointment but has not yet defined the earlier signal they need.
+
+## Sources and next moves
+
+Source notes, review details, and two related situations follow below.

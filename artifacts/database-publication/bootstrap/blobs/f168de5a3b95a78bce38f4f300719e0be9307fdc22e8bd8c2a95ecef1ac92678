@@ -1,0 +1,70 @@
+{
+  "id": "listen-first",
+  "title": "Listen First",
+  "description": "Notice when your urge to fix gets ahead of the other person’s meaning.",
+  "estimatedTime": "2 minutes",
+  "rounds": [
+    {
+      "id": "signal",
+      "setup": "A direct report says, “I’m not sure this role is working for me anymore.”",
+      "prompt": "What is your most useful first response?",
+      "choices": [
+        {
+          "id": "fix",
+          "label": "Let’s adjust your project mix. I can move two tickets today.",
+          "consequenceId": "solution_before_problem",
+          "consequence": "The conversation narrows to workload before you know what “not working” means.",
+          "explanation": "A solution may be useful later. First, learn whether the signal is about role clarity, growth, relationships, workload, or something else.",
+          "signal": "away"
+        },
+        {
+          "id": "ask",
+          "label": "What has been feeling least workable lately?",
+          "consequenceId": "room_to_explain",
+          "consequence": "They have room to name the part of the experience that matters most.",
+          "explanation": "An open, bounded question slows your diagnosis and keeps ownership of the experience with them.",
+          "signal": "toward"
+        },
+        {
+          "id": "reassure",
+          "label": "You’re doing better than you think. I wouldn’t worry.",
+          "consequenceId": "signal_minimized",
+          "consequence": "Reassurance may sound kind while dismissing the concern they took a risk to raise.",
+          "explanation": "Reflect the signal before evaluating it. Their meaning matters more than your immediate reassurance.",
+          "signal": "away"
+        }
+      ]
+    },
+    {
+      "id": "detail",
+      "setup": "They continue: “Every decision is reopened. I can’t tell what I own.”",
+      "prompt": "What do you do next?",
+      "choices": [
+        {
+          "id": "reflect",
+          "label": "It sounds like the repeated reversals are making your ownership feel uncertain. Is that right?",
+          "consequenceId": "meaning_checked",
+          "consequence": "They can confirm, correct, or deepen your understanding.",
+          "explanation": "Reflection is not agreement with every conclusion. It is a check that you heard the concern accurately.",
+          "signal": "toward"
+        },
+        {
+          "id": "defend",
+          "label": "We all have to adapt; priorities change in software.",
+          "consequenceId": "system_defended",
+          "consequence": "The system gets defended before the pattern is examined.",
+          "explanation": "Constraints can be real and the current ownership can still be unclear. Clarify the examples before explaining the system.",
+          "signal": "away"
+        },
+        {
+          "id": "clarify",
+          "label": "Which recent decision changed after you thought it was yours?",
+          "consequenceId": "example_found",
+          "consequence": "The conversation moves from a broad feeling to an observable example.",
+          "explanation": "A concrete example helps both of you separate a frustrating event from a repeated system pattern.",
+          "signal": "toward"
+        }
+      ]
+    }
+  ]
+}

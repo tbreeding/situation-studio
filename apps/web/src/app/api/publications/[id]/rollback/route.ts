@@ -30,7 +30,9 @@ export async function POST(
       { error: "rollback reason required" },
       { status: 400 },
     );
-  const fake = environment().PROVIDER_EXECUTION_MODE === "fake";
+  const databaseBackend = environment().PUBLICATION_BACKEND === "database";
+  const fake =
+    !databaseBackend && environment().PROVIDER_EXECUTION_MODE === "fake";
   const { id } = await params;
   const idempotencyKey = request.headers.get("idempotency-key");
   if (!idempotencyKey || idempotencyKey.length > 120)
@@ -40,6 +42,134 @@ export async function POST(
     );
   const route = `/api/publications/${id}/rollback`;
   const requestHash = sha256(`${id}\0${parsed.data.reason}`);
+  if (databaseBackend) {
+    const selectedPublication = await database().databasePublication.findUnique(
+      {
+        where: { id },
+        include: {
+          target: true,
+          bundle: true,
+          previousOfficialSnapshot: true,
+          resultingOfficialSnapshot: true,
+        },
+      },
+    );
+    if (
+      selectedPublication?.state !== "RECONCILED" ||
+      selectedPublication.terminalOutcome !== "PUBLISHED" ||
+      !selectedPublication.resultingOfficialSnapshot ||
+      selectedPublication.target.officialSnapshotId !==
+        selectedPublication.resultingOfficialSnapshot.id ||
+      selectedPublication.target.currentDatabasePublicationId !==
+        selectedPublication.id ||
+      selectedPublication.previousOfficialSnapshotId ===
+        selectedPublication.resultingOfficialSnapshot.id ||
+      selectedPublication.target.candidateSnapshotId
+    )
+      return NextResponse.json(
+        { error: "rollback preconditions failed" },
+        { status: 409 },
+      );
+    const resultingOfficialSnapshot =
+      selectedPublication.resultingOfficialSnapshot;
+    const existing = await database().rollbackRequest.findUnique({
+      where: {
+        requestedById_idempotencyKey: {
+          requestedById: auth.session.userId,
+          idempotencyKey,
+        },
+      },
+    });
+    if (existing) {
+      if (
+        existing.publicationTargetId !== selectedPublication.targetId ||
+        existing.targetContentSnapshotId !==
+          selectedPublication.previousOfficialSnapshotId ||
+        existing.expectedCurrentContentSnapshotId !==
+          resultingOfficialSnapshot.id ||
+        existing.reason !== parsed.data.reason
+      )
+        return NextResponse.json(
+          { error: "idempotency key reused with different input" },
+          { status: 409 },
+        );
+      return NextResponse.json({
+        rollbackRequestId: existing.id,
+        state: existing.state,
+        reused: true,
+      });
+    }
+    let rollbackRequest;
+    try {
+      rollbackRequest = await database().$transaction(
+        async (transaction) => {
+          await transaction.$queryRaw`
+            SELECT id FROM publication_targets
+            WHERE id = ${selectedPublication.targetId}::uuid FOR UPDATE
+          `;
+          const target = await transaction.publicationTarget.findUniqueOrThrow({
+            where: { id: selectedPublication.targetId },
+          });
+          if (
+            target.officialSnapshotId !==
+              selectedPublication.resultingOfficialSnapshotId ||
+            target.currentDatabasePublicationId !== selectedPublication.id ||
+            target.candidateSnapshotId
+          )
+            throw new Error("DATABASE_ROLLBACK_TARGET_CHANGED");
+          return transaction.rollbackRequest.create({
+            data: {
+              rollbackUuid: randomUUID(),
+              idempotencyKey,
+              targetEnvironment: "protected-beta",
+              publicationTargetId: target.id,
+              targetContentSnapshotId:
+                selectedPublication.previousOfficialSnapshotId,
+              targetContentSnapshotHash:
+                selectedPublication.previousOfficialSnapshot.manifestHash,
+              expectedCurrentContentSnapshotId: resultingOfficialSnapshot.id,
+              expectedCurrentContentSnapshotHash:
+                resultingOfficialSnapshot.manifestHash,
+              situationId: selectedPublication.bundle?.situationId ?? null,
+              requestedById: auth.session.userId,
+              reason: parsed.data.reason,
+            },
+          });
+        },
+        { isolationLevel: "Serializable" },
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "DATABASE_ROLLBACK_TARGET_CHANGED"
+      )
+        return NextResponse.json(
+          { error: "rollback preconditions failed" },
+          { status: 409 },
+        );
+      throw error;
+    }
+    await audit({
+      actorId: auth.session.userId,
+      permissions: [...auth.session.permissions],
+      action: "database_publication.rollback.request",
+      targetType: "rollback_request",
+      targetId: rollbackRequest.id,
+      targetVersion: selectedPublication.previousOfficialSnapshot.manifestHash,
+      outcome: "SUCCEEDED",
+      reason: parsed.data.reason,
+      after: {
+        publicationTargetId: selectedPublication.targetId,
+        expectedCurrentSnapshotId:
+          selectedPublication.resultingOfficialSnapshotId,
+        selectedSnapshotId: selectedPublication.previousOfficialSnapshotId,
+      },
+    });
+    return NextResponse.json(
+      { rollbackRequestId: rollbackRequest.id, state: rollbackRequest.state },
+      { status: 202 },
+    );
+  }
   const replay = await database().idempotencyKey.findUnique({
     where: {
       actorId_route_key: {

@@ -1,0 +1,85 @@
+---
+slug: defensive-about-feedback
+title: An employee becomes defensive when given feedback
+description: Keep a feedback conversation useful when the other person explains, denies, or pushes back instead of immediately agreeing.
+stakes: Defensiveness can pull a manager into arguing intent and bury the behavior that needs attention.
+primarySkill: feedback
+tags: [defensiveness, feedback, denial, listening]
+audience: [manager, technical-lead]
+preparationTime: 15 minutes
+emotionalLoad: high
+pattern: first-occurrence
+scope: individual
+support: [hr]
+published: 2026-07-16
+lastReviewed: 2026-07-16
+author: timothy-breeding
+reviewer: timothy-breeding
+sourceReferences: [course-syllabus]
+relatedSituationIds: [tears-during-difficult-conversation, make-bad-attitude-specific]
+practiceId: listen-first
+practiceVariant: feedback-defensiveness
+fieldNotePresent: true
+safetyEscalationNotePresent: true
+socialHook: Defensiveness is information to work with, not proof that the conversation has failed.
+campaignCluster: feedback_launch
+reviewStatus: human-approved
+---
+
+## The short answer
+
+Do not diagnose “defensiveness” in the room. Pause, let them finish, reflect any new facts, and return to the observable behavior and expectation. You do not need instant agreement. You need a fair hearing, a clear standard, and a next step both people can describe.
+
+## When this guidance fits
+
+Use this when the person challenges your example, explains intent, or reacts strongly during ordinary performance feedback. Recheck whether your wording was vague, exaggerated, public, or surprising enough to create avoidable threat.
+
+> **Stop and get support:** pause and involve HR or the appropriate channel if the response raises discrimination, retaliation, protected leave, formal grievance, serious misconduct, or a policy-controlled process.
+
+## 1 — See
+
+Notice your own story: “They never accept feedback.” Record what they actually did—interrupted, offered a different timeline, denied an event, or raised missing context. Check whether your evidence is first-hand and whether you bundled several issues into one conversation.
+
+## 2 — Choose
+
+Listen where the response could change the facts. Clarify where it reveals a misunderstanding. Hold the expectation where the context explains intent but does not remove impact. Reschedule only when emotion or missing evidence prevents a useful discussion—not merely because agreement is absent.
+
+## 3 — Say
+
+> “I can hear that you see the incident differently. I want to understand the part I may be missing. Walk me through what happened from your perspective, then I’ll explain the expectation I still need us to address.”
+
+After listening: “That context helps me understand why you made the choice. The effect on the release review remains, so next time I need you to raise the dependency before committing the date.”
+
+## If they respond with…
+
+### “Everyone else does it.”
+
+“If there is a broader pattern, I will address it. Today I am responsible for being clear with you about this example and the expectation going forward.”
+
+### “You have already made up your mind.”
+
+Name what is and is not open: “The observed event is documented. I am open to context that changes my understanding, and I am responsible for setting the standard.”
+
+### “Fine, whatever.”
+
+Do not force enthusiasm. Ask them to state the next action in their own words so you can check shared understanding.
+
+## 4 — Sustain
+
+Send a short factual recap when appropriate: example, expectation, agreed action, and review date. Watch for the requested behavior rather than evidence of a better attitude. If you gave imprecise feedback, correct it openly.
+
+## Two-minute practice
+
+<PracticeEmbed practiceId="listen-first" variant="feedback-defensiveness" surface="situation" compact />
+
+## I have my next move
+
+<PreparedAction scenario="defensive-about-feedback" skill="feedback" />
+
+## Field note
+
+Workshop role-plays become more useful when the manager stops trying to “win” the branch. The practice target is staying specific and curious while the recipient does not make the conversation easy.
+
+## Sources and next moves
+
+Source notes, review details, and two related situations follow below.

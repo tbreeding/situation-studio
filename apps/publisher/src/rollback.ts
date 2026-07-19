@@ -21,15 +21,26 @@ async function rollbackInput(database: DatabaseClient, requestId: string) {
   const request = await database.rollbackRequest.findUniqueOrThrow({
     where: { id: requestId },
   });
+  if (
+    !request.situationId ||
+    !request.targetPublicationId ||
+    !request.expectedCurrentPublicationId
+  )
+    throw new Error(
+      "Database-native rollback requests are handled by the database materializer.",
+    );
+  const situationId = request.situationId;
+  const targetPublicationId = request.targetPublicationId;
+  const expectedCurrentPublicationId = request.expectedCurrentPublicationId;
   const [situation, target, current, result] = await Promise.all([
     database.situation.findUniqueOrThrow({
-      where: { id: request.situationId },
+      where: { id: situationId },
     }),
     database.publication.findUniqueOrThrow({
-      where: { id: request.targetPublicationId },
+      where: { id: targetPublicationId },
     }),
     database.publication.findUniqueOrThrow({
-      where: { id: request.expectedCurrentPublicationId },
+      where: { id: expectedCurrentPublicationId },
     }),
     database.publication.findUnique({
       where: { rollbackRequestId: request.id },
@@ -189,19 +200,30 @@ async function reconcileRollback(
       const request = await transaction.rollbackRequest.findUniqueOrThrow({
         where: { id: requestId },
       });
+      if (
+        !request.situationId ||
+        !request.targetPublicationId ||
+        !request.expectedCurrentPublicationId
+      )
+        throw new Error(
+          "Database-native rollback requests are handled by the database materializer.",
+        );
+      const situationId = request.situationId;
+      const targetPublicationId = request.targetPublicationId;
+      const expectedCurrentPublicationId = request.expectedCurrentPublicationId;
       const existing = await transaction.publication.findUnique({
         where: { rollbackRequestId: request.id },
       });
       if (existing) return existing.id;
       const [current, target, situation] = await Promise.all([
         transaction.publication.findUniqueOrThrow({
-          where: { id: request.expectedCurrentPublicationId },
+          where: { id: expectedCurrentPublicationId },
         }),
         transaction.publication.findUniqueOrThrow({
-          where: { id: request.targetPublicationId },
+          where: { id: targetPublicationId },
         }),
         transaction.situation.findUniqueOrThrow({
-          where: { id: request.situationId },
+          where: { id: situationId },
         }),
       ]);
       if (situation.currentPublicationId !== current.id)
@@ -210,7 +232,7 @@ async function reconcileRollback(
         );
       const publication = await transaction.publication.create({
         data: {
-          situationId: request.situationId,
+          situationId,
           rollbackRequestId: request.id,
           versionId: target.versionId,
           kind: "ROLLBACK",
@@ -225,7 +247,7 @@ async function reconcileRollback(
         },
       });
       await transaction.situation.update({
-        where: { id: request.situationId },
+        where: { id: situationId },
         data: {
           currentPublicationId: publication.id,
           publicationState: "ROLLED_BACK",
@@ -233,7 +255,7 @@ async function reconcileRollback(
       });
       const checkout = await transaction.situationCheckout.findFirst({
         where: {
-          situationId: request.situationId,
+          situationId,
           custody: "PUBLISHER",
           custodyReference: request.id,
           releasedAt: null,
@@ -277,7 +299,8 @@ export async function nextRollbackRequest(database: DatabaseClient) {
   const rows = await database.$queryRaw<Array<{ id: string }>>`
     SELECT id
     FROM rollback_requests
-    WHERE state IN (
+    WHERE publication_target_id IS NULL
+      AND state IN (
       'REQUESTED', 'WORKTREE_READY', 'APPLIED', 'VALIDATED', 'COMMITTED',
       'PUSHED', 'PREVIEW_BUILT', 'PREVIEW_VERIFIED', 'CUTOVER',
       'LIVE_VERIFIED', 'RECONCILIATION_REQUIRED'

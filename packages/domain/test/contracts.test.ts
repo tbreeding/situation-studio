@@ -86,11 +86,18 @@ describe("executable domain contracts", () => {
 
   it("fails artifact paths closed", () => {
     expect(isApprovedArtifactPath("content/situations/example.mdx")).toBe(true);
+    expect(isApprovedArtifactPath("content/tools/tools.json")).toBe(true);
+    expect(
+      isApprovedArtifactPath(
+        "sourceMaterial/leadership-workshops-master/assets/logo.png",
+      ),
+    ).toBe(true);
     expect(isApprovedArtifactPath("../content/situations/example.mdx")).toBe(
       false,
     );
     expect(isApprovedArtifactPath("content/situations/example.js")).toBe(false);
     expect(isApprovedArtifactPath("public/escape.json")).toBe(false);
+    expect(isApprovedArtifactPath("lib/tools.ts")).toBe(false);
   });
 
   it("finalizes exact reviewer provenance without reformatting MDX", () => {

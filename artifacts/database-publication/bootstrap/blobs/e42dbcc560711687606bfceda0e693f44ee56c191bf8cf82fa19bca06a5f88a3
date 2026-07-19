@@ -1,0 +1,85 @@
+---
+slug: make-bad-attitude-specific
+title: “Bad attitude” is the problem, but the behavior is not yet specific
+description: Turn an unhelpful personality label into observable examples, work impact, and a fair behavioral expectation.
+stakes: Vague labels invite bias, make useful feedback impossible, and create poor documentation.
+primarySkill: feedback
+tags: [bad attitude, behavior, documentation, bias]
+audience: [manager, technical-lead]
+preparationTime: 15 minutes
+emotionalLoad: medium
+pattern: emerging-pattern
+scope: individual
+support: [hr]
+published: 2026-07-16
+lastReviewed: 2026-07-17
+author: timothy-breeding
+reviewer: timothy-breeding
+sourceReferences: [course-syllabus]
+relatedSituationIds: [defensive-about-feedback, dominates-team-meetings]
+practiceId: feedback-fork
+practiceVariant: observation-not-label
+fieldNotePresent: true
+safetyEscalationNotePresent: true
+socialHook: If a camera could not record it, “bad attitude” is not ready for feedback.
+campaignCluster: feedback_launch
+reviewStatus: human-approved
+---
+
+## The short answer
+
+Do not give feedback about “attitude.” List what you observed, when it happened, what work was affected, and what reasonable alternative behavior the role requires. If you cannot do that, keep observing and examine your assumptions before speaking.
+
+## When this guidance fits
+
+Use this when your concern is expressed as negative, difficult, unprofessional, not a team player, or lacking ownership. Some concerns disappear when translated into facts; others become clear enough to address fairly.
+
+> **Stop and get support:** consult HR before creating formal documentation from a vague label, and promptly escalate suspected discrimination, retaliation, harassment, threats, or protected activity through the correct process.
+
+## 1 — See
+
+Ask: what did the person say or do? Where, when, how often, and with what effect? “Rolled their eyes” may still be interpretation; “looked away, exhaled audibly, and said ‘this is pointless’ while the presenter was speaking” is closer to an observation. Compare the standard you would apply to a person with a different style or identity.
+
+## 2 — Choose
+
+If the behavior and impact are clear, give feedback on that narrow issue privately, and soon. Check that the decision’s rationale was shared and risk can still be raised after decisions; close any gap without dropping the feedback. If the concern is merely that the person disagrees, is quiet, does not perform warmth, or communicates differently, investigate your norm rather than correcting personality. Repair team norms if the expectation is unclear for everyone, and state a truly team-wide expectation to the whole team so peers can hold it.
+
+## 3 — Say
+
+> “In yesterday’s planning meeting, after the priority was announced, you said ‘this is pointless’ and did not answer when Jo asked for your dependency. We left without the dependency and had to reconvene. When you disagree, I expect you to raise it in a way that still lets the team make the plan. What was your concern with the priority?”
+
+Stop and listen: let the answer adjust your read, and take a real risk to the decision owner — the expectation stands. Then ask what they will do differently next time; if they cannot name a workable version, name the replacement: “State the risk and your proposed change, then answer the planning questions while the decision stands.”
+
+## If they respond with…
+
+### “So I’m not allowed to disagree?”
+
+“Disagreement is welcome. The expectation is to make the disagreement specific and continue participating in the decision process.”
+
+### “That’s just how I talk.”
+
+“I am not asking for a different personality. I am asking for a specific work behavior because the current one prevented the team from finishing the plan.”
+
+### “Who complained?”
+
+Do not offer a roster. “I am addressing behavior I observed and the effect on work. This is my responsibility as your manager.”
+
+## 4 — Sustain
+
+Write facts, impact, expectation, and follow-up—not adjectives. These are your working notes; formal documentation goes through HR. Look for the alternative behavior in the next relevant moment. When they raise a risk and keep planning moving, say so at the time and in your regular one-on-ones. Going quiet instead is a miss to address, not a win. If you discover that the team norm penalizes dissent or a cultural communication difference, change the system and own that correction.
+
+## Two-minute practice
+
+<PracticeEmbed practiceId="feedback-fork" variant="observation-not-label" surface="situation" compact />
+
+## I have my next move
+
+<PreparedAction scenario="make-bad-attitude-specific" skill="feedback" />
+
+## Field note
+
+The course repeatedly asks participants to separate observation from evaluation. In practice, that single move often turns an emotionally loaded complaint into a much smaller and more solvable management problem.
+
+## Sources and next moves
+
+Source notes, review details, and two related situations follow below.

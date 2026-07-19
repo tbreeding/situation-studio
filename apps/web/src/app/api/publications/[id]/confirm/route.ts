@@ -4,6 +4,7 @@ import { database } from "@/server/database";
 import { environment } from "@/server/environment";
 import { sha256 } from "@situation-studio/domain";
 import { audit } from "@/server/audit";
+import { Prisma } from "@situation-studio/db";
 
 export async function POST(
   request: NextRequest,
@@ -26,6 +27,9 @@ export async function POST(
     include: {
       publication: true,
       bundle: { include: { draft: true, artifacts: true } },
+      approval: true,
+      databasePublication: { include: { confirmation: true } },
+      publicationTarget: true,
     },
   });
   if (
@@ -40,6 +44,19 @@ export async function POST(
       reused: true,
     });
   if (
+    environment().PUBLICATION_BACKEND === "database" &&
+    publicationRequest?.requestedById === auth.session.userId &&
+    publicationRequest.databasePublication?.confirmation
+  )
+    return NextResponse.json({
+      state:
+        publicationRequest.state === "RECONCILED"
+          ? "RECONCILED"
+          : "AWAITING_PUBLISHER",
+      confirmationId: publicationRequest.databasePublication.confirmation.id,
+      reused: true,
+    });
+  if (
     !publicationRequest ||
     publicationRequest.state !== "AWAITING_CONFIRMATION" ||
     publicationRequest.requestedById !== auth.session.userId
@@ -48,6 +65,72 @@ export async function POST(
       { error: "confirmation preconditions failed" },
       { status: 409 },
     );
+  if (environment().PUBLICATION_BACKEND === "database") {
+    const databasePublication = publicationRequest.databasePublication;
+    const target = publicationRequest.publicationTarget;
+    if (
+      !databasePublication?.candidateSnapshotId ||
+      !publicationRequest.candidateContentSnapshotHash ||
+      !target ||
+      target.candidateSnapshotId !== databasePublication.candidateSnapshotId ||
+      target.candidatePublicationRequestId !== publicationRequest.id ||
+      publicationRequest.targetGeneration !== target.generation ||
+      databasePublication.state !== "AWAITING_CONFIRMATION"
+    )
+      return NextResponse.json(
+        { error: "confirmation preconditions failed" },
+        { status: 409 },
+      );
+    let confirmation;
+    let reused = false;
+    try {
+      confirmation = await database().publicationConfirmation.create({
+        data: {
+          publicationRequestId: publicationRequest.id,
+          targetId: target.id,
+          snapshotId: databasePublication.candidateSnapshotId,
+          snapshotHash: publicationRequest.candidateContentSnapshotHash,
+          approvalId: publicationRequest.approvalId,
+          confirmedById: auth.session.userId,
+          sessionId: auth.session.id,
+          validationPolicyHash:
+            publicationRequest.approval.validationPolicyHash,
+          targetGeneration: target.generation,
+          recentAuthenticationAt: auth.session.reauthenticatedAt,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        confirmation =
+          await database().publicationConfirmation.findUniqueOrThrow({
+            where: { publicationRequestId: publicationRequest.id },
+          });
+        reused = true;
+      } else throw error;
+    }
+    await audit({
+      actorId: auth.session.userId,
+      permissions: [...auth.session.permissions],
+      action: "publication.confirm_candidate",
+      targetType: "publication_confirmation",
+      targetId: confirmation.id,
+      targetVersion: publicationRequest.candidateContentSnapshotHash,
+      outcome: "SUCCEEDED",
+      after: {
+        publicationRequestId: publicationRequest.id,
+        snapshotId: databasePublication.candidateSnapshotId,
+        targetGeneration: target.generation.toString(),
+      },
+    });
+    return NextResponse.json({
+      state: "AWAITING_PUBLISHER",
+      confirmationId: confirmation.id,
+      reused,
+    });
+  }
   if (environment().PROVIDER_EXECUTION_MODE !== "fake") {
     await database().publicationRequest.update({
       where: { id },

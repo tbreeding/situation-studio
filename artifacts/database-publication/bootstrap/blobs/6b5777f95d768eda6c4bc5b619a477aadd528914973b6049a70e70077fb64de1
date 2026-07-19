@@ -1,0 +1,85 @@
+---
+slug: repeatedly-misses-commitments
+title: A direct report repeatedly misses commitments
+description: Address a pattern of unkept promises with evidence, diagnosis, clearer ownership, and proportionate follow-through.
+stakes: Repeated misses shift hidden coordination work to everyone else and weaken the meaning of future commitments.
+primarySkill: delegation
+tags: [commitments, accountability, follow-through, pattern]
+audience: [manager, technical-lead]
+preparationTime: 15 minutes
+emotionalLoad: medium
+pattern: repeated-pattern
+scope: individual
+support: [hr]
+published: 2026-07-16
+lastReviewed: 2026-07-16
+author: timothy-breeding
+reviewer: timothy-breeding
+sourceReferences: [course-syllabus]
+relatedSituationIds: [repeatedly-misses-deadlines, stop-taking-delegated-work-back]
+practiceId: feedback-fork
+practiceVariant: commitment-pattern
+fieldNotePresent: true
+safetyEscalationNotePresent: true
+socialHook: Accountability starts by making a commitment concrete enough that both people can tell whether it happened.
+campaignCluster: delegation_launch
+reviewStatus: human-approved
+---
+
+## The short answer
+
+Bring the specific commitments, dates, and effects. Ask what pattern the person sees, check whether priorities and authority were clear, and agree on one new commitment with an earlier risk signal. If the same clear expectation has already been addressed, use the organization’s documented process rather than replaying an informal conversation.
+
+## When this guidance fits
+
+Use this for a genuine repeated pattern of agreed actions that did not happen and were not renegotiated. Do not combine tasks the manager assigned unilaterally with commitments the person reasonably made without examining workload and tradeoffs.
+
+> **Stop and get support:** consult HR before formal performance action and whenever protected leave, accommodation, discrimination, retaliation, or policy-specific factors may be relevant.
+
+## 1 — See
+
+List the commitments in neutral terms: owner, deliverable, date, checkpoint, and actual outcome. Note priority changes and whether the person had permission to renegotiate. Avoid “unreliable” until you can show the pattern that led to the concern.
+
+## 2 — Choose
+
+Use inquiry to diagnose and feedback to name impact. Repair the commitment system if ownership or tradeoffs were ambiguous. Move to formal accountability when expectations, support, and consequences were already clear and the pattern continues.
+
+## 3 — Say
+
+> “We agreed you would send the rollout plan by June 4 and close the access review by June 11. Neither was completed or renegotiated before the date, and two other owners had to change their plans. I want to understand the pattern you see, then agree on how commitments will be made and raised at risk.”
+
+Ask: “At what point did each commitment stop being likely, and what prevented you from signaling that?”
+
+## If they respond with…
+
+### “Everything was urgent.”
+
+Examine the priority system. Ask which tradeoff they made and who had authority to make it. Clarify how conflicts will be escalated next time.
+
+### “I thought the date was flexible.”
+
+Own ambiguity if it existed. Define what commitment, target, and aspiration mean in your team’s planning language.
+
+### “You’re micromanaging me.”
+
+Keep the focus: “The goal is not to control each step. It is to make commitments and risks dependable enough that other owners can plan.”
+
+## 4 — Sustain
+
+Use a visible owner/date record and a short checkpoint before each commitment. Reward early renegotiation based on new evidence. If the person misses the same kind of commitment again, respond at the promised level instead of moving the consequence indefinitely.
+
+## Two-minute practice
+
+<PracticeEmbed practiceId="feedback-fork" variant="commitment-pattern" surface="situation" compact />
+
+## I have my next move
+
+<PreparedAction scenario="repeatedly-misses-commitments" skill="delegation" />
+
+## Field note
+
+The accountability portion of the workshop uses the simple discipline “who does what by when.” Participants often discover that a supposed accountability problem began as a sentence with no single owner or observable finish.
+
+## Sources and next moves
+
+Source notes, review details, and two related situations follow below.

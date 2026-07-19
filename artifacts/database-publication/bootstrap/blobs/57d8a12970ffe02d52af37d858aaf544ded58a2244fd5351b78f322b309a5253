@@ -1,0 +1,85 @@
+---
+slug: dominates-team-meetings
+title: An employee dominates or interrupts team meetings
+description: Address repeated interruption or airtime imbalance with specific feedback and a meeting design that supports broader participation.
+stakes: Unchecked dominance narrows information, discourages challenge, and can make the loudest view look like consensus.
+primarySkill: team-dynamics
+tags: [meetings, interruption, airtime, inclusion]
+audience: [manager, technical-lead]
+preparationTime: 15 minutes
+emotionalLoad: medium
+pattern: emerging-pattern
+scope: team
+support: [hr]
+published: 2026-07-16
+lastReviewed: 2026-07-16
+author: timothy-breeding
+reviewer: timothy-breeding
+sourceReferences: [course-syllabus, edmondson-psychological-safety]
+relatedSituationIds: [high-performer-hurting-team, make-bad-attitude-specific]
+practiceId: feedback-fork
+practiceVariant: meeting-airtime
+fieldNotePresent: true
+safetyEscalationNotePresent: true
+socialHook: The goal is not less expertise in the room; it is a meeting where expertise does not crowd out the evidence around it.
+campaignCluster: team_dynamics_launch
+reviewStatus: human-approved
+---
+
+## The short answer
+
+Give private feedback using specific interruptions or airtime examples and their work effect. Ask what the person was trying to achieve, then request a replacement behavior. Improve the meeting structure as well: explicit facilitation, round-robin input, written prework, or a pause before discussion.
+
+## When this guidance fits
+
+Use this when one person repeatedly begins before others finish, answers every question first, redirects topics, or leaves little space for needed input. Account for role, culture, language, disability, delay, and the meeting format before treating every overlap as misconduct.
+
+> **Stop and get support:** involve HR or the appropriate channel if the behavior includes discriminatory remarks, harassment, retaliation, threats, or a protected accommodation issue.
+
+## 1 — See
+
+Capture observable events and compare airtime across several meetings. Was the person invited as the subject expert? Did the facilitator leave every question open to a race? Note whose information never entered the decision and whether the interruption pattern follows power or identity lines.
+
+## 2 — Choose
+
+Give individual feedback for repeated behavior within the person’s control. Change the facilitation system when the room rewards speed and volume. Use both when an individual pattern and a weak meeting design reinforce each other.
+
+## 3 — Say
+
+> “In today’s design review, you began speaking before another person finished four times, and you answered the first three open questions. Two reviewers did not get their risk evidence into the discussion before the decision. I know you bring useful expertise. I need you to let the speaker finish and wait one beat before taking another turn. What were you noticing in the meeting?”
+
+Offer a productive outlet: ask them to capture a thought in writing or name a missing decision criterion after the current speaker finishes.
+
+## If they respond with…
+
+### “No one else was saying anything.”
+
+“The current format may need stronger facilitation, and I will change that. I still need you to leave room long enough for other people to enter.”
+
+### “I’m just excited.”
+
+“I believe the intent. The impact is still less information in the decision, so the request remains.”
+
+### “Why are you singling me out?”
+
+Explain the observations you directly manage and the team-level facilitation change you are also making.
+
+## 4 — Sustain
+
+Facilitate the next meetings deliberately and notice improvement in the moment. Do not turn the person into a symbol or police every conversational overlap. Review whether more people contribute relevant evidence and whether decisions improve.
+
+## Two-minute practice
+
+<PracticeEmbed practiceId="feedback-fork" variant="meeting-airtime" surface="situation" compact />
+
+## I have my next move
+
+<PreparedAction scenario="dominates-team-meetings" skill="team-dynamics" />
+
+## Field note
+
+In workshop discussion cycles, a simple pause and structured turn-taking changes who contributes without lowering rigor. That makes an important teaching point visible: individual feedback and meeting design are often two parts of the same intervention.
+
+## Sources and next moves
+
+Source notes, review details, and two related situations follow below.

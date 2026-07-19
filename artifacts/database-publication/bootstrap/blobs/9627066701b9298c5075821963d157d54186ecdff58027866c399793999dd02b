@@ -1,0 +1,37 @@
+[
+  {
+    "id": "course-syllabus",
+    "title": "Leadership & Management Class Program syllabus",
+    "url": "/methodology",
+    "publisher": "Leadership Field Guide",
+    "note": "Owned course source covering feedback, coaching, delegation, one-on-ones, conflict, and team leadership."
+  },
+  {
+    "id": "one-on-one-lesson",
+    "title": "Effective one-on-ones workshop lesson",
+    "url": "/guides/one-on-ones",
+    "publisher": "Leadership Field Guide",
+    "note": "Owned lesson material on predictable cadence, direct-report time, listening, and follow-through."
+  },
+  {
+    "id": "gallup-manager-training",
+    "title": "Global Engagement Falls for the Second Time Since 2009",
+    "url": "https://www.gallup.com/workplace/659279/global-engagement-falls-second-time-2009.aspx",
+    "publisher": "Gallup",
+    "note": "Background on manager training and engagement; not a source of individual employment advice."
+  },
+  {
+    "id": "edmondson-psychological-safety",
+    "title": "Psychological Safety and Learning Behavior in Work Teams",
+    "url": "https://doi.org/10.2307/2666999",
+    "publisher": "Administrative Science Quarterly",
+    "note": "Foundational research on interpersonal risk and team learning behavior."
+  },
+  {
+    "id": "eeoc-retaliation",
+    "title": "Retaliation",
+    "url": "https://www.eeoc.gov/retaliation",
+    "publisher": "U.S. Equal Employment Opportunity Commission",
+    "note": "Authoritative U.S. background for recognizing when general management guidance is insufficient."
+  }
+]

@@ -230,6 +230,7 @@ export const artifactTypes = [
   "TOOL",
   "SOURCE",
   "AUTHOR",
+  "ASSET",
   "ROUTE",
   "VALIDATOR",
 ] as const;
@@ -242,8 +243,8 @@ const approvedRoots = [
   "content/practices/",
   "content/bibliography/",
   "content/authors/",
-  "sourceMaterial/leadership-workshops-master/",
-  "lib/tools.ts",
+  "content/tools/",
+  "sourceMaterial/",
 ] as const;
 
 export function isApprovedArtifactPath(candidate: string): boolean {
@@ -261,7 +262,7 @@ export function isApprovedArtifactPath(candidate: string): boolean {
     )
   )
     return false;
-  if (!/\.(?:mdx|md|json|ts|csv)$/u.test(candidate)) return false;
+  if (!/\.(?:mdx|md|json|csv|png)$/u.test(candidate)) return false;
   return approvedRoots.some(
     (root) => candidate === root || candidate.startsWith(root),
   );

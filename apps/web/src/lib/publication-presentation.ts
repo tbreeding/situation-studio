@@ -1,14 +1,28 @@
 export type PublicationProgressStatus = "complete" | "current" | "pending";
 
 export type PublicationProgressStep = {
-  key: "confirmation" | "git" | "leadership" | "studio";
+  key: "confirmation" | "authority" | "leadership" | "studio";
   label: string;
   description: string;
   status: PublicationProgressStatus;
 };
 
+export function reconciliationDisagreement(input: {
+  kind: "publication" | "rollback";
+  officialSnapshotHash: string | null;
+  observedSnapshotHash: string | null;
+  candidateSnapshotHash: string | null;
+}) {
+  const short = (value: string | null) => value?.slice(0, 12) ?? "unavailable";
+  return `${input.kind === "rollback" ? "Rollback" : "Publication"} needs reconciliation. Official database snapshot ${short(input.officialSnapshotHash)}, Leadership last observed ${short(input.observedSnapshotHash)}, and Studio candidate ${short(input.candidateSnapshotHash)} disagree. Further publication is blocked; restore Leadership from the frozen verified official cache while operations investigate.`;
+}
+
 const stagingStates = new Set([
   "REQUESTED",
+  "SNAPSHOT_MATERIALIZED",
+  "SNAPSHOT_VALIDATED",
+  "CANDIDATE_AVAILABLE",
+  "CANDIDATE_VERIFIED",
   "WORKTREE_READY",
   "APPLIED",
   "VALIDATED",
@@ -19,6 +33,7 @@ const stagingStates = new Set([
 ]);
 
 const postConfirmationStates = new Set([
+  "OFFICIAL_POINTER_COMMITTED",
   "CUTOVER",
   "LIVE_VERIFIED",
   "RECONCILED",
@@ -54,15 +69,24 @@ export function shouldPollPublication(
 export function publicationDecisionLabel(
   state: string,
   finalConfirmed: boolean,
+  backend: "git" | "database" = "git",
 ) {
   if (isAwaitingHumanConfirmation(state, finalConfirmed))
     return "Awaiting your confirmation";
-  if (state === "RECONCILED") return "Published and reconciled";
-  if (state === "FAILED_PREVIEW") return "Candidate staging failed safely";
-  if (state === "AUTO_ROLLED_BACK") return "Previous release restored";
+  if (state === "RECONCILED") return "Published successfully";
+  if (state === "FAILED_PREVIEW")
+    return backend === "database"
+      ? "Private preview failed; public content unchanged"
+      : "Candidate staging failed safely";
+  if (state === "AUTO_ROLLED_BACK") return "Previous version restored";
   if (state === "RECONCILIATION_REQUIRED") return "Reconciliation required";
+  if (state === "OFFICIAL_POINTER_COMMITTED") return "Verifying Leadership";
   if (finalConfirmed || postConfirmationStates.has(state))
     return "Final publication in progress";
+  if (backend === "database") {
+    if (state === "SNAPSHOT_VALIDATED") return "Validating exact content";
+    return "Preparing private preview";
+  }
   return "Preparing the staged candidate";
 }
 
@@ -78,13 +102,17 @@ export function publicationProgressSteps(
   state: string,
   finalConfirmed: boolean,
   confirmationSubmitted = false,
+  backend: "git" | "database" = "git",
 ): PublicationProgressStep[] {
   const confirmationComplete =
     finalConfirmed ||
     confirmationSubmitted ||
     postConfirmationStates.has(state);
   const gitComplete =
-    state === "CUTOVER" || state === "LIVE_VERIFIED" || state === "RECONCILED";
+    state === "OFFICIAL_POINTER_COMMITTED" ||
+    state === "CUTOVER" ||
+    state === "LIVE_VERIFIED" ||
+    state === "RECONCILED";
   const leadershipComplete =
     state === "LIVE_VERIFIED" || state === "RECONCILED";
   const studioComplete = state === "RECONCILED";
@@ -98,16 +126,24 @@ export function publicationProgressSteps(
       status: stepStatus(confirmationComplete, !confirmationComplete),
     },
     {
-      key: "git",
-      label: "Protected Git main advanced",
+      key: "authority",
+      label:
+        backend === "database"
+          ? "Official snapshot selected"
+          : "Protected Git main advanced",
       description:
-        "The staged commit becomes the official repository baseline.",
+        backend === "database"
+          ? "The exact reviewed snapshot becomes the official database pointer."
+          : "The staged commit becomes the official repository baseline.",
       status: stepStatus(gitComplete, confirmationComplete && !gitComplete),
     },
     {
       key: "leadership",
       label: "Leadership release verified",
-      description: "The same staged release is checked again on Leadership.",
+      description:
+        backend === "database"
+          ? "Leadership attests that it loaded the exact official snapshot hash."
+          : "The same staged release is checked again on Leadership.",
       status: stepStatus(
         leadershipComplete,
         gitComplete && !leadershipComplete,

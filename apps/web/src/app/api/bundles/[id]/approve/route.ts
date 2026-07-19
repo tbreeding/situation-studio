@@ -12,6 +12,8 @@ import {
   exactArtifactsMatchStoredHashes,
   readPreparedReviewProvenance,
 } from "@/server/workflows/review-provenance";
+import { validationPolicyHash as databaseValidationPolicyHash } from "@situation-studio/content-contracts";
+import { environment } from "@/server/environment";
 
 export async function POST(
   request: NextRequest,
@@ -59,6 +61,14 @@ export async function POST(
         const canonicalManifest = bundleManifestSchema.safeParse(
           bundle?.manifest,
         );
+        const databaseBackend =
+          environment().PUBLICATION_BACKEND === "database";
+        const publicationTarget = databaseBackend
+          ? await transaction.publicationTarget.findUnique({
+              where: { code: "leadership-production" },
+              include: { officialSnapshot: true },
+            })
+          : null;
         if (
           !bundle ||
           bundle.state !== "HUMAN_REVIEW" ||
@@ -79,25 +89,44 @@ export async function POST(
           provenance.preparedByUserId !== auth.session.userId ||
           provenance.parentBundleId !== bundle.parentBundleId ||
           !exactArtifactsMatchReviewProvenance(bundle.artifacts, provenance) ||
-          !exactArtifactsMatchStoredHashes(bundle.artifacts)
+          !exactArtifactsMatchStoredHashes(bundle.artifacts) ||
+          (databaseBackend &&
+            (!publicationTarget?.officialSnapshot ||
+              (bundle.baseContentSnapshotId !== null &&
+                bundle.baseContentSnapshotId !==
+                  publicationTarget.officialSnapshot.id)))
         )
           throw new Error("APPROVAL_PRECONDITIONS_FAILED");
-        const policyHash = sha256(
-          JSON.stringify(
-            bundle.validations
-              .map((item) => [
-                item.validator,
-                item.version,
-                item.environmentHash,
-              ])
-              .sort(),
-          ),
-        );
+        const policyHash = databaseBackend
+          ? databaseValidationPolicyHash
+          : sha256(
+              JSON.stringify(
+                bundle.validations
+                  .map((item) => [
+                    item.validator,
+                    item.version,
+                    item.environmentHash,
+                  ])
+                  .sort(),
+              ),
+            );
+        if (databaseBackend && !bundle.baseContentSnapshotId)
+          await transaction.proposedBundle.update({
+            where: { id: bundle.id },
+            data: {
+              baseContentSnapshotId:
+                publicationTarget?.officialSnapshot?.id ?? null,
+            },
+          });
         const approval = await transaction.approval.create({
           data: {
             bundleId: bundle.id,
             bundleHash: bundle.canonicalHash,
             baseCommit: bundle.baseCommit,
+            baseContentSnapshotId:
+              publicationTarget?.officialSnapshot?.id ?? null,
+            baseContentSnapshotHash:
+              publicationTarget?.officialSnapshot?.manifestHash ?? null,
             validationPolicyHash: policyHash,
             approvedById: auth.session.userId,
             repositoryReviewerId,

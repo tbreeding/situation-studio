@@ -26,7 +26,19 @@ if [[ ! -x "${studio_node}" || ! -f "${studio_tsx}" ]]; then
 fi
 
 export PATH="${studio_node_bin}:${PATH}"
-mkdir -p "${PUBLISHER_STATE_ROOT:?missing publisher state root}"
-chmod 0700 "${PUBLISHER_STATE_ROOT}"
 cd "${studio_root}"
-exec "${studio_node}" "${studio_tsx}" apps/publisher/src/main.ts
+
+case "${PUBLICATION_BACKEND:-git}" in
+  git)
+    mkdir -p "${PUBLISHER_STATE_ROOT:?missing publisher state root}"
+    chmod 0700 "${PUBLISHER_STATE_ROOT}"
+    exec "${studio_node}" "${studio_tsx}" apps/publisher/src/main.ts
+    ;;
+  database)
+    exec "${studio_node}" "${studio_tsx}" apps/publisher/src/database-main.ts
+    ;;
+  *)
+    echo "PUBLICATION_BACKEND must be git or database." >&2
+    exit 1
+    ;;
+esac

@@ -66,7 +66,7 @@ echo "[6/11] Applying committed migrations with the migrator identity"
 ssh "${studio_host}" "set -a; source '${studio_root}/shared/migrator.env'; set +a; cd '${studio_release}'; source ~/.nvm/nvm.sh; nvm use; corepack pnpm db:migrate:deploy"
 
 echo "[7/11] Granting explicit runtime and service privileges as the table owner"
-ssh "${studio_host}" "docker exec -i postgres16 psql -U situation_studio_migrator -d situation_studio -v ON_ERROR_STOP=1 < '${studio_release}/ops/grant-runtime-privileges.sql' && docker exec -i postgres16 psql -U situation_studio_migrator -d situation_studio -v ON_ERROR_STOP=1 < '${studio_release}/ops/grant-service-privileges.sql'"
+ssh "${studio_host}" "docker exec -i postgres16 psql -U situation_studio_migrator -d situation_studio -v ON_ERROR_STOP=1 < '${studio_release}/ops/grant-runtime-privileges.sql' && docker exec -i postgres16 psql -U situation_studio_migrator -d situation_studio -v ON_ERROR_STOP=1 < '${studio_release}/ops/grant-service-privileges.sql' && docker exec -i postgres16 psql -U situation_studio_migrator -d situation_studio -v ON_ERROR_STOP=1 < '${studio_release}/ops/grant-database-publication-privileges.sql'"
 
 echo "[8/11] Importing the immutable Leadership baseline idempotently"
 ssh "${studio_host}" "set -a; source '${studio_root}/shared/web.env'; set +a; cd '${studio_release}'; source ~/.nvm/nvm.sh; nvm use; corepack pnpm --filter @situation-studio/web import:baseline"
@@ -82,7 +82,7 @@ echo "[11/11] Verifying liveness and database readiness"
 if ! ssh "${studio_host}" "set -a; source '${studio_root}/shared/web.env'; set +a; for attempt in \$(seq 1 30); do if curl -fsS -H \"Host: \${SITUATION_STUDIO_HOST}\" \"http://\${SITUATION_STUDIO_BIND_ADDRESS}:\${SITUATION_STUDIO_PORT:-3015}/health/live\" >/dev/null && curl -fsS -H \"Host: \${SITUATION_STUDIO_HOST}\" \"http://\${SITUATION_STUDIO_BIND_ADDRESS}:\${SITUATION_STUDIO_PORT:-3015}/health/ready\" >/dev/null && curl -fsS http://192.168.1.120:3005/ >/dev/null && test \"\$(source ~/.nvm/nvm.sh && pm2 pid situation-studio-worker)\" -gt 0 && test \"\$(source ~/.nvm/nvm.sh && pm2 pid situation-studio-publisher)\" -gt 0; then exit 0; fi; sleep 2; done; exit 1"; then
   echo "Release health failed; restoring the previous current symlink." >&2
   if [[ -n "${studio_previous}" && "${studio_previous}" != "${studio_root}/current" ]]; then
-    ssh "${studio_host}" "ln -sfn '${studio_previous}' '${studio_root}/current.next' && mv -Tf '${studio_root}/current.next' '${studio_root}/current' && cd '${studio_root}/current' && source ~/.nvm/nvm.sh && (pm2 delete situation-studio-web situation-studio-worker situation-studio-publisher >/dev/null 2>&1 || true) && pm2 start ecosystem.config.cjs --update-env"
+    ssh "${studio_host}" "ln -sfn '${studio_previous}' '${studio_root}/current.next' && mv -Tf '${studio_root}/current.next' '${studio_root}/current' && cd '${studio_root}/current' && source ~/.nvm/nvm.sh && (pm2 delete situation-studio-web situation-studio-worker situation-studio-publisher >/dev/null 2>&1 || true) && pm2 start ecosystem.config.cjs --update-env && (pm2 delete leadership-field-guide leadership-field-guide-preview >/dev/null 2>&1 || true) && pm2 start ops/leadership-processes.config.cjs --update-env"
   fi
   exit 1
 fi

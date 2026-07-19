@@ -8,12 +8,14 @@ export function PublicationConfirmationDialog({
   onCancel,
   onConfirm,
   submitting,
+  publicationBackend,
 }: {
   baselineCommitSha: string;
   candidateCommitSha: string;
   onCancel: () => void;
   onConfirm: () => Promise<void> | void;
   submitting: boolean;
+  publicationBackend: "git" | "database";
 }) {
   const [reviewed, setReviewed] = useState(false);
   const dialogRef = useRef<HTMLElement>(null);
@@ -73,29 +75,39 @@ export function PublicationConfirmationDialog({
         </h2>
         <p id="publication-confirmation-description">
           Leadership already displays this reviewed candidate. Confirming makes
-          it the official published baseline in protected Git and Situation
-          Studio.
+          it the official published baseline in{" "}
+          {publicationBackend === "database"
+            ? "the database and Situation Studio."
+            : "protected Git and Situation Studio."}
         </p>
 
         <div className="publicationVersionChange" aria-label="Version change">
           <div>
             <span>Official baseline now</span>
             <strong>{baselineCommitSha.slice(0, 8)}</strong>
-            <small>Protected Git main</small>
+            <small>
+              {publicationBackend === "database"
+                ? "Database official snapshot"
+                : "Protected Git main"}
+            </small>
           </div>
           <span aria-hidden="true">→</span>
           <div>
             <span>Official baseline after</span>
             <strong>{candidateCommitSha.slice(0, 8)}</strong>
-            <small>Reviewed staged candidate</small>
+            <small>Reviewed exact candidate</small>
           </div>
         </div>
 
         <div className="publicationEffects">
           <strong>This confirmation will:</strong>
           <ul>
-            <li>re-verify the exact staged release;</li>
-            <li>advance protected Git main to this candidate;</li>
+            <li>re-verify the exact candidate;</li>
+            <li>
+              {publicationBackend === "database"
+                ? "atomically select this exact snapshot as official;"
+                : "advance protected Git main to this candidate;"}
+            </li>
             <li>record the new official baseline and release custody.</li>
           </ul>
           <p>
@@ -110,7 +122,7 @@ export function PublicationConfirmationDialog({
           target="_blank"
           rel="noreferrer"
         >
-          Review the staged candidate on Leadership ↗
+          Review the exact candidate on Leadership ↗
         </a>
 
         <form onSubmit={submit}>
@@ -122,7 +134,7 @@ export function PublicationConfirmationDialog({
               type="checkbox"
               onChange={(event) => setReviewed(event.target.checked)}
             />
-            <span>I reviewed the staged candidate and want to publish it.</span>
+            <span>I reviewed the exact candidate and want to publish it.</span>
           </label>
           <div className="workspaceActions">
             <button

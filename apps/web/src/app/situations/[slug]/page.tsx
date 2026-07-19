@@ -12,6 +12,7 @@ import {
 } from "@/server/workflows/review-provenance";
 import { publicationDecisionLabel } from "@/lib/publication-presentation";
 import { reviewJobSnapshotById } from "@/server/review-progress";
+import { environment } from "@/server/environment";
 
 export default async function SituationWorkspace({
   params,
@@ -20,6 +21,8 @@ export default async function SituationWorkspace({
 }) {
   const session = await currentSession();
   if (!session) redirect("/login?expired=1");
+  const publicationBackend = environment().PUBLICATION_BACKEND;
+  const databaseBackend = publicationBackend === "database";
   const { slug } = await params;
   const situation = await database().situation.findUnique({
     where: { slug },
@@ -56,7 +59,11 @@ export default async function SituationWorkspace({
               publicationRequests: {
                 orderBy: { createdAt: "desc" },
                 take: 1,
-                include: { steps: true },
+                include: {
+                  steps: true,
+                  databasePublication: true,
+                  publicationTarget: { include: { officialSnapshot: true } },
+                },
               },
             },
           },
@@ -90,10 +97,42 @@ export default async function SituationWorkspace({
     },
   });
   if (!situation) notFound();
-  const rollbackRequest = await database().rollbackRequest.findFirst({
-    where: { situationId: situation.id },
-    orderBy: { createdAt: "desc" },
-  });
+  const databaseTarget = databaseBackend
+    ? await database().publicationTarget.findUnique({
+        where: { code: "leadership-production" },
+        include: {
+          officialSnapshot: true,
+          observations: {
+            orderBy: { observedAt: "desc" },
+            take: 1,
+          },
+          currentDatabasePublication: {
+            include: {
+              bundle: true,
+              previousOfficialSnapshot: true,
+              resultingOfficialSnapshot: true,
+            },
+          },
+        },
+      })
+    : null;
+  const rollbackRequest =
+    databaseBackend && !databaseTarget
+      ? null
+      : await database().rollbackRequest.findFirst({
+          where: { situationId: situation.id },
+          orderBy: { createdAt: "desc" },
+        });
+  const databaseRollbackPublication =
+    databaseTarget?.currentDatabasePublication;
+  const databaseRollbackTarget =
+    databaseRollbackPublication?.state === "RECONCILED" &&
+    databaseRollbackPublication.terminalOutcome === "PUBLISHED" &&
+    databaseRollbackPublication.bundle?.situationId === situation.id &&
+    databaseRollbackPublication.resultingOfficialSnapshotId ===
+      databaseTarget?.officialSnapshotId
+      ? databaseRollbackPublication
+      : null;
   const checkout = situation.checkouts[0] ?? null;
   const reviewJobRecord =
     checkout?.custody === "AI_JOB" && checkout.custodyReference
@@ -123,14 +162,26 @@ export default async function SituationWorkspace({
   const bundle = draft?.bundles[0] ?? null;
   const publicationRequest = bundle?.publicationRequests[0] ?? null;
   const publishedCommitSha =
-    publicationRequest?.baseCommit ??
-    situation.currentPublication?.commitSha ??
-    situation.publications[0]?.commitSha ??
-    null;
+    (databaseBackend
+      ? databaseTarget?.officialSnapshot?.manifestHash
+      : (publicationRequest?.baseCommit ??
+        situation.currentPublication?.commitSha ??
+        situation.publications[0]?.commitSha)) ?? null;
   const candidateCommitSha =
-    publicationRequest?.steps.find(
-      (step) => step.step === "COMMITTED" && step.state === "SUCCEEDED",
-    )?.externalId ?? null;
+    (databaseBackend
+      ? publicationRequest?.candidateContentSnapshotHash
+      : publicationRequest?.steps.find(
+          (step) => step.step === "COMMITTED" && step.state === "SUCCEEDED",
+        )?.externalId) ?? null;
+  const candidateObserved = Boolean(
+    publicationRequest &&
+    [
+      "AWAITING_CONFIRMATION",
+      "OFFICIAL_POINTER_COMMITTED",
+      "LIVE_VERIFIED",
+      "RECONCILED",
+    ].includes(publicationRequest.state),
+  );
   const bundleArtifactEntry =
     bundle?.artifacts.find(
       (item) => item.artifact.logicalId === `situation:${slug}`,
@@ -190,12 +241,18 @@ export default async function SituationWorkspace({
     ? publicationRequest.state === "AWAITING_CONFIRMATION" &&
       !publicationRequest.finalConfirmedAt
       ? session.permissions.has("publication.publish")
-        ? "Review the staged candidate, then explicitly confirm this exact commit."
-        : "The staged candidate is awaiting confirmation from an authorized publisher."
+        ? databaseBackend
+          ? "Review the private candidate, then explicitly confirm this exact snapshot."
+          : "Review the staged candidate, then explicitly confirm this exact commit."
+        : databaseBackend
+          ? "The private candidate is awaiting confirmation from an authorized publisher."
+          : "The staged candidate is awaiting confirmation from an authorized publisher."
       : publicationRequest.state === "FAILED_PREVIEW"
         ? "Candidate staging failed safely; inspect the recorded failure before retrying."
         : publicationRequest.state === "RECONCILIATION_REQUIRED"
-          ? "Publication is blocked until Git, Leadership, and Studio are reconciled."
+          ? databaseBackend
+            ? "Publication is blocked until the database pointer, Leadership observation, and Studio agree."
+            : "Publication is blocked until Git, Leadership, and Studio are reconciled."
           : "No action required while the trusted publisher completes and verifies publication."
     : reviewActive
       ? "No action required—your complete review is durable and this page updates automatically."
@@ -236,14 +293,17 @@ export default async function SituationWorkspace({
             <>
               <span className="badge ink">Official baseline</span>
               <span className="badge gold">
-                {candidateCommitSha
-                  ? "Candidate staged"
+                {candidateObserved
+                  ? databaseBackend
+                    ? "Private candidate ready"
+                    : "Candidate staged"
                   : "Candidate preparing"}
               </span>
               <span className="badge rust">
                 {publicationDecisionLabel(
                   publicationRequest.state,
                   Boolean(publicationRequest.finalConfirmedAt),
+                  publicationBackend,
                 )}
               </span>
             </>
@@ -278,19 +338,25 @@ export default async function SituationWorkspace({
             {publishedCommitSha ? "Published" : "No official publication"}
           </strong>
           <small>
-            Protected Git main ·{" "}
-            {publishedCommitSha?.slice(0, 8) ?? "not published"}
+            {databaseBackend
+              ? "Database official snapshot"
+              : "Protected Git main"}{" "}
+            · {publishedCommitSha?.slice(0, 8) ?? "not published"}
           </small>
         </div>
         {publicationRequest ? (
           <div>
             <span>Leadership display</span>
             <strong>
-              {candidateCommitSha ? "Staged candidate" : "Preparing candidate"}
+              {candidateObserved
+                ? databaseBackend
+                  ? "Private candidate"
+                  : "Staged candidate"
+                : "Preparing candidate"}
             </strong>
             <small>
-              {candidateCommitSha
-                ? `Commit ${candidateCommitSha.slice(0, 8)} · not yet official`
+              {candidateObserved && candidateCommitSha
+                ? `${databaseBackend ? "Snapshot" : "Commit"} ${candidateCommitSha.slice(0, 8)} · not yet official`
                 : "Publisher is preparing the exact approved bytes"}
             </small>
           </div>
@@ -376,6 +442,8 @@ export default async function SituationWorkspace({
         <div className="workspacePrimary">
           <WorkspaceEditor
             situationId={situation.id}
+            situationSlug={situation.slug}
+            publicationBackend={publicationBackend}
             lifecycle={situation.lifecycle}
             draftId={draft?.id ?? null}
             checkout={
@@ -448,11 +516,32 @@ export default async function SituationWorkspace({
                   }
                 : null
             }
+            reconciliation={
+              databaseTarget
+                ? {
+                    officialSnapshotHash:
+                      databaseTarget.officialSnapshot?.manifestHash ?? null,
+                    observedSnapshotHash:
+                      databaseTarget.observations[0]?.snapshotHash ?? null,
+                    candidateSnapshotHash:
+                      publicationRequest?.candidateContentSnapshotHash ?? null,
+                  }
+                : null
+            }
             rollbackTarget={
-              situation.publications.find(
-                (publication) =>
-                  publication.id !== situation.currentPublicationId,
-              ) ?? null
+              databaseBackend
+                ? databaseRollbackTarget
+                  ? {
+                      id: databaseRollbackTarget.id,
+                      commitSha:
+                        databaseRollbackTarget.previousOfficialSnapshot
+                          .manifestHash,
+                    }
+                  : null
+                : (situation.publications.find(
+                    (publication) =>
+                      publication.id !== situation.currentPublicationId,
+                  ) ?? null)
             }
             rollbackRequest={
               rollbackRequest
@@ -460,6 +549,8 @@ export default async function SituationWorkspace({
                     id: rollbackRequest.id,
                     state: rollbackRequest.state,
                     currentStep: rollbackRequest.currentStep,
+                    candidateIdentity:
+                      rollbackRequest.targetContentSnapshotHash,
                   }
                 : null
             }
@@ -533,8 +624,10 @@ export default async function SituationWorkspace({
                 <div>
                   <strong>Official baseline</strong>
                   <small>
-                    Protected Git main ·{" "}
-                    {publishedCommitSha?.slice(0, 8) ?? "unavailable"}
+                    {databaseBackend
+                      ? "Database official snapshot"
+                      : "Protected Git main"}{" "}
+                    · {publishedCommitSha?.slice(0, 8) ?? "unavailable"}
                   </small>
                 </div>
               </li>
@@ -639,10 +732,11 @@ export default async function SituationWorkspace({
                     {publicationRequest
                       ? publicationRequest.state === "AWAITING_CONFIRMATION" &&
                         !publicationRequest.finalConfirmedAt
-                        ? `Candidate ${candidateCommitSha?.slice(0, 8) ?? ""} staged · awaiting you`
+                        ? `Candidate ${candidateCommitSha?.slice(0, 8) ?? ""} ${databaseBackend ? "privately verified" : "staged"} · awaiting you`
                         : publicationDecisionLabel(
                             publicationRequest.state,
                             Boolean(publicationRequest.finalConfirmedAt),
+                            publicationBackend,
                           )
                       : "No candidate publication is pending."}
                   </small>

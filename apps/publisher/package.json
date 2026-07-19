@@ -8,9 +8,11 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "start": "tsx src/main.ts"
+    "start": "tsx src/main.ts",
+    "start:database": "tsx src/database-main.ts"
   },
   "dependencies": {
+    "@situation-studio/content-contracts": "workspace:*",
     "@situation-studio/db": "workspace:*",
     "@situation-studio/domain": "workspace:*",
     "@situation-studio/validator": "workspace:*",

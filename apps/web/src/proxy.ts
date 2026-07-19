@@ -1,21 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { opaqueToken } from "@/server/auth/crypto";
 import { LOGIN_CSRF_COOKIE } from "@/server/auth/sessions";
+import { studioContentSecurityPolicy } from "@/lib/content-security-policy";
 
 export function proxy(request: NextRequest) {
   const nonce = btoa(crypto.randomUUID());
-  const contentSecurityPolicy = [
-    "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
-    "font-src 'self'",
-    "connect-src 'self'",
-    "object-src 'none'",
-    "base-uri 'none'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-  ].join("; ");
+  const contentSecurityPolicy = studioContentSecurityPolicy(
+    nonce,
+    process.env.LEADERSHIP_CANDIDATE_ORIGIN,
+  );
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", contentSecurityPolicy);

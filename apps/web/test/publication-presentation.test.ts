@@ -3,6 +3,7 @@ import {
   isAwaitingHumanConfirmation,
   publicationDecisionLabel,
   publicationProgressSteps,
+  reconciliationDisagreement,
   shouldPollPublication,
 } from "../src/lib/publication-presentation";
 
@@ -18,9 +19,9 @@ const stagingStates = [
 ] as const;
 
 const terminalCases = [
-  ["RECONCILED", "Published and reconciled"],
+  ["RECONCILED", "Published successfully"],
   ["FAILED_PREVIEW", "Candidate staging failed safely"],
-  ["AUTO_ROLLED_BACK", "Previous release restored"],
+  ["AUTO_ROLLED_BACK", "Previous version restored"],
   ["RECONCILIATION_REQUIRED", "Reconciliation required"],
 ] as const;
 
@@ -31,7 +32,7 @@ const expectedSteps = [
     "Your explicit approval is attached to this exact candidate.",
   ],
   [
-    "git",
+    "authority",
     "Protected Git main advanced",
     "The staged commit becomes the official repository baseline.",
   ],
@@ -48,6 +49,24 @@ const expectedSteps = [
 ] as const;
 
 describe("publication presentation", () => {
+  test.each(["publication", "rollback"] as const)(
+    "identifies the exact %s reconciliation disagreement and safe action",
+    (kind) => {
+      const message = reconciliationDisagreement({
+        kind,
+        officialSnapshotHash: "a".repeat(64),
+        observedSnapshotHash: "b".repeat(64),
+        candidateSnapshotHash: "c".repeat(64),
+      });
+      expect(message).toContain("aaaaaaaaaaaa");
+      expect(message).toContain("bbbbbbbbbbbb");
+      expect(message).toContain("cccccccccccc");
+      expect(message).toContain(
+        "restore Leadership from the frozen verified official cache",
+      );
+    },
+  );
+
   test.each(stagingStates)("polls while the publisher is in %s", (state) => {
     expect(shouldPollPublication(state, false)).toBe(true);
     expect(publicationDecisionLabel(state, false)).toBe(
@@ -64,6 +83,32 @@ describe("publication presentation", () => {
       "Awaiting your confirmation",
     );
     expect(shouldPollPublication("AWAITING_CONFIRMATION", false)).toBe(false);
+  });
+
+  test.each([
+    ["REQUESTED", "Preparing private preview"],
+    ["SNAPSHOT_MATERIALIZED", "Preparing private preview"],
+    ["SNAPSHOT_VALIDATED", "Validating exact content"],
+    ["AWAITING_CONFIRMATION", "Awaiting your confirmation"],
+    ["OFFICIAL_POINTER_COMMITTED", "Verifying Leadership"],
+    ["RECONCILED", "Published successfully"],
+    ["AUTO_ROLLED_BACK", "Previous version restored"],
+    ["FAILED_PREVIEW", "Private preview failed; public content unchanged"],
+  ] as const)("uses database publication language for %s", (state, label) => {
+    expect(publicationDecisionLabel(state, false, "database")).toBe(label);
+  });
+
+  test("describes database authority without Git publication language", () => {
+    const steps = publicationProgressSteps(
+      "RECONCILED",
+      true,
+      false,
+      "database",
+    );
+    expect(steps.map((step) => step.label)).toContain(
+      "Official snapshot selected",
+    );
+    expect(JSON.stringify(steps)).not.toMatch(/Git|commit|repository/u);
   });
 
   test.each([

@@ -1,5 +1,10 @@
 # Publication saga and crash contract
 
+This page describes the currently active Git-era publisher. The implemented
+expand-only database publication state machine and its later approval gates are
+documented in `database-publication-checkpoint-1.md`; it is not active in
+production at Checkpoint 1.
+
 Only a trusted publisher can advance an immutable approved bundle. AI output can never call this boundary.
 
 ```mermaid

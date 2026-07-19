@@ -1,0 +1,85 @@
+---
+slug: one-on-ones-became-status-updates
+title: One-on-ones have turned into status updates
+description: Recover the relationship, risk, and growth value of a one-on-one when project reporting has consumed the meeting.
+stakes: A private recurring meeting loses its unique value when it duplicates dashboards and team syncs.
+primarySkill: one-on-ones
+tags: [one-on-one, status update, agenda, listening]
+audience: [manager]
+preparationTime: 5 minutes
+emotionalLoad: low
+pattern: emerging-pattern
+scope: individual
+support: []
+published: 2026-07-16
+lastReviewed: 2026-07-16
+author: timothy-breeding
+reviewer: timothy-breeding
+sourceReferences: [one-on-one-lesson]
+relatedSituationIds: [nothing-in-one-on-ones, repair-cancelled-one-on-ones]
+practiceId: listen-first
+practiceVariant: status-to-signal
+fieldNotePresent: true
+safetyEscalationNotePresent: true
+socialHook: If the dashboard can carry it, do not spend the whole one-on-one carrying it aloud.
+campaignCluster: one_on_ones_launch
+reviewStatus: human-approved
+---
+
+## The short answer
+
+Move routine status to an asynchronous update or team mechanism. Keep a brief exception scan, then reserve most of the one-on-one for the person: uncertainty, relationships, decisions, growth, energy, and support. Tell the direct report you are changing the design and ask what would make the time more useful.
+
+## When this guidance fits
+
+Use this when most of the meeting is a task-by-task recital and neither person reaches topics that need private attention. A temporary status-heavy meeting can be appropriate during an incident or critical launch; make that exception explicit.
+
+> **Stop and get support:** follow the appropriate escalation process if a private topic reveals safety, harassment, discrimination, health, retaliation, or another issue you are required to report or route.
+
+## 1 — See
+
+Review the last three agendas. How many minutes were spent on information already visible elsewhere? Which questions did the manager ask? What topics only this relationship space could have held but did not? Check whether unclear project reporting forced status into the meeting.
+
+## 2 — Choose
+
+Repair the information system and the meeting design together. Create a lightweight status source, keep a five-minute scan for changed risk, and give the remaining time back to reflection and forward-looking questions.
+
+## 3 — Say
+
+> “I’ve let our one-on-one become a second project meeting. Status matters, but we can carry most of it in the board and use this time for what the board cannot tell us. Next time I’d like five minutes for changed risks, then your topics, decisions, growth, and what you need from me. What would make that useful?”
+
+Try one question: “What are you carrying that the project update does not show?”
+
+## If they respond with…
+
+### “I like going through the list.”
+
+Keep a compact list scan, then ask what benefit it provides. Preserve the useful part without letting it consume the meeting.
+
+### “We need status because priorities keep changing.”
+
+That points to a system problem. Create a clearer priority and decision record, then use one-on-one time to discuss the impact of the churn.
+
+### “I don’t have anything else.”
+
+Do not force disclosure. Offer a specific question or use the time to clarify expectations, share context, or discuss development.
+
+## 4 — Sustain
+
+Test the new design for four meetings. Track whether status has a reliable home, whether direct-report topics appear, and whether manager commitments are completed. Adjust with the person rather than imposing a sacred agenda ratio.
+
+## Two-minute practice
+
+<PracticeEmbed practiceId="listen-first" variant="status-to-signal" surface="situation" compact />
+
+## I have my next move
+
+<PreparedAction scenario="one-on-ones-became-status-updates" skill="one-on-ones" />
+
+## Field note
+
+The workshop checklist separates preparation, execution, and aftermath. That structure makes a recurring failure visible: the meeting is often blamed when the real problem is that project status has no dependable home before the meeting begins.
+
+## Sources and next moves
+
+Source notes, review details, and two related situations follow below.

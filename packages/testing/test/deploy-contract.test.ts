@@ -7,10 +7,63 @@ import { beforeAll, describe, expect, it } from "vitest";
 const execute = promisify(execFile);
 const studioRoot = path.resolve(import.meta.dirname, "../../..");
 const deployPath = path.join(studioRoot, "deploy.sh");
+const publisherStartPath = path.join(studioRoot, "ops/start-publisher.sh");
+const leadershipStartPath = path.join(
+  studioRoot,
+  "ops/start-leadership-release.sh",
+);
+const bootstrapApplyPath = path.join(
+  studioRoot,
+  "packages/testing/src/backfill-database-bootstrap.ts",
+);
 let script = "";
 
 beforeAll(async () => {
   script = await readFile(deployPath, "utf8");
+});
+
+describe("database-publication launcher contract", () => {
+  it("selects exactly one publisher backend and fails closed", async () => {
+    const launcher = await readFile(publisherStartPath, "utf8");
+    await expect(
+      execute("bash", ["-n", publisherStartPath]),
+    ).resolves.toMatchObject({ stderr: "" });
+    expect(launcher).toContain('case "${PUBLICATION_BACKEND:-git}" in');
+    expect(launcher).toContain("apps/publisher/src/main.ts");
+    expect(launcher).toContain("apps/publisher/src/database-main.ts");
+    expect(launcher).toContain("PUBLICATION_BACKEND must be git or database");
+  });
+
+  it("loads Leadership database secrets outside immutable releases", async () => {
+    const launcher = await readFile(leadershipStartPath, "utf8");
+    await expect(
+      execute("bash", ["-n", leadershipStartPath]),
+    ).resolves.toMatchObject({ stderr: "" });
+    expect(launcher).toContain("/home/admin/projects/leadership/shared");
+    expect(launcher).toContain('source "${leadership_content_env}"');
+    expect(launcher).toContain("export LEADERSHIP_RELEASE_ID=");
+    expect(launcher).toContain(
+      "LEADERSHIP_CANDIDATE_EXCHANGE_SECRET:?missing Leadership candidate exchange secret",
+    );
+    expect(launcher).toContain(
+      "LEADERSHIP_ATTESTATION_KEY_ID:?missing Leadership attestation key ID",
+    );
+    expect(launcher.indexOf('source "${leadership_content_env}"')).toBeLessThan(
+      launcher.indexOf('exec "${leadership_node}"'),
+    );
+  });
+
+  it("requires an exact target and manifest hash before production bootstrap", async () => {
+    const bootstrap = await readFile(bootstrapApplyPath, "utf8");
+    expect(bootstrap).toContain("situation_studio_migration_test_");
+    expect(bootstrap).toContain(
+      "bootstrap:leadership-production:${manifestHash}",
+    );
+    expect(bootstrap).toContain('targetCode === "leadership-production"');
+    expect(bootstrap).toContain(
+      "Existing Leadership publication target is not the exact clean bootstrap boundary.",
+    );
+  });
 });
 
 function position(fragment: string) {
@@ -168,6 +221,9 @@ describe("production deployment safety contract", () => {
       script.indexOf("ln -sfn '${studio_previous}'", failure),
     ).toBeGreaterThan(failure);
     expect(script.indexOf("exit 1", failure)).toBeGreaterThan(failure);
+    expect(
+      script.indexOf("pm2 start ops/leadership-processes.config.cjs", failure),
+    ).toBeGreaterThan(failure);
   });
 
   it("saves the process list only after health succeeds", () => {

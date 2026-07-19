@@ -1,0 +1,180 @@
+[
+  {
+    "id": "conversation-prep",
+    "title": "Conversation Prep Sheet",
+    "description": "Move from a charged story to an observable opener, useful questions, one clear request, and a follow-up.",
+    "time": "10–15 minutes",
+    "fields": [
+      {
+        "id": "behavior",
+        "label": "Observable behavior",
+        "prompt": "What could a camera, calendar, or work artifact support?",
+        "placeholder": "In [context], the observable behavior was…",
+        "rows": 3
+      },
+      {
+        "id": "context",
+        "label": "Context",
+        "prompt": "What happened before and around it? What might you be missing?",
+        "placeholder": "The relevant context I know is…",
+        "rows": 3
+      },
+      {
+        "id": "impact",
+        "label": "Work impact",
+        "prompt": "What changed for the work, customer, team, or commitment?",
+        "placeholder": "The effect on the work was…",
+        "rows": 3
+      },
+      {
+        "id": "outcome",
+        "label": "Desired outcome",
+        "prompt": "What should be clearer or more possible after the conversation?",
+        "placeholder": "After the conversation, we should…",
+        "rows": 2
+      },
+      {
+        "id": "opener",
+        "label": "Natural opener",
+        "prompt": "Use facts, impact, and a genuine invitation for context.",
+        "placeholder": "I want to talk about…",
+        "rows": 4
+      },
+      {
+        "id": "questions",
+        "label": "Listening questions",
+        "prompt": "Write one or two questions that could change your understanding.",
+        "placeholder": "What were you seeing when…?",
+        "rows": 3
+      },
+      {
+        "id": "request",
+        "label": "Clear request",
+        "prompt": "Name an observable alternative, not a personality change.",
+        "placeholder": "Next time, I need you to…",
+        "rows": 3
+      },
+      {
+        "id": "responses",
+        "label": "Likely responses",
+        "prompt": "What might you hear, and how will you stay specific and curious?",
+        "placeholder": "If they say…, I will…",
+        "rows": 4
+      },
+      {
+        "id": "follow-up",
+        "label": "Follow-up date",
+        "prompt": "When will you check evidence and close the loop?",
+        "placeholder": "",
+        "type": "date"
+      }
+    ]
+  },
+  {
+    "id": "delegation-brief",
+    "title": "Delegation Brief Builder",
+    "description": "Define what ownership means before work begins: outcome, quality bar, authority, constraints, resources, and checkpoints.",
+    "time": "10 minutes",
+    "fields": [
+      {
+        "id": "outcome",
+        "label": "Outcome",
+        "prompt": "What must be true when the work is done? Avoid prescribing the method.",
+        "placeholder": "The outcome is…",
+        "rows": 3
+      },
+      {
+        "id": "criteria",
+        "label": "Success criteria",
+        "prompt": "How will both people recognize a useful result?",
+        "placeholder": "A successful result will…",
+        "rows": 4
+      },
+      {
+        "id": "authority",
+        "label": "Authority and decision rights",
+        "prompt": "What can the owner decide, recommend, or change? What stays with you?",
+        "placeholder": "You decide… / I retain…",
+        "rows": 4
+      },
+      {
+        "id": "constraints",
+        "label": "Constraints",
+        "prompt": "Name fixed boundaries: time, policy, dependencies, scope, risk.",
+        "placeholder": "The fixed boundaries are…",
+        "rows": 4
+      },
+      {
+        "id": "resources",
+        "label": "Resources",
+        "prompt": "What people, information, budget, examples, or access are available?",
+        "placeholder": "You can use…",
+        "rows": 3
+      },
+      {
+        "id": "checkpoints",
+        "label": "Checkpoints",
+        "prompt": "When will you compare confidence and evidence without taking the work back?",
+        "placeholder": "We will check…",
+        "rows": 3
+      },
+      {
+        "id": "escalation",
+        "label": "Escalation conditions",
+        "prompt": "What should trigger an early signal or a manager decision?",
+        "placeholder": "Raise the risk when…",
+        "rows": 3
+      }
+    ]
+  },
+  {
+    "id": "one-on-one-agenda",
+    "title": "One-on-One Agenda Builder",
+    "description": "Create a direct-report-centered agenda for risks, decisions, growth, relationship, and follow-through—not another status meeting.",
+    "time": "5–10 minutes",
+    "fields": [
+      {
+        "id": "direct-time",
+        "label": "Direct-report time",
+        "prompt": "What topics, choices, friction, or uncertainty should have most of the meeting?",
+        "placeholder": "Topics they may want to carry…",
+        "rows": 4
+      },
+      {
+        "id": "manager-topics",
+        "label": "Manager topics",
+        "prompt": "What context, expectation, or question do you need to bring?",
+        "placeholder": "Brief manager topics…",
+        "rows": 3
+      },
+      {
+        "id": "follow-up",
+        "label": "Follow-up commitments",
+        "prompt": "Which previous promises need a close or update?",
+        "placeholder": "Last time we agreed…",
+        "rows": 3
+      },
+      {
+        "id": "development",
+        "label": "Development question",
+        "prompt": "Choose one question connected to current work and growth.",
+        "placeholder": "Where would more ownership help you grow?",
+        "rows": 2
+      },
+      {
+        "id": "relationship",
+        "label": "Relationship check",
+        "prompt": "What could you ask about support, energy, or how you work together?",
+        "placeholder": "What do you need more or less of from me?",
+        "rows": 2
+      },
+      {
+        "id": "next-time",
+        "label": "Notes for next time",
+        "prompt": "Capture seeds and manager promises after the meeting.",
+        "placeholder": "Return to… / I will…",
+        "rows": 3
+      }
+    ]
+  }
+]

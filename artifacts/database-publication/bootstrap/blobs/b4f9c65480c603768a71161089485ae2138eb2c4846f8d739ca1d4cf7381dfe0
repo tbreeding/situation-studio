@@ -1,0 +1,70 @@
+{
+  "id": "feedback-fork",
+  "title": "Feedback Fork",
+  "description": "Move from a label to an observation, impact, and workable request.",
+  "estimatedTime": "2 minutes",
+  "rounds": [
+    {
+      "id": "observation",
+      "setup": "A teammate spoke over two colleagues three times during today’s design review.",
+      "prompt": "Which opening gives the conversation the strongest footing?",
+      "choices": [
+        {
+          "id": "label",
+          "label": "Your communication style is disrespectful.",
+          "consequenceId": "identity_debate",
+          "consequence": "The conversation is likely to become a debate about character and intent.",
+          "explanation": "A label compresses many assumptions. Start with what a neutral observer could have recorded.",
+          "signal": "away"
+        },
+        {
+          "id": "observation",
+          "label": "In today’s design review, you began speaking before Alex and Priya had finished on three occasions.",
+          "consequenceId": "shared_event",
+          "consequence": "Both people can discuss the same event, even if they interpret it differently.",
+          "explanation": "Specific context and observable behavior reduce room for an argument about what happened.",
+          "signal": "toward"
+        },
+        {
+          "id": "hedge",
+          "label": "This may be nothing, but some people can be sensitive about interruptions.",
+          "consequenceId": "message_blurred",
+          "consequence": "The concern becomes vague and responsibility is shifted to unnamed people.",
+          "explanation": "Respectful clarity is kinder than a warning wrapped in ambiguity. Name the behavior you observed.",
+          "signal": "pause"
+        }
+      ]
+    },
+    {
+      "id": "request",
+      "setup": "They answer, “I was trying to keep us from going in circles.”",
+      "prompt": "What is a useful next response?",
+      "choices": [
+        {
+          "id": "argue_intent",
+          "label": "That doesn’t matter. You were rude.",
+          "consequenceId": "context_rejected",
+          "consequence": "Their explanation is rejected and the label returns.",
+          "explanation": "Intent does not erase impact, but you can acknowledge it while holding the expectation.",
+          "signal": "away"
+        },
+        {
+          "id": "request",
+          "label": "I hear that you wanted momentum. Next time, let the speaker finish, then name the decision you think is stuck. Can you try that?",
+          "consequenceId": "alternative_made_clear",
+          "consequence": "The original goal is acknowledged and a specific replacement behavior is available.",
+          "explanation": "A good request is observable, proportionate, and connected to the work—not a demand for a different personality.",
+          "signal": "toward"
+        },
+        {
+          "id": "withdraw",
+          "label": "Okay, I can see why you did it. Never mind.",
+          "consequenceId": "impact_dropped",
+          "consequence": "New context ends the conversation even though the impact still needs attention.",
+          "explanation": "Understanding intent and addressing impact are compatible. Use the context to shape a better request.",
+          "signal": "pause"
+        }
+      ]
+    }
+  ]
+}

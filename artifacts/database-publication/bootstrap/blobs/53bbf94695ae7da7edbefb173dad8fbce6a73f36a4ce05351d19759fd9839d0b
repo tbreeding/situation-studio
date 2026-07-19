@@ -1,0 +1,85 @@
+---
+slug: delegated-work-wrong-result
+title: Delegated work returns with the wrong result
+description: Diagnose whether the miss came from an unclear outcome, hidden quality bar, authority gap, or execution problem before responding.
+stakes: Blaming the person before auditing the brief repeats the failure and teaches people to wait for hidden instructions.
+primarySkill: delegation
+tags: [delegation, wrong result, success criteria, review]
+audience: [manager, technical-lead]
+preparationTime: 15 minutes
+emotionalLoad: medium
+pattern: first-occurrence
+scope: individual
+support: []
+published: 2026-07-16
+lastReviewed: 2026-07-16
+author: timothy-breeding
+reviewer: timothy-breeding
+sourceReferences: [course-syllabus]
+relatedSituationIds: [stop-taking-delegated-work-back, repeatedly-misses-deadlines]
+practiceId: coaching-choice
+practiceVariant: delegation-diagnosis
+fieldNotePresent: true
+safetyEscalationNotePresent: true
+socialHook: Before calling the result wrong, find the requirement that was clear only in your head.
+campaignCluster: delegation_launch
+reviewStatus: human-approved
+---
+
+## The short answer
+
+Compare the delivered result with the outcome and criteria you actually communicated—not what you silently pictured. Own any missing brief, ask how the person interpreted it, and decide whether to repair, redo, or accept a different valid method. Address execution only after the shared standard is clear.
+
+## When this guidance fits
+
+Use this when work is complete enough to review but does not meet the expected outcome. The result may be unsafe or unusable, merely different, or surprisingly better; make that distinction before intervening.
+
+> **Stop and get support:** contain the work and involve the responsible expert for security, privacy, financial, safety, legal, or production risk. Do not use a development conversation as the only response to an active incident.
+
+## 1 — See
+
+Place the original request beside the result. Which success criterion is unmet? Was it written, demonstrated, or checked? Did the person have the authority, resources, and examples needed? Separate “not how I would do it” from “does not achieve the agreed outcome.”
+
+## 2 — Choose
+
+Repair the brief when the expectation was hidden. Give feedback when a clear criterion was missed. Coach the reasoning when the person had enough context but made a weak tradeoff. Direct a safe correction when consequence or urgency requires it.
+
+## 3 — Say
+
+> “The result does not yet support the decision we needed because it compares cost but not migration risk. I reviewed my brief and I did not make that criterion explicit. That part is mine. Walk me through how you interpreted the outcome, then let’s agree on the smallest repair.”
+
+If the criterion was explicit: “We agreed that the recommendation would include migration risk. Help me understand where that was lost, and propose the repair.”
+
+## If they respond with…
+
+### “You never said that.”
+
+Check the record. If true, own it. If the criterion is present, show it without humiliation and ask what interpretation differed.
+
+### “My approach is better.”
+
+Evaluate against outcome and constraints. A different method can be valid. Ask them to demonstrate how it meets the success criteria.
+
+### “Just tell me exactly what to do.”
+
+Give needed constraints, then return the next decision to them unless risk requires direction.
+
+## 4 — Sustain
+
+Revise the brief and capture the quality bar with an example where useful. Add a checkpoint before the cost of divergence becomes large. Review whether you are giving outcomes and guardrails or merely withholding a detailed solution and calling it autonomy.
+
+## Two-minute practice
+
+<PracticeEmbed practiceId="coaching-choice" variant="delegation-diagnosis" surface="situation" compact />
+
+## I have my next move
+
+<PreparedAction scenario="delegated-work-wrong-result" skill="delegation" />
+
+## Field note
+
+The course uses delegation cases to surface “bring me a rock” failures: the manager recognizes the right answer only after seeing several wrong ones. Writing success criteria before the work begins is the practical antidote.
+
+## Sources and next moves
+
+Source notes, review details, and two related situations follow below.

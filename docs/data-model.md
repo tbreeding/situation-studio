@@ -1,5 +1,18 @@
 # PostgreSQL data model and migration plan
 
+The additive database-authoritative publication design is recorded in
+`database-publication-checkpoint-1.md`. The Git-shaped publication models below
+remain active legacy compatibility structures until the separately approved
+reader/publisher cutover and contract checkpoints.
+
+Checkpoint 2 adds one binary-safe expansion. `ContentBlob` remains
+content-addressed and immutable. UTF-8 content stays in `body`; managed binary
+source assets use `binary_body` with `encoding = BINARY`, while the required
+legacy text field is an empty compatibility value. Database checks and
+snapshot-finalization triggers select the encoded representation and verify its
+SHA-256 hash and byte length. The complete bootstrap contract and parity report
+are in `database-publication-checkpoint-2.md`.
+
 The reviewed source schema is `packages/db/prisma/schema.prisma`. Application identifiers are UUIDs; all operational time is UTC `timestamptz`; hashes are lowercase SHA-256 hex except Git SHA-1 commit identifiers.
 
 ```mermaid

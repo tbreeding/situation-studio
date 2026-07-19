@@ -1,0 +1,13 @@
+# Leadership & Management Workshops
+
+![Leadership & Management Workshops Logo](./assets/logo.png)
+
+This repository contains materials for a 21-session, 1-hour-per-week leadership and management program for people managers.
+
+See the full syllabus in [`000 _Syllabus.md`](./000%20_Syllabus.md).
+
+The curriculum is organized into two phases:
+- **Phase 1 – Intro & Individual Leadership**: core manager responsibilities, the Three Pillars of Leadership, the Power Triangle, 1:1s, feedback (Manager Tools), Nonviolent Communication, Radical Candor, coaching, and delegation.
+- **Phase 2 – Team Leadership**: team dynamics and trust (Lencioni’s Five Dysfunctions), agile and Scrum fundamentals, and organizational health and clarity (Lencioni’s *The Advantage*).
+
+Use this repository as the source of truth for the syllabus, session outlines, and supporting exercises/templates used in the workshops.

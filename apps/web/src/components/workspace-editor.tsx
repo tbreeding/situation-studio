@@ -671,7 +671,7 @@ export function WorkspaceEditor(props: Props) {
                 ? "Final confirmation recorded. The trusted publisher is finalizing the exact staged release."
                 : "Candidate staged on Leadership. Inspect it, then explicitly publish this exact commit."
               : props.publicationRequest.state === "FAILED_PREVIEW"
-                ? "Preview staging failed before cutover. The live release is unchanged and your checkout has been returned."
+                ? "Candidate staging failed. The previous Leadership release was restored and your checkout has been returned."
                 : props.publicationRequest.state === "RECONCILIATION_REQUIRED"
                   ? "Cutover needs reconciliation. Further publication is blocked until Git, the live marker, and Studio agree."
                   : props.publicationRequest.state === "RECONCILED"
@@ -703,7 +703,7 @@ export function WorkspaceEditor(props: Props) {
             {props.rollbackRequest.state === "RECONCILED"
               ? "Rollback reconciled. The selected prior tree is live as a new audited publication."
               : props.rollbackRequest.state === "FAILED_PREVIEW"
-                ? "Rollback preview failed before cutover. The live release is unchanged."
+                ? "Rollback staging failed. The current Leadership candidate is unchanged."
                 : props.rollbackRequest.state === "RECONCILIATION_REQUIRED"
                   ? "Rollback cutover needs reconciliation before another publication action."
                   : `Rollback in progress: ${props.rollbackRequest.currentStep.toLowerCase().replaceAll("_", " ")}.`}

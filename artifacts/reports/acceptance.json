@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-19T06:07:15Z",
+  "recordedAt": "2026-07-19T07:08:03Z",
   "source": {
     "leadershipCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
     "leadershipRepositoryModified": true,
@@ -18,7 +18,7 @@
     "prismaSchema": "passed",
     "secretScan": "passed",
     "productionBuild": "passed",
-    "unitContractTests": 35,
+    "unitContractTests": 39,
     "browserTests": {
       "total": 36,
       "passed": 28,
@@ -245,7 +245,34 @@
     "stablePublisherActivationLauncher": "passed-active-pid",
     "publisherConfigurationTargetsSingleRuntime": true,
     "generatedCandidateContainsRetiredHostname": false,
-    "unitContractTests": 35
+    "unitContractTests": 39
+  },
+  "publicationDecisionExperience": {
+    "status": "production-deployed-and-live-verified",
+    "verifiedAt": "2026-07-19T07:08:03Z",
+    "studioRelease": "20260719T070439Z",
+    "studioCommit": "0c569ef57b62c7eb21a477b13d9ad5ec9036eac6",
+    "officialBaselineCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
+    "stagedCandidateCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1",
+    "officialAndStagedStatesVisuallySeparated": true,
+    "publisherCustodyExplained": true,
+    "versionSpecificConfirmationDialog": true,
+    "reviewAcknowledgementRequired": true,
+    "confirmationButtonDisabledUntilAcknowledged": true,
+    "automaticPublicationProgress": [
+      "confirmation-recorded",
+      "protected-main-advanced",
+      "leadership-release-verified",
+      "studio-reconciled-and-custody-released"
+    ],
+    "automaticProgressPolling": "passed-isolated-browser-fixture",
+    "focusedBrowserTest": "passed-desktop-1280",
+    "confirmationDialogKeyboardFocus": "passed",
+    "confirmationDialogCriticalOrSeriousAccessibilityViolations": 0,
+    "productionDialogOpenedAndCancelled": true,
+    "productionFinalConfirmationRecorded": false,
+    "protectedMainAdvanced": false,
+    "leadershipCandidateChanged": false
   },
   "favicon": {
     "status": "production-deployed-and-live-verified",
@@ -261,7 +288,7 @@
   },
   "externalBeta": {
     "originDeployed": true,
-    "release": "20260719T060442Z",
+    "release": "20260719T070439Z",
     "privateOrigin": "http://192.168.1.120:3015",
     "outerGateRegistered": true,
     "providerExecution": "openai-service-api-enabled",

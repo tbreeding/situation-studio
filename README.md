@@ -15,7 +15,9 @@ The protected application is live at `https://situation-studio.timsprototypes.co
 
 OpenAI service-API execution is enabled. A live review of `repeatedly-misses-deadlines` completed 22/22 roles with `gpt-5.6-sol`, zero fallbacks, one proposal bundle, and 3/3 validations. The exact revision-2 bundle was human-approved and staged as candidate commit `b6e40575eb823dc32c62644775895ad84a80d2d1` on `https://leadership.timsprototypes.com` while protected Git `main` remains `9a870e5c70fef9ae71506cb3138745b88363a190`. Staging acquires publisher custody after the user has checked in, while another active checkout still blocks the handoff atomically. Fake-provider and fake-publication behavior remain prohibited in production.
 
-Human review now displays immutable bundle artifacts instead of mutable draft bytes. Preparing approval creates a new canonical child bundle, writes the mapped human reviewer and current review date into changed public MDX, preserves open comments, and reruns deterministic exact-byte validation. Approval, staging, and the publisher reject bundles without this provenance. The production proposal is prepared, approved, and candidate-verified, but remains unpublished behind the separate **Publish this reviewed bundle** confirmation.
+Human review now displays immutable bundle artifacts instead of mutable draft bytes. Preparing approval creates a new canonical child bundle, writes the mapped human reviewer and current review date into changed public MDX, preserves open comments, and reruns deterministic exact-byte validation. Approval, staging, and the publisher reject bundles without this provenance. The production proposal is prepared, approved, and candidate-verified, but remains unpublished behind a version-specific final confirmation.
+
+The publication workspace now distinguishes the official protected-Git baseline from the candidate currently displayed on Leadership. The final action opens a before/after confirmation dialog, requires the reviewer to acknowledge inspecting the staged candidate, and then automatically reports confirmation, protected-main advancement, Leadership verification, Studio reconciliation, and publisher-custody release.
 
 When the 15-minute recent-authentication window expires, sensitive workspace actions now open an in-context password confirmation and automatically resume the exact pending action after success. The confirmation endpoint keeps the existing session and CSRF boundary, throttles failures, and writes audited success or denial events. The rejected pre-fix production preparation attempt created no child bundle or other workflow mutation.
 
@@ -33,7 +35,7 @@ On 2026-07-18 the full publication/rollback flow completed against a disposable 
 
 The approved desktop UI/UX pass is deployed and verified at 1280×800 and 1440×900. It adds capability-aware/current navigation, searchable attention-first inventory controls, a four-section immutable creation brief, rendered guidance with exact expandable MDX source, a plain-language candidate lifecycle, navigable situation dependencies, validated archive confirmation, and action-oriented Jobs and Capacity states.
 
-The desktop pass did not change protected Leadership `main` or the workflow/RBAC invariants. The later production review created and activated a candidate on the prototype Leadership runtime, but protected Git `main` and the published record remain unchanged pending explicit final confirmation.
+The desktop pass did not change protected Leadership `main` or the workflow/RBAC invariants. The later production review created and activated a candidate on the prototype Leadership runtime, but protected Git `main` and the published record remain unchanged pending explicit final confirmation. The production decision dialog was opened and safely canceled during verification; no final confirmation was submitted.
 
 ## Local verification
 

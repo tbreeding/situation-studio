@@ -1,6 +1,6 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-19 06:07 UTC
+Last updated: 2026-07-19 07:08 UTC
 
 ## Purpose and authority
 
@@ -13,10 +13,10 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Current implementation commit: `207f9a031b80eb4031a5ff3a0e21d256711b7d4c` (`Add Situation Studio favicon`).
-- Current RP1 release: `20260719T060442Z`.
+- Current implementation commit: `0c569ef57b62c7eb21a477b13d9ad5ec9036eac6` (`Clarify final publication decision`).
+- Current RP1 release: `20260719T070439Z`.
 - The worktree was clean after the release.
-- The complete local gate passed: formatting, lint, strict TypeScript, Prisma validation, immutable-baseline verification, 35 tests, secret scan, and the production web build.
+- The complete local gate passed: formatting, lint, strict TypeScript, Prisma validation, immutable-baseline verification, 39 tests, secret scan, and the production web build.
 - The 36-case Chromium matrix most recently passed 28 applicable cases with 8 intentional desktop-only mobile skips.
 - Leadership protected `main` remains `9a870e5c70fef9ae71506cb3138745b88363a190`.
 
@@ -63,12 +63,12 @@ TimsPrototypes hosting is itself the candidate environment. There is intentional
 
 The internal `PREVIEW_*` state names mean candidate build and candidate verification. They do not imply another running site.
 
-The UI now says **Candidate staged on Leadership** and links **Open staged Leadership** to the sole Leadership URL. **Publish this reviewed bundle** remains visible because the request is deliberately paused before final confirmation.
+The UI now separates the **Official baseline** from the **Staged candidate**, states that Leadership is currently displaying the candidate, and labels the exact next decision **Awaiting your confirmation**. **Confirm and publish b6e40575** opens a version-specific confirmation dialog; it does not submit until the reviewer checks that they reviewed the staged candidate and confirms a second time.
 
 The publication semantics are:
 
 1. **Stage approved bundle** validates and commits the exact approved bytes, builds them for the sole Leadership hostname, activates that candidate release on the sole Leadership process, and verifies its marker and health. Protected Git `main` does not move.
-2. **Publish this reviewed bundle** re-verifies that same staged release, compare-and-swap advances protected Git `main` to the already-staged commit, and reconciles PostgreSQL. It does not build, deploy, or operate a second version.
+2. **Confirm and publish b6e40575** re-verifies that same staged release, compare-and-swap advances protected Git `main` to the already-staged commit, and reconciles PostgreSQL. It does not build, deploy, or operate a second version. After confirmation, the Studio page automatically tracks confirmation, protected-main advancement, Leadership verification, and reconciliation/custody release.
 
 Do not trigger final publication without explicit human direction. Production Git finalization and production rollback have not yet been exercised.
 
@@ -101,6 +101,7 @@ Do not trigger final publication without explicit human direction. Production Gi
 - The reviewer-provenance flow created revision 2, wrote `timothy-breeding` and review date `2026-07-18` into the exact changed MDX, reran exact-byte validation, and produced the approved bundle above.
 - Visible Check in, saved-revision preservation, unsaved-change cancellation, recent reauthentication, active-job cancellation, publisher custody transfer, and immutable approval gates are implemented and production exercised.
 - The published/candidate comparison is an aligned line diff with additions, removals, exact line numbers, blank counterparts, and synchronized vertical and horizontal scrolling.
+- The final publication decision now has one explicit status surface: official baseline `9a870e5c`, staged candidate `b6e40575`, publisher custody, a review link, and a guarded confirmation dialog. Its post-confirmation progress updates automatically through Git finalization, Leadership verification, Studio reconciliation, and custody release. The production dialog was opened and canceled without recording confirmation; protected `main`, PostgreSQL, and the active candidate marker remained unchanged.
 - Candidate staging acquired publisher custody after human Check in, created one exact candidate commit, activated one Leadership runtime, and stopped before final confirmation.
 - The candidate was rebuilt for the sole Leadership hostname; generated output contains no retired hostname. The publisher's stable PM2 launcher was verified against the active Leadership PID.
 - The retired duplicate TimsPrototypes route is archived, the route returns 404, only port 3005 listens for Leadership, and only `leadership-field-guide` exists in PM2.
@@ -109,7 +110,7 @@ Do not trigger final publication without explicit human direction. Production Gi
 
 ## Remaining work
 
-1. Have the human reviewer inspect the staged Leadership candidate. If and only if it is acceptable, explicitly use **Publish this reviewed bundle** and verify Git `main`, the release marker, Studio reconciliation, and custody return.
+1. Have the human reviewer inspect the staged Leadership candidate. If and only if it is acceptable, explicitly use **Confirm and publish b6e40575**, check the review acknowledgment, and verify the automatic progress through Git `main`, the release marker, Studio reconciliation, and custody return.
 2. After a real publication exists, exercise one explicitly authorized production rollback and verify the forward-history commit and restored tree.
 3. Configure encrypted nightly `pg_dump`, off-host copy, retention, checksum verification, and a clean restore rehearsal.
 4. Coordinate PostgreSQL listener/firewall hardening without disrupting other RP1 applications.

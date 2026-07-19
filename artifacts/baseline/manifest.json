@@ -85,8 +85,8 @@
       "type": "SITUATION"
     },
     {
-      "byteLength": 5361,
-      "contentHash": "b4445752d749df9489aab74458ecf0b24ba8844849590bd2794bf85bed266c6f",
+      "byteLength": 5548,
+      "contentHash": "dba14979f81c40c94bb0c7282326da1ef735a99b09a12779e42ae6cc0b435ef8",
       "logicalId": "situation:repeatedly-misses-deadlines",
       "path": "content/situations/repeatedly-misses-deadlines.mdx",
       "type": "SITUATION"
@@ -204,8 +204,8 @@
       "type": "PREPARATION_PROMPT"
     }
   ],
-  "commit": "9a870e5c70fef9ae71506cb3138745b88363a190",
-  "expectedCommit": "9a870e5c70fef9ae71506cb3138745b88363a190",
+  "commit": "b6e40575eb823dc32c62644775895ad84a80d2d1",
+  "expectedCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1",
   "parserVersion": "studio-baseline-v1",
   "schemaVersion": "1",
   "sourceRepository": "git@github.com:tbreeding/leadership-field-guide.git"

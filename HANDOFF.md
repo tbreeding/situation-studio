@@ -1,6 +1,6 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-19 07:08 UTC
+Last updated: 2026-07-19 08:02 UTC
 
 ## Purpose and authority
 
@@ -19,7 +19,7 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - The worktree was clean after the release.
 - The complete local gate passed: formatting, lint, strict TypeScript, Prisma validation, immutable-baseline verification, 39 tests, secret scan, and the production web build.
 - The 36-case Chromium matrix most recently passed 28 applicable cases with 8 intentional desktop-only mobile skips.
-- Leadership protected `main` remains `9a870e5c70fef9ae71506cb3138745b88363a190`.
+- Leadership protected `main` is `b6e40575eb823dc32c62644775895ad84a80d2d1`.
 
 Before new work, run `git status --short`, read this file and `artifacts/reports/acceptance.json`, and preserve unrelated user changes.
 
@@ -38,14 +38,14 @@ Before new work, run `git status --short`, read this file and `artifacts/reports
 
 Direct private-IP root requests intentionally return only `{"status":"origin-ready"}`. The TimsPrototypes origin probe depends on that non-redirecting response. Requests with the configured public Host receive the Studio application.
 
-### Leadership candidate
+### Leadership runtime
 
 - Sole URL: `https://leadership.timsprototypes.com`.
 - Sole private origin: `http://192.168.1.120:3005`.
 - Sole PM2 process: `leadership-field-guide`.
 - Active symlink: `/home/admin/projects/leadership/current`.
-- Active candidate release: `/home/admin/projects/leadership/releases/ae9f5987-017e-4a80-8c47-c10b5de8b994-b6e40575eb82`.
-- The candidate page for `repeatedly-misses-deadlines` visibly reports `Reviewed: 7/18/2026`.
+- Active verified release: `/home/admin/projects/leadership/releases/ae9f5987-017e-4a80-8c47-c10b5de8b994-b6e40575eb82`.
+- The published page for `repeatedly-misses-deadlines` visibly reports `Reviewed: 7/18/2026`.
 - The retired duplicate prototype is archived and returns 404. Its PM2 process, listener, runtime directory, and symlink are gone.
 
 TimsPrototypes hosting is itself the candidate environment. There is intentionally no second Leadership runtime or hostname.
@@ -56,22 +56,23 @@ TimsPrototypes hosting is itself the candidate environment. There is intentional
 - Approved bundle hash: `9caa2f0ac652015fcba0839fd83f87d0ebe19a0e675b97cc9114c6b237688aeb`.
 - Publication request: `d6e3b43c-2d8a-4881-b056-908bf907b30a`.
 - Publication UUID: `ae9f5987-017e-4a80-8c47-c10b5de8b994`.
-- Candidate commit: `b6e40575eb823dc32c62644775895ad84a80d2d1`.
-- State: `AWAITING_CONFIRMATION` at internal step `PREVIEW_VERIFIED`.
-- Final confirmation: not recorded.
-- Protected Git `main`: still `9a870e5c70fef9ae71506cb3138745b88363a190`.
-- Publisher checkout: held in publisher custody while the request awaits confirmation.
+- Published commit: `b6e40575eb823dc32c62644775895ad84a80d2d1`.
+- State: `RECONCILED` at internal step `RECONCILED`.
+- Final confirmation: recorded at `2026-07-19 07:55:43.540 UTC` after recent password reauthentication.
+- Publication record: `82be5ea1-5f3f-412f-b223-46e082497ec9`, health `VERIFIED`.
+- Protected Git `main`: `b6e40575eb823dc32c62644775895ad84a80d2d1`.
+- Publisher checkout: released at `2026-07-19 07:55:50.919 UTC` with reason `PUBLICATION_SUCCEEDED`; no active checkout remains.
 
 The internal `PREVIEW_*` state names mean candidate build and candidate verification. They do not imply another running site.
 
-The UI now separates the **Official baseline** from the **Staged candidate**, states that Leadership is currently displaying the candidate, and labels the exact next decision **Awaiting your confirmation**. **Confirm and publish b6e40575** opens a version-specific confirmation dialog; it does not submit until the reviewer checks that they reviewed the staged candidate and confirms a second time.
+The UI now reports **Published successfully**, identifies `b6e40575` as the official protected-Git baseline, displays the live published guidance, and shows checkout as available. There is no current candidate or pending publication.
 
 The publication semantics are:
 
 1. **Stage approved bundle** validates and commits the exact approved bytes, builds them for the sole Leadership hostname, activates that candidate release on the sole Leadership process, and verifies its marker and health. Protected Git `main` does not move.
 2. **Confirm and publish b6e40575** re-verifies that same staged release, compare-and-swap advances protected Git `main` to the already-staged commit, and reconciles PostgreSQL. It does not build, deploy, or operate a second version. After confirmation, the Studio page automatically tracks confirmation, protected-main advancement, Leadership verification, and reconciliation/custody release.
 
-Do not trigger final publication without explicit human direction. Production Git finalization and production rollback have not yet been exercised.
+Production Git finalization has been exercised successfully. Production rollback has not; do not trigger it without explicit human direction.
 
 ## Database and identities
 
@@ -103,8 +104,8 @@ Do not trigger final publication without explicit human direction. Production Gi
 - The reviewer-provenance flow created revision 2, wrote `timothy-breeding` and review date `2026-07-18` into the exact changed MDX, reran exact-byte validation, and produced the approved bundle above.
 - Visible Check in, saved-revision preservation, unsaved-change cancellation, recent reauthentication, active-job cancellation, publisher custody transfer, and immutable approval gates are implemented and production exercised.
 - The published/candidate comparison is an aligned line diff with additions, removals, exact line numbers, blank counterparts, and synchronized vertical and horizontal scrolling.
-- The final publication decision now has one explicit status surface: official baseline `9a870e5c`, staged candidate `b6e40575`, publisher custody, a review link, and a guarded confirmation dialog. Its post-confirmation progress updates automatically through Git finalization, Leadership verification, Studio reconciliation, and custody release. The production dialog was opened and canceled without recording confirmation; protected `main`, PostgreSQL, and the active candidate marker remained unchanged.
-- Candidate staging acquired publisher custody after human Check in, created one exact candidate commit, activated one Leadership runtime, and stopped before final confirmation.
+- The guarded final-publication flow completed in production after recent password reauthentication. Protected Git `main` advanced exactly from `9a870e5c` to `b6e40575`; the existing Leadership release was re-verified without another build or runtime; PostgreSQL reconciled publication `82be5ea1-5f3f-412f-b223-46e082497ec9`; and publisher custody released with no active checkout.
+- Candidate staging acquired publisher custody after human Check in, created one exact candidate commit, activated one Leadership runtime, and preserved that same verified release through final publication.
 - The candidate was rebuilt for the sole Leadership hostname; generated output contains no retired hostname. The publisher's stable PM2 launcher was verified against the active Leadership PID.
 - The retired duplicate TimsPrototypes route is archived, the route returns 404, only port 3005 listens for Leadership, and only `leadership-field-guide` exists in PM2.
 - An isolated disposable rehearsal completed publication and forward-history rollback without touching the real Leadership remote. Publication commit `01babf29268317b3ca9bbddfd61c6dbe264912fc` and rollback commit `e4057416e2627b0d02dc459f25daa66c6248cb10` exist only in that disposable remote.
@@ -112,12 +113,11 @@ Do not trigger final publication without explicit human direction. Production Gi
 
 ## Remaining work
 
-1. Have the human reviewer inspect the staged Leadership candidate. If and only if it is acceptable, explicitly use **Confirm and publish b6e40575**, check the review acknowledgment, and verify the automatic progress through Git `main`, the release marker, Studio reconciliation, and custody return.
-2. After a real publication exists, exercise one explicitly authorized production rollback and verify the forward-history commit and restored tree.
-3. Configure encrypted nightly `pg_dump`, off-host copy, retention, checksum verification, and a clean restore rehearsal.
-4. Coordinate PostgreSQL listener/firewall hardening without disrupting other RP1 applications.
-5. Configure Anthropic only if the optional fallback is desired.
-6. Perform the external-friend end-to-end acceptance exercise after publication and recovery boundaries are proven.
+1. Exercise one explicitly authorized production rollback and verify the forward-history commit and restored tree.
+2. Configure encrypted nightly `pg_dump`, off-host copy, retention, checksum verification, and a clean restore rehearsal.
+3. Coordinate PostgreSQL listener/firewall hardening without disrupting other RP1 applications.
+4. Configure Anthropic only if the optional fallback is desired.
+5. Perform the external-friend end-to-end acceptance exercise now that publication is proven; recovery remains outstanding until production rollback and backup restore are exercised.
 
 ## Safe operational commands
 

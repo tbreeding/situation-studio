@@ -9,7 +9,7 @@ const leadershipRoot = path.resolve(
   process.env.LEADERSHIP_REPO_PATH ?? path.join(studioRoot, "../leadership"),
 );
 const outputRoot = path.join(studioRoot, "artifacts/baseline");
-const expectedCommit = "9a870e5c70fef9ae71506cb3138745b88363a190";
+const expectedCommit = "b6e40575eb823dc32c62644775895ad84a80d2d1";
 
 function sha256(value: Buffer | string): string {
   return createHash("sha256").update(value).digest("hex");

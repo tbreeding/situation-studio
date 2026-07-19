@@ -1043,7 +1043,7 @@ export function WorkspaceEditor(props: Props) {
         {props.bundle && (
           <details className="panel exactBundlePanel">
             <summary>
-              <span>
+              <span className="exactBundleSummaryCopy">
                 <strong>Inspect every exact bundle artifact</strong>
                 <small>
                   {props.bundle.artifacts.length} immutable candidate
@@ -1051,7 +1051,7 @@ export function WorkspaceEditor(props: Props) {
                   displayed bundle hash
                 </small>
               </span>
-              <span className="badge">
+              <span className="badge exactBundleSummaryBadge">
                 {
                   props.bundle.artifacts.filter(
                     (artifact) => artifact.changeKind !== "NO_CHANGE",
@@ -1119,13 +1119,15 @@ export function WorkspaceEditor(props: Props) {
               />
               <span>Block approval until this comment is resolved.</span>
             </label>
-            <button
-              className="button secondary"
-              type="button"
-              onClick={addComment}
-            >
-              Add review comment
-            </button>
+            <div className="commentActions">
+              <button
+                className="button secondary"
+                type="button"
+                onClick={addComment}
+              >
+                Add review comment
+              </button>
+            </div>
           </section>
         )}
         {props.permissions.includes("situation.archive") && !props.checkout && (

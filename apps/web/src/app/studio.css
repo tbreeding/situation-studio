@@ -1253,6 +1253,11 @@ summary:focus-visible {
   font-family: inherit;
   font-size: 0.875rem;
 }
+.commentActions {
+  display: flex;
+  align-items: center;
+  margin-top: 0.8rem;
+}
 .contextPanel {
   position: sticky;
   top: 6rem;
@@ -1537,6 +1542,49 @@ summary:focus-visible {
 }
 .exactBundlePanel {
   margin-top: 1rem;
+}
+.exactBundlePanel > summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.85rem 1.1rem;
+  cursor: pointer;
+  list-style: none;
+}
+.exactBundlePanel > summary::-webkit-details-marker {
+  display: none;
+}
+.exactBundlePanel > summary::before {
+  content: "\25B8";
+  font-size: 0.78rem;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+.exactBundlePanel[open] > summary::before {
+  transform: rotate(90deg);
+}
+.exactBundlePanel[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+.exactBundleSummaryCopy {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+.exactBundleSummaryCopy strong,
+.exactBundleSummaryCopy small {
+  display: block;
+  min-width: 0;
+}
+.exactBundleSummaryCopy small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.exactBundleSummaryBadge {
+  justify-self: end;
+  white-space: nowrap;
 }
 .exactBundleArtifacts {
   display: grid;
@@ -2054,6 +2102,13 @@ summary:focus-visible {
   }
 }
 @media (max-width: 760px) {
+  .exactBundlePanel > summary {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .exactBundleSummaryBadge {
+    grid-column: 2;
+    justify-self: start;
+  }
   .formGrid {
     grid-template-columns: 1fr;
   }

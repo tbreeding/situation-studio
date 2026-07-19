@@ -8,7 +8,7 @@
 - Active symlink: `/home/admin/projects/situation-studio/current`.
 - Shared environment: `/home/admin/projects/situation-studio/shared`.
 - PM2 processes: `situation-studio-web`, `situation-studio-worker`, and `situation-studio-publisher`.
-- Current recorded release: `20260718T202708Z`.
+- Current recorded release: `20260719T052129Z`.
 
 The route, first administrator, and OpenAI/Codex-first review worker are active. The publisher runs with a least-privilege database login, a repository-scoped Leadership deploy key, and fixed preview/live activation targets. Backup automation and a clean restore rehearsal remain required operational work.
 
@@ -18,7 +18,7 @@ The recorded production release runs the real AI worker with OpenAI/Codex first 
 
 The publisher consumes immutable approvals, validates exact candidate bytes, runs trusted Leadership install/lint/typecheck/content/test/build commands, creates one structured commit, publishes an immutable preview branch/release, waits for final human confirmation, compare-and-swap advances remote `main`, atomically moves the live release link, and reconciles PostgreSQL. Rollback creates a new forward-history commit with the exact prior tree and repeats validation/build/cutover. See `ops/publisher.env.example` and `ops/grant-service-privileges.sql`.
 
-An isolated 2026-07-18 rehearsal completed 22 Codex review roles, preview, final confirmation, cutover, reconciliation, and rollback without touching the real Leadership remote. Production job `8fd6d658-8d64-4722-87dc-7699c61f7075` separately completed 22/22 Codex roles, 3/3 validations, one proposal, custody return, and visible Check in on `repeatedly-misses-deadlines`. The exact revision-2 bundle was later human-approved and remains unpublished. Production staging now creates and health-checks the protected preview, then waits for a second explicit publication confirmation.
+An isolated 2026-07-18 rehearsal completed 22 Codex review roles, preview, final confirmation, cutover, reconciliation, and rollback without touching the real Leadership remote. Production job `8fd6d658-8d64-4722-87dc-7699c61f7075` separately completed 22/22 Codex roles, 3/3 validations, one proposal, custody return, and visible Check in on `repeatedly-misses-deadlines`. On 2026-07-19 the exact revision-2 bundle `9caa2f0ac652…` was human-approved and staged by request `d6e3b43c-2d8a-4881-b056-908bf907b30a`. The publisher created preview commit `b6e40575eb823dc32c62644775895ad84a80d2d1`, activated and externally verified `https://leadership-preview.timsprototypes.com`, and stopped in `AWAITING_CONFIRMATION`; production `main` and the live release remain unchanged at `9a870e5c…`.
 
 ## Allocations
 

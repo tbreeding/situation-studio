@@ -14,6 +14,7 @@ import {
   reconciliationDisagreement,
   shouldPollPublication,
 } from "@/lib/publication-presentation";
+import { reconcileDisplayedArtifactBody } from "@/lib/workspace-editor-state";
 
 type Props = {
   situationId: string;
@@ -94,7 +95,9 @@ export function WorkspaceEditor(props: Props) {
     ownsCheckout,
     canApprove: props.permissions.includes("publication.approve"),
   });
-  const [body, setBody] = useState(props.artifact?.body ?? "");
+  const displayedArtifactBody = props.artifact?.body ?? "";
+  const [body, setBody] = useState(displayedArtifactBody);
+  const previousArtifactBodyRef = useRef(displayedArtifactBody);
   const [checkInPending, setCheckInPending] = useState(false);
   const [preparationPending, setPreparationPending] = useState(false);
   const [publicationConfirmationOpen, setPublicationConfirmationOpen] =
@@ -111,7 +114,7 @@ export function WorkspaceEditor(props: Props) {
     actionLabel: string;
     retry: () => Promise<void>;
   } | null>(null);
-  const hasUnsavedChanges = body !== (props.artifact?.body ?? "");
+  const hasUnsavedChanges = body !== displayedArtifactBody;
   const [status, setStatus] = useState(
     canEdit
       ? `Draft revision ${props.revision} · ready to edit`
@@ -173,6 +176,18 @@ export function WorkspaceEditor(props: Props) {
     setSourceExpanded(false);
     window.requestAnimationFrame(() => expandSourceButtonRef.current?.focus());
   }, []);
+
+  useEffect(() => {
+    const previousArtifactBody = previousArtifactBodyRef.current;
+    previousArtifactBodyRef.current = displayedArtifactBody;
+    setBody((currentBody) =>
+      reconcileDisplayedArtifactBody({
+        currentBody,
+        previousArtifactBody,
+        nextArtifactBody: displayedArtifactBody,
+      }),
+    );
+  }, [displayedArtifactBody]);
 
   async function requestReauthentication(
     response: Response,

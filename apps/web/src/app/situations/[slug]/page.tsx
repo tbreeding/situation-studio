@@ -12,6 +12,7 @@ import {
 } from "@/server/workflows/review-provenance";
 import {
   canPrepareDatabaseFailedPreviewRecovery,
+  isPrivateCandidateReviewPending,
   publicationDecisionLabel,
 } from "@/lib/publication-presentation";
 import { reviewJobSnapshotById } from "@/server/review-progress";
@@ -248,26 +249,33 @@ export default async function SituationWorkspace({
     canApprove: session.permissions.has("publication.approve"),
   });
   const nextAction = publicationRequest
-    ? publicationRequest.state === "AWAITING_CONFIRMATION" &&
-      !publicationRequest.finalConfirmedAt
+    ? isPrivateCandidateReviewPending(
+        publicationBackend,
+        publicationRequest.state,
+      )
       ? session.permissions.has("publication.publish")
-        ? databaseBackend
-          ? "Review the private candidate, then explicitly confirm this exact snapshot."
-          : "Review the staged candidate, then explicitly confirm this exact commit."
-        : databaseBackend
-          ? "The private candidate is awaiting confirmation from an authorized publisher."
-          : "The staged candidate is awaiting confirmation from an authorized publisher."
-      : publicationRequest.state === "FAILED_PREVIEW"
-        ? canRecoverFailedPreview
-          ? bundle?.comments.some((comment) => comment.blocking)
-            ? "Resolve the blocking review feedback before preparing a fresh database-bound review."
-            : "Prepare a fresh database-bound review from the preserved candidate, then approve its exact bytes."
-          : "Candidate staging failed safely; inspect the recorded failure before retrying."
-        : publicationRequest.state === "RECONCILIATION_REQUIRED"
+        ? "Open and review the private candidate. Its healthy Leadership observation will unlock final confirmation."
+        : "The private candidate is awaiting review from an authorized publisher."
+      : publicationRequest.state === "AWAITING_CONFIRMATION" &&
+          !publicationRequest.finalConfirmedAt
+        ? session.permissions.has("publication.publish")
           ? databaseBackend
-            ? "Publication is blocked until the database pointer, Leadership observation, and Studio agree."
-            : "Publication is blocked until Git, Leadership, and Studio are reconciled."
-          : "No action required while the trusted publisher completes and verifies publication."
+            ? "Review the private candidate, then explicitly confirm this exact snapshot."
+            : "Review the staged candidate, then explicitly confirm this exact commit."
+          : databaseBackend
+            ? "The private candidate is awaiting confirmation from an authorized publisher."
+            : "The staged candidate is awaiting confirmation from an authorized publisher."
+        : publicationRequest.state === "FAILED_PREVIEW"
+          ? canRecoverFailedPreview
+            ? bundle?.comments.some((comment) => comment.blocking)
+              ? "Resolve the blocking review feedback before preparing a fresh database-bound review."
+              : "Prepare a fresh database-bound review from the preserved candidate, then approve its exact bytes."
+            : "Candidate staging failed safely; inspect the recorded failure before retrying."
+          : publicationRequest.state === "RECONCILIATION_REQUIRED"
+            ? databaseBackend
+              ? "Publication is blocked until the database pointer, Leadership observation, and Studio agree."
+              : "Publication is blocked until Git, Leadership, and Studio are reconciled."
+            : "No action required while the trusted publisher completes and verifies publication."
     : reviewActive
       ? "No action required—your complete review is durable and this page updates automatically."
       : checkout

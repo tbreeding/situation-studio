@@ -53,6 +53,13 @@ export function isAwaitingHumanConfirmation(
   return state === "AWAITING_CONFIRMATION" && !finalConfirmed;
 }
 
+export function isPrivateCandidateReviewPending(
+  backend: "git" | "database",
+  state: string,
+) {
+  return backend === "database" && state === "CANDIDATE_AVAILABLE";
+}
+
 export function canPrepareDatabaseFailedPreviewRecovery(input: {
   publicationBackend: "git" | "database";
   bundleState: string | null;

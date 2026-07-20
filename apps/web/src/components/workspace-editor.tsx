@@ -9,6 +9,7 @@ import { SynchronizedDiff } from "@/components/synchronized-diff";
 import {
   canPrepareDatabaseFailedPreviewRecovery,
   isAwaitingHumanConfirmation,
+  isPrivateCandidateReviewPending,
   publicationProgressSteps,
   reconciliationDisagreement,
   shouldPollPublication,
@@ -132,6 +133,13 @@ export function WorkspaceEditor(props: Props) {
     isAwaitingHumanConfirmation(
       props.publicationRequest.state,
       props.publicationRequest.finalConfirmed,
+    ),
+  );
+  const privateCandidateReviewPending = Boolean(
+    props.publicationRequest &&
+    isPrivateCandidateReviewPending(
+      props.publicationBackend,
+      props.publicationRequest.state,
     ),
   );
   const publicationProgressVisible = Boolean(
@@ -827,95 +835,106 @@ export function WorkspaceEditor(props: Props) {
           </section>
         )}
 
-        {props.publicationRequest && awaitingHumanConfirmation && (
-          <section
-            className="publicationDecisionCard ready"
-            aria-labelledby="publication-decision-title"
-          >
-            <div className="publicationDecisionCopy">
-              <p className="eyebrow">Ready for final publication</p>
-              <h3 id="publication-decision-title">
-                Leadership is displaying the{" "}
-                {props.publicationBackend === "database" ? "private" : "staged"}{" "}
-                candidate
-              </h3>
-              <p>
-                It is reviewed and verified, but it is not yet the official
-                published baseline.{" "}
-                {props.publicationBackend === "database"
-                  ? "The official database pointer has not moved."
-                  : "Protected Git main has not moved."}
-              </p>
-            </div>
-            <div
-              className="publicationVersionChange compact"
-              aria-label="Current baseline and private candidate"
+        {props.publicationRequest &&
+          (awaitingHumanConfirmation || privateCandidateReviewPending) && (
+            <section
+              className="publicationDecisionCard ready"
+              aria-labelledby="publication-decision-title"
             >
-              <div>
-                <span>Official baseline</span>
-                <strong>
-                  {props.publishedCommitSha?.slice(0, 8) ?? "Unavailable"}
-                </strong>
-                <small>
-                  {props.publicationBackend === "database"
-                    ? "Database official snapshot"
-                    : "Protected Git main"}
-                </small>
+              <div className="publicationDecisionCopy">
+                <p className="eyebrow">
+                  {privateCandidateReviewPending
+                    ? "Private candidate ready"
+                    : "Ready for final publication"}
+                </p>
+                <h3 id="publication-decision-title">
+                  {privateCandidateReviewPending
+                    ? "Review the private Leadership candidate"
+                    : `Leadership is displaying the ${props.publicationBackend === "database" ? "private" : "staged"} candidate`}
+                </h3>
+                <p>
+                  {privateCandidateReviewPending
+                    ? "Open the exact candidate in the private Leadership window. A healthy observation will unlock final confirmation; the official database pointer has not moved."
+                    : `It is reviewed and verified, but it is not yet the official published baseline. ${props.publicationBackend === "database" ? "The official database pointer has not moved." : "Protected Git main has not moved."}`}
+                </p>
               </div>
-              <span aria-hidden="true">→</span>
-              <div>
-                <span>
-                  {props.publicationBackend === "database"
-                    ? "Private candidate"
-                    : "Staged candidate"}
-                </span>
-                <strong>
-                  {props.publicationRequest.previewCommitSha?.slice(0, 8) ??
-                    "Preparing"}
-                </strong>
-                <small>Currently displayed on Leadership</small>
-              </div>
-            </div>
-            <div className="publicationDecisionFooter">
-              <p className="publicationCustodyNote">
-                <strong>Publisher custody:</strong> holding the exact reviewed
-                bytes during this decision.
-              </p>
-              <div className="publicationDecisionActions">
-                {props.publicationBackend === "database" ? (
-                  <button
-                    className="button secondary"
-                    type="button"
-                    onClick={openPrivateCandidate}
-                  >
-                    Review private candidate ↗
-                  </button>
-                ) : (
-                  <a
-                    className="button secondary"
-                    href="https://leadership.timsprototypes.com"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Review candidate ↗
-                  </a>
-                )}
-                {props.permissions.includes("publication.publish") && (
-                  <button
-                    className="button warn"
-                    disabled={!props.publicationRequest.previewCommitSha}
-                    type="button"
-                    onClick={() => setPublicationConfirmationOpen(true)}
-                  >
-                    Confirm and publish{" "}
+              <div
+                className="publicationVersionChange compact"
+                aria-label="Current baseline and private candidate"
+              >
+                <div>
+                  <span>Official baseline</span>
+                  <strong>
+                    {props.publishedCommitSha?.slice(0, 8) ?? "Unavailable"}
+                  </strong>
+                  <small>
+                    {props.publicationBackend === "database"
+                      ? "Database official snapshot"
+                      : "Protected Git main"}
+                  </small>
+                </div>
+                <span aria-hidden="true">→</span>
+                <div>
+                  <span>
+                    {props.publicationBackend === "database"
+                      ? "Private candidate"
+                      : "Staged candidate"}
+                  </span>
+                  <strong>
                     {props.publicationRequest.previewCommitSha?.slice(0, 8) ??
-                      "candidate"}
-                  </button>
-                )}
+                      "Preparing"}
+                  </strong>
+                  <small>
+                    {privateCandidateReviewPending
+                      ? "Ready for private Leadership review"
+                      : "Currently displayed on Leadership"}
+                  </small>
+                </div>
               </div>
-            </div>
-          </section>
-        )}
+              <div className="publicationDecisionFooter">
+                <p className="publicationCustodyNote">
+                  <strong>Publisher custody:</strong> holding the exact reviewed
+                  bytes during this decision.
+                </p>
+                <div className="publicationDecisionActions">
+                  {props.publicationBackend === "database" &&
+                  props.permissions.includes("publication.publish") ? (
+                    <button
+                      className="button secondary"
+                      type="button"
+                      onClick={openPrivateCandidate}
+                    >
+                      Review private candidate ↗
+                    </button>
+                  ) : props.publicationBackend === "git" ? (
+                    <a
+                      className="button secondary"
+                      href="https://leadership.timsprototypes.com"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Review candidate ↗
+                    </a>
+                  ) : null}
+                  {awaitingHumanConfirmation &&
+                    props.permissions.includes("publication.publish") && (
+                      <button
+                        className="button warn"
+                        disabled={!props.publicationRequest.previewCommitSha}
+                        type="button"
+                        onClick={() => setPublicationConfirmationOpen(true)}
+                      >
+                        Confirm and publish{" "}
+                        {props.publicationRequest.previewCommitSha?.slice(
+                          0,
+                          8,
+                        ) ?? "candidate"}
+                      </button>
+                    )}
+                </div>
+              </div>
+            </section>
+          )}
 
         {props.publicationRequest && publicationProgressVisible && (
           <section

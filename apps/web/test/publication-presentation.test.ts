@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   canPrepareDatabaseFailedPreviewRecovery,
   isAwaitingHumanConfirmation,
+  isPrivateCandidateReviewPending,
   publicationDecisionLabel,
   publicationProgressSteps,
   reconciliationDisagreement,
@@ -50,6 +51,18 @@ const expectedSteps = [
 ] as const;
 
 describe("publication presentation", () => {
+  test("exposes database candidate review before final confirmation", () => {
+    expect(
+      isPrivateCandidateReviewPending("database", "CANDIDATE_AVAILABLE"),
+    ).toBe(true);
+    expect(isPrivateCandidateReviewPending("git", "CANDIDATE_AVAILABLE")).toBe(
+      false,
+    );
+    expect(
+      isPrivateCandidateReviewPending("database", "AWAITING_CONFIRMATION"),
+    ).toBe(false);
+  });
+
   test("offers failed-preview recovery only for the exact database workflow state", () => {
     const eligible = {
       publicationBackend: "database" as const,

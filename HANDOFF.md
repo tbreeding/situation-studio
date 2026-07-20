@@ -245,6 +245,16 @@ unstable restarts; no migration command targeted it.
 
 ## Completed evidence
 
+- At 2026-07-20 16:42 UTC, a raw PM2 diagnostic emitted protected Studio
+  environment values into the operator tool output. Every exposed application
+  secret and the affected database credential were immediately rotated without
+  printing replacements; live sessions were revoked. The four intended
+  Studio/Leadership process definitions were deleted and recreated under a
+  minimal environment, and both PM2's live metadata and saved dump now contain
+  zero protected keys. Post-rotation Studio live/ready, database connectivity,
+  Leadership exact UUID/hash/query count, database publisher identity, all 24
+  routes, 404 behavior, target/candidate/publication counts, and every unrelated
+  PM2 process passed. The old values must remain treated as compromised.
 - At 2026-07-19 07:17 UTC, the former workspace-wide deploy transfer began copying an 878 MB / 40,101-file payload that included ignored `artifacts/runtime` data. RP1 stopped answering IP traffic after 318 MB transferred; the deploy never reached dependency installation, build, symlink cutover, or PM2 reload. A physical power cycle at 07:28 UTC restored the preserved Studio release `20260719T070439Z`, preserved Leadership candidate release, all PM2 processes, and healthy PostgreSQL. The exact kernel-level cause is unproven because the previous boot journal was not persistent. The deploy path is now guarded by exact-commit approval, clean/pushed-main checks, a healthy-host preflight, a 50 MB source-archive cap, and Git-committed-source-only transfer.
 - At 2026-07-19 09:48 UTC, guarded release `20260719T094530Z` deployed commit `312bf7749a83388f3fe57433d9457efcdce4f743`. The transferred committed archive was 1,341,440 bytes. An initial release attempt stopped before build or cutover when the bootstrap-only baseline importer encountered the initialized production database; the live symlink and processes remained untouched. The importer now imports only into an empty database, safely no-ops for initialized production, and fails closed on partial initialization. The corrected attempt passed 594 tests, reported the existing 15 situations and 37 artifacts without rewriting them, built before atomic cutover, and verified Studio live/ready, PostgreSQL, Leadership, and all named PM2 processes. Unrelated RP1 process PIDs remained unchanged.
 - The branded SVG favicon is live at `/icon.svg` with the expected `image/svg+xml` content type. Its deployed SHA-256 exactly matches the committed source, and the mark remains legible in a 16×16 raster check.

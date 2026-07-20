@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-20T16:33:00Z",
+  "recordedAt": "2026-07-20T16:46:00Z",
   "source": {
     "leadershipCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1",
     "leadershipRepositoryModified": true,
@@ -160,6 +160,7 @@
       "queriesPerRefresh": 1,
       "routeProbes": "24-of-24-passed",
       "notFound": 404,
+      "postCutoverSecurityRotation": "all-exposed-values-rotated-sessions-revoked-pm2-live-and-saved-metadata-purged-post-rotation-smoke-passed",
       "unrelatedServices": "online-stable"
     },
     "checkpoint7": {

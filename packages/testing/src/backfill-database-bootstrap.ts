@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   canonicalJson,
-  isApprovedArtifactPath,
   sha256,
   snapshotManifestSchema,
   validateCanonicalSnapshot,
@@ -14,6 +13,11 @@ import {
 } from "@situation-studio/db";
 import matter from "gray-matter";
 import { packageRoot, readPackagedBodies } from "./database-bootstrap-package";
+import {
+  matchesBootstrapLegacyAlias,
+  matchesBootstrapLegacyPathMove,
+  matchesBootstrapLegacyRetirement,
+} from "./database-bootstrap-legacy";
 
 const databaseUrl = process.env.DATABASE_URL;
 const studioRoot = path.resolve(import.meta.dirname, "../../..");
@@ -155,17 +159,12 @@ async function verifyAllDatabaseBlobs(client: DatabaseClient): Promise<number> {
   return blobs.length;
 }
 
-async function verifyManagedRegistry(client: DatabaseClient): Promise<void> {
-  const managedPaths = (
-    await client.artifact.findMany({
-      where: { active: true },
-      select: { logicalId: true, canonicalPath: true },
-    })
-  )
-    .filter((artifact) => isApprovedArtifactPath(artifact.canonicalPath))
-    .sort((left, right) =>
-      left.canonicalPath.localeCompare(right.canonicalPath),
-    );
+function assertManagedRegistry(
+  artifacts: Array<{ logicalId: string; canonicalPath: string }>,
+): void {
+  const managedPaths = artifacts.sort((left, right) =>
+    left.canonicalPath.localeCompare(right.canonicalPath),
+  );
   const expected = manifest.artifacts.map((artifact) => ({
     logicalId: artifact.logicalId,
     canonicalPath: artifact.path,
@@ -174,6 +173,15 @@ async function verifyManagedRegistry(client: DatabaseClient): Promise<void> {
     throw new Error(
       "Active managed artifact registry does not exactly match the bootstrap inventory.",
     );
+}
+
+async function verifyManagedRegistry(client: DatabaseClient): Promise<void> {
+  assertManagedRegistry(
+    await client.artifact.findMany({
+      where: { active: true },
+      select: { logicalId: true, canonicalPath: true },
+    }),
+  );
 }
 
 async function ensureProductionTarget(
@@ -262,6 +270,85 @@ async function backfill(client: DatabaseClient): Promise<{
           },
         });
 
+      const activeRegistry = await transaction.artifact.findMany({
+        where: { active: true },
+        select: { id: true, logicalId: true, canonicalPath: true, type: true },
+      });
+      const canonicalByLogicalId = new Map(
+        manifest.artifacts.map((artifact) => [artifact.logicalId, artifact]),
+      );
+      const adoptedAliases: Array<{
+        artifactId: string;
+        legacyLogicalId: string;
+        canonicalLogicalId: string;
+        canonicalPath: string;
+        type: string;
+      }> = [];
+      const movedPaths: Array<{
+        artifactId: string;
+        logicalId: string;
+        legacyPath: string;
+        canonicalPath: string;
+        type: string;
+      }> = [];
+      const retiredArtifacts: Array<{
+        artifactId: string;
+        logicalId: string;
+        canonicalPath: string;
+        type: string;
+      }> = [];
+
+      for (const existing of activeRegistry) {
+        const canonical = canonicalByLogicalId.get(existing.logicalId);
+        if (canonical) {
+          if (
+            (canonical.path !== existing.canonicalPath ||
+              canonical.type !== existing.type) &&
+            !matchesBootstrapLegacyPathMove(
+              {
+                logicalId: canonical.logicalId,
+                canonicalPath: canonical.path,
+                type: canonical.type,
+              },
+              existing,
+            )
+          )
+            throw new Error(
+              `Active artifact ${existing.logicalId} has an unapproved legacy path or type at ${existing.canonicalPath}.`,
+            );
+          continue;
+        }
+        const aliasTarget = manifest.artifacts.find((artifact) =>
+          matchesBootstrapLegacyAlias(
+            {
+              logicalId: artifact.logicalId,
+              canonicalPath: artifact.path,
+              type: artifact.type,
+            },
+            existing,
+          ),
+        );
+        if (aliasTarget) continue;
+        if (matchesBootstrapLegacyRetirement(existing)) continue;
+        throw new Error(
+          `Active managed artifact ${existing.logicalId} at ${existing.canonicalPath} is outside the approved bootstrap transition.`,
+        );
+      }
+
+      for (const existing of activeRegistry) {
+        if (!matchesBootstrapLegacyRetirement(existing)) continue;
+        await transaction.artifact.update({
+          where: { id: existing.id },
+          data: { active: false },
+        });
+        retiredArtifacts.push({
+          artifactId: existing.id,
+          logicalId: existing.logicalId,
+          canonicalPath: existing.canonicalPath,
+          type: existing.type,
+        });
+      }
+
       const situationIds = new Map<string, string>();
       for (const artifact of manifest.artifacts.filter(
         (candidate) => candidate.type === "SITUATION",
@@ -299,13 +386,69 @@ async function backfill(client: DatabaseClient): Promise<{
           throw new Error(
             `Artifact identity collision for ${artifact.logicalId} at ${artifact.path}.`,
           );
-        if (byPath && byPath.logicalId !== artifact.logicalId)
+        if (
+          byLogicalId &&
+          (byLogicalId.canonicalPath !== artifact.path ||
+            byLogicalId.type !== artifact.type) &&
+          !matchesBootstrapLegacyPathMove(
+            {
+              logicalId: artifact.logicalId,
+              canonicalPath: artifact.path,
+              type: artifact.type,
+            },
+            byLogicalId,
+          )
+        )
+          throw new Error(
+            `Artifact ${artifact.logicalId} has an unapproved legacy path or type.`,
+          );
+        const approvedAlias =
+          !byLogicalId &&
+          byPath &&
+          matchesBootstrapLegacyAlias(
+            {
+              logicalId: artifact.logicalId,
+              canonicalPath: artifact.path,
+              type: artifact.type,
+            },
+            byPath,
+          );
+        if (byPath && byPath.logicalId !== artifact.logicalId && !approvedAlias)
           throw new Error(`Artifact path is owned by ${byPath.logicalId}.`);
         const existingArtifact = byLogicalId ?? byPath;
+        if (approvedAlias && byPath)
+          adoptedAliases.push({
+            artifactId: byPath.id,
+            legacyLogicalId: byPath.logicalId,
+            canonicalLogicalId: artifact.logicalId,
+            canonicalPath: artifact.path,
+            type: byPath.type,
+          });
+        if (
+          byLogicalId &&
+          (byLogicalId.canonicalPath !== artifact.path ||
+            byLogicalId.type !== artifact.type) &&
+          matchesBootstrapLegacyPathMove(
+            {
+              logicalId: artifact.logicalId,
+              canonicalPath: artifact.path,
+              type: artifact.type,
+            },
+            byLogicalId,
+          )
+        )
+          movedPaths.push({
+            artifactId: byLogicalId.id,
+            logicalId: byLogicalId.logicalId,
+            legacyPath: byLogicalId.canonicalPath,
+            canonicalPath: artifact.path,
+            type: byLogicalId.type,
+          });
         const managedArtifact = existingArtifact
           ? await transaction.artifact.update({
               where: { id: existingArtifact.id },
               data: {
+                logicalId: artifact.logicalId,
                 canonicalPath: artifact.path,
                 type: artifact.type,
                 primarySituationId:
@@ -351,6 +494,13 @@ async function backfill(client: DatabaseClient): Promise<{
                   },
           });
       }
+
+      assertManagedRegistry(
+        await transaction.artifact.findMany({
+          where: { active: true },
+          select: { logicalId: true, canonicalPath: true },
+        }),
+      );
 
       const snapshot = await transaction.contentSnapshot.create({
         data: {
@@ -416,6 +566,53 @@ async function backfill(client: DatabaseClient): Promise<{
           },
         },
       });
+      if (
+        adoptedAliases.length > 0 ||
+        movedPaths.length > 0 ||
+        retiredArtifacts.length > 0
+      )
+        await transaction.auditEvent.create({
+          data: {
+            actorType: "SERVICE",
+            action: "artifact_registry.bootstrap_transition",
+            targetType: "repository_snapshot",
+            targetId: repositorySnapshot.id,
+            correlationId: crypto.randomUUID(),
+            outcome: "SUCCEEDED",
+            beforeMetadata: {
+              adoptedAliases: adoptedAliases.map((value) => ({
+                artifactId: value.artifactId,
+                logicalId: value.legacyLogicalId,
+                canonicalPath: value.canonicalPath,
+                type: value.type,
+              })),
+              movedPaths: movedPaths.map((value) => ({
+                artifactId: value.artifactId,
+                logicalId: value.logicalId,
+                canonicalPath: value.legacyPath,
+                type: value.type,
+              })),
+              retiredArtifacts,
+            },
+            afterMetadata: {
+              adoptedAliases: adoptedAliases.map((value) => ({
+                artifactId: value.artifactId,
+                logicalId: value.canonicalLogicalId,
+                canonicalPath: value.canonicalPath,
+                type: value.type,
+              })),
+              movedPaths: movedPaths.map((value) => ({
+                artifactId: value.artifactId,
+                logicalId: value.logicalId,
+                canonicalPath: value.canonicalPath,
+                type: value.type,
+              })),
+              retiredArtifactCount: retiredArtifacts.length,
+              activeArtifactCount: manifest.artifacts.length,
+              manifestHash,
+            },
+          },
+        });
       return snapshot.id;
     },
     { isolationLevel: "Serializable", timeout: 60_000 },

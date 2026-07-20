@@ -23,6 +23,8 @@ if (
 const database = createDatabaseClient(databaseUrl, 6);
 const concurrentDatabase = createDatabaseClient(databaseUrl, 2);
 const targetCode = "leadership-production";
+const bootstrapManifestHash =
+  "cb57e75893b6852d58b5ce9d2d82c4954e455bdaa09defde5e2b0cb6bc54ea8e";
 
 type Fixture = {
   userId: string;
@@ -34,6 +36,42 @@ type Fixture = {
   checkoutId: string | null;
   requestId: string;
 };
+
+async function ensureAcceptanceTarget() {
+  const existing = await database.publicationTarget.findUnique({
+    where: { code: targetCode },
+    include: { officialSnapshot: true },
+  });
+  if (existing) {
+    if (
+      !existing.officialSnapshot ||
+      existing.officialSnapshot.validationState !== "VALIDATED" ||
+      existing.candidateSnapshotId ||
+      existing.candidatePublicationRequestId ||
+      existing.candidateRollbackRequestId
+    )
+      throw new Error("Recovery acceptance target is not clean.");
+    return;
+  }
+  const officialSnapshot = await database.contentSnapshot.findUniqueOrThrow({
+    where: { manifestHash: bootstrapManifestHash },
+  });
+  if (officialSnapshot.validationState !== "VALIDATED")
+    throw new Error("Recovery acceptance snapshot is not validated.");
+  await database.$transaction(async (transaction) => {
+    const target = await transaction.publicationTarget.create({
+      data: { code: targetCode },
+    });
+    await transaction.publicationTarget.update({
+      where: { id: target.id },
+      data: {
+        officialSnapshotId: officialSnapshot.id,
+        bootstrappedAt: new Date(),
+        generation: { increment: 1 },
+      },
+    });
+  });
+}
 
 async function seedFixture(input?: {
   mismatchedBase?: boolean;
@@ -610,6 +648,7 @@ async function verifyRejectedPreconditions() {
 }
 
 try {
+  await ensureAcceptanceTarget();
   const recoveredBundleId = await verifySuccessfulLegacyRecovery();
   const raceWinner = await verifyRecoveryCommentRace();
   await verifyDeterministicCommentFirst();

@@ -38,6 +38,9 @@ BEGIN
     GRANT EXECUTE ON FUNCTION
       append_publication_event(uuid, uuid, uuid, text, text, jsonb)
     TO situation_studio_web;
+    GRANT EXECUTE ON FUNCTION
+      lock_publication_target_for_review(text)
+    TO situation_studio_web;
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'situation_studio_materializer') THEN

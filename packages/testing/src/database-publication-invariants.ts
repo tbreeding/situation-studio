@@ -717,6 +717,7 @@ try {
     ai_receipt_insert: boolean;
     web_target_update: boolean;
     web_confirmation_insert: boolean;
+    web_recovery_lock_execute: boolean;
     operations_session_read: boolean;
   }>(`
     SELECT
@@ -729,6 +730,7 @@ try {
       has_table_privilege('situation_studio_ai', 'leadership_observation_receipts', 'INSERT') AS ai_receipt_insert,
       has_table_privilege('situation_studio_web', 'publication_targets', 'UPDATE') AS web_target_update,
       has_table_privilege('situation_studio_web', 'publication_confirmations', 'INSERT') AS web_confirmation_insert,
+      has_function_privilege('situation_studio_web', 'lock_publication_target_for_review(text)', 'EXECUTE') AS web_recovery_lock_execute,
       has_table_privilege('situation_studio_operations', 'sessions', 'SELECT') AS operations_session_read
   `);
   const grants = privilegeChecks.rows[0];
@@ -743,9 +745,19 @@ try {
     grants.ai_receipt_insert ||
     grants.web_target_update ||
     !grants.web_confirmation_insert ||
+    !grants.web_recovery_lock_execute ||
     grants.operations_session_read
   )
     throw new Error(`Least-privilege matrix failed: ${JSON.stringify(grants)}`);
+
+  await client.query("SET LOCAL ROLE situation_studio_web");
+  const webRecoveryLock = await client.query<{ target_id: string }>(
+    `SELECT lock_publication_target_for_review($1)::text AS target_id`,
+    ["leadership-production"],
+  );
+  await client.query("RESET ROLE");
+  if (webRecoveryLock.rows[0]?.target_id !== ids.target)
+    throw new Error("Web recovery lock did not return the exact target.");
 
   const activeIndexes = await client.query<{ indexdef: string }>(`
     SELECT indexdef FROM pg_indexes

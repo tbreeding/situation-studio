@@ -274,9 +274,14 @@ export async function prepareBundleForHumanApproval(
           if (recoveringFailedPreview) {
             if (!input.recoveryTargetCode)
               throw new Error("DATABASE_RECOVERY_REQUIRED");
-            await transaction.$executeRaw`SELECT id FROM publication_targets WHERE code = ${input.recoveryTargetCode} FOR UPDATE`;
+            const lockedTargets = await transaction.$queryRaw<
+              { id: string }[]
+            >`SELECT lock_publication_target_for_review(${input.recoveryTargetCode})::text AS id`;
+            const lockedTargetId = lockedTargets[0]?.id;
+            if (!lockedTargetId)
+              throw new Error("FAILED_PREVIEW_RECOVERY_TARGET_NOT_FOUND");
             const target = await transaction.publicationTarget.findUnique({
-              where: { code: input.recoveryTargetCode },
+              where: { id: lockedTargetId },
               include: { officialSnapshot: true },
             });
             const failedRequest = latestPublicationRequest;

@@ -2,27 +2,29 @@
 
 ## Implementation status
 
-Last updated: 2026-07-19 after fresh independent Checkpoint 4 acceptance.
+Last updated: 2026-07-20 after the guarded production reader cutover.
 
-| Checkpoint                              | Status                                    | Evidence                                                                                                                                                                                                                                                                            |
-| --------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Specification                       | Complete                                  | User approved the PostgreSQL authority, snapshot/cache model, complete-content boundary, and recovery objectives.                                                                                                                                                                   |
-| 1 — Data model and recovery design      | Complete locally                          | `docs/database-publication-checkpoint-1.md`; PostgreSQL 16 migration and restore rehearsal passed. No production migration was applied.                                                                                                                                             |
-| 2 — Backfill and shared validation      | Complete locally                          | `docs/database-publication-checkpoint-2.md`; canonical manifest `cb57e75893b6852d58b5ce9d2d82c4954e455bdaa09defde5e2b0cb6bc54ea8e`, 32 artifacts, 99 edges, zero parity mismatches. No production target or reader changed.                                                         |
-| 3 — Shadow reader and private candidate | Complete locally                          | `docs/database-publication-checkpoint-3.md`; zero shadow mismatches, verified last-known-good recovery, one-time private candidate exchange, exact candidate observation, and rebuilt-browser official isolation. No production reader changed.                                     |
-| 4 — Database publisher acceptance       | Complete locally — independently accepted | The first non-implementer review returned changes required; all findings were remediated. Fresh independent reruns accepted the current trees at 2026-07-19T18:57:26Z with 623/42 tests, 13 migrations, Git-disabled acceptance, built-header probes, and two-way concurrent races. |
-| 5 — Production shadow/recovery          | Blocked at entrance gate                  | Read-only discovery, release controls, bootstrap rehearsal, metrics, recovery template, and timed runbook are complete. Off-host PITR proof remains missing and backup work is explicitly deferred for now; no production mutation occurred.                                        |
-| 6–8                                     | Not started                               | Production remains on the Git-authoritative reader and publisher. Public cutover, first database publication/observation, and decommission require their live evidence and approvals.                                                                                               |
+| Checkpoint                              | Status                                    | Evidence                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Specification                       | Complete                                  | User approved the PostgreSQL authority, snapshot/cache model, complete-content boundary, and recovery objectives.                                                                                                                                                                                                                       |
+| 1 — Data model and recovery design      | Complete                                  | PostgreSQL 16 production is at all 13 forward migrations. The disposable migration/restore and invariant evidence remains in `docs/database-publication-checkpoint-1.md`.                                                                                                                                                               |
+| 2 — Backfill and shared validation      | Complete                                  | Production target generation 1 points to snapshot `0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3`, manifest `cb57e75893b6852d58b5ce9d2d82c4954e455bdaa09defde5e2b0cb6bc54ea8e`, with 32 members and 99 edges. Bootstrap rerun was idempotent.                                                                                                    |
+| 3 — Shadow reader and private candidate | Complete                                  | Production shadow served filesystem bytes while making one database query and reporting zero mismatches across the canonical inventory and all 24 route probes. Candidate exchange remains private, short-lived, and database-backed.                                                                                                   |
+| 4 — Database publisher acceptance       | Complete — independently accepted         | The non-implementer reviewer accepted the hardened implementation at 2026-07-20T03:58:50Z after 626 Studio tests, 43 Leadership tests, PostgreSQL 16.12 migration/grant checks, negative bootstrap guards, and Git-disabled publication/rollback acceptance.                                                                            |
+| 5 — Production shadow/recovery          | Complete under explicit deployment waiver | Shadow parity, frozen-cache outage boot/reconvergence, both prior-application symlink rehearsals, capacity, and unrelated-service gates passed. The owner explicitly waived only the off-host PITR/RPO/RTO gate for this deployment; the missing off-host recovery capability remains recorded debt.                                    |
+| 6 — Public database-reader cutover      | Complete                                  | Studio web and Leadership alone were restarted. Leadership now serves the exact official snapshot from PostgreSQL with one query per refresh; 24/24 routes passed, not-found returned 404, Studio remained live/ready, and unrelated services remained online.                                                                          |
+| 7 — First database publication          | Waiting for required human workflow       | The separate publisher now runs `database-main` under `situation_studio_materializer`; Git publication is inactive. No publication was started. Production has no database-bound reviewed bundle and no live human Studio session, so fresh human review, approval, recent reauthentication, and final confirmation are still required. |
+| 8 — Git decommission and contract       | Blocked by Checkpoint 7 observation       | Git-era configuration/code and readable history are intentionally retained. Decommission requires the first successful database publication, the approved observation period (proposed seven days), another recovery rehearsal, and explicit decommission approval.                                                                     |
 
-The local worktrees contain the uncommitted checkpoint implementation. The
-production system remains on the seven-migration Git-authoritative release
-described in `HANDOFF.md`; the local forward schema now contains 13 migrations.
-A local checkpoint result is not production evidence. Production state in this
-table may advance only after independent review, guarded deployment, live
-verification, and recovery evidence. Read-only production discovery found
-`archive_mode=off` and no off-host WAL chain, so Checkpoint 5 cannot currently
-satisfy the accepted five-minute RPO. Deferring backup work does not waive that
-gate, so Checkpoints 5–8 remain blocked from production execution.
+Production is database-authoritative for public Leadership reads, but no
+database-authoritative content publication has occurred yet. Studio release
+`20260720T161153Z` runs corrective commit
+`7ae119a52ec247a058722d9b53283136fec52727`; Leadership release
+`20260720T161451Z` runs approved commit
+`80ac9b590c5efa4befc7b1227a6f7d5766e84059`. PostgreSQL still has
+`archive_mode=off` and no proven off-host WAL chain. The owner's waiver allowed
+this deployment to proceed; it did not establish or claim the specified RPO,
+RTO, encryption, or off-host recovery guarantees.
 
 ## Goal
 

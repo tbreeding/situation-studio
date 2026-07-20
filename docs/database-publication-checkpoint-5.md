@@ -1,11 +1,40 @@
 # Database publication Checkpoint 5 — production preflight and cutover runbook
 
-Recorded 2026-07-19. Status: **blocked before production mutation**. Read-only
-discovery and the executable release controls are complete. Checkpoint 4
-security/recovery implementation was independently accepted at
-2026-07-19T18:57:26Z, but the required off-host PITR evidence is not available.
-The user deferred backup work for now; this changes no entrance gate and
-authorized no production mutation.
+Recorded 2026-07-19 and executed 2026-07-20. Status: **accepted for this
+deployment under the owner's explicit off-host PITR/RPO/RTO waiver**. The
+waived backup capability did not technically pass and remains residual
+catastrophic-recovery risk. Checkpoint 4 was independently accepted; the same
+independent reviewer accepted the live Checkpoint 5 evidence and Checkpoint 6
+reader cutover after fresh read-only production probes.
+
+## Production completion record — 2026-07-20
+
+- Deployed Studio corrective commit
+  `7ae119a52ec247a058722d9b53283136fec52727` as release
+  `20260720T161153Z` and Leadership approved commit
+  `80ac9b590c5efa4befc7b1227a6f7d5766e84059` as release
+  `20260720T161451Z`.
+- Applied all 13 forward migrations and least-privilege grants. The guarded
+  production bootstrap created target generation 1 at snapshot
+  `0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3`, manifest
+  `cb57e75893b6852d58b5ce9d2d82c4954e455bdaa09defde5e2b0cb6bc54ea8e`,
+  32 members, and 99 edges; the second run reused the exact target/snapshot.
+- Shadow mode made one database query and reported zero mismatches. All 24
+  canonical routes returned 200 and the unknown-route probe returned 404.
+- With only the Leadership database reader pointed at an unreachable local
+  port, public `/` remained 200 from the verified last-known-good snapshot;
+  `/health/content` correctly returned 503/degraded, then returned to healthy
+  exact shadow state after config restoration.
+- Leadership and Studio each ran successfully from their prior compatible
+  application symlink and then returned to the current release. No database
+  pointer or history was changed by either rehearsal.
+- Final observed capacity was load 0.38/0.38/0.28, 4,768,448 KiB available
+  memory, and 429,581,611,008 bytes available disk. Studio, Leadership,
+  PostgreSQL, all named PM2 processes, and listening ports remained available.
+- The independent reviewer accepted Checkpoint 5 under the scoped waiver and
+  accepted Checkpoint 6 after independently reproducing 24/24 route probes,
+  exact UUID/hash/query count, null candidate, zero publications/rollbacks/
+  active authorizations, and stable unrelated services.
 
 ## Read-only production discovery
 
@@ -27,9 +56,9 @@ release, PM2, a publication request, or either Git remote:
 The host has enough observed capacity for a guarded shadow-reader release, but
 capacity does not compensate for missing recovery. The accepted five-minute
 RPO, encrypted off-host copy, clean PITR restore, and 60-minute RTO have not
-been demonstrated. Production shadow deployment remains behind the independent
-Checkpoint 4 review; public database reads remain behind all Checkpoint 5
-evidence and explicit cutover approval.
+been demonstrated. This was the predeployment stop condition; the owner later
+issued a deployment-scoped waiver and explicit production approval, after
+which the reviewer accepted the live non-backup evidence recorded above.
 
 ## Release controls prepared locally
 
@@ -61,7 +90,8 @@ evidence and explicit cutover approval.
   transactional event age. Leadership `/health/content` exposes only its
   official reader/cache health and never returns mismatch details or bodies.
 
-These controls are local and uncommitted. They are not active on RP1.
+These controls were subsequently committed, independently reviewed, and
+deployed on RP1 as recorded in the completion section.
 
 ## Hard entrance gates
 
@@ -91,8 +121,9 @@ All items must be recorded as passing before the first mutation:
 8. The prior Studio and Leadership application releases are readable and the
    symlink-only rollback rehearsal has passed without a down migration.
 
-Any failed or missing gate stops the checkpoint. A logical dump alone does not
-satisfy PITR.
+Any failed or missing gate normally stops the checkpoint. A logical dump alone
+does not satisfy PITR. For this deployment only, the owner explicitly waived
+gates 3–6; those gates remain failed/missing rather than passed.
 
 Gate 1 is satisfied for the reviewed local worktree digests recorded in
 `docs/database-publication-independent-review.md`. Gates 2–8 remain live-window
@@ -150,7 +181,7 @@ This schedule ends before public database-reader cutover.
 
 ## Checkpoint 6 cutover and abort card
 
-This card is prepared but must not be executed until Checkpoint 5 is accepted.
+This card was executed after the scoped waiver and Checkpoint 5 acceptance.
 
 1. Re-run all read-only gates and freeze publication.
 2. Change Studio web `PUBLICATION_BACKEND` from `git` to `database` while
@@ -172,8 +203,9 @@ This card is prepared but must not be executed until Checkpoint 5 is accepted.
 
 ## Checkpoints 7 and 8 remain evidence-gated
 
-Checkpoint 7 first changes the separate publisher service backend from `git`
-to `database`, then needs a separate exact reviewed bundle and human
+Checkpoint 7 has changed the separate publisher service backend from `git` to
+`database`; the materializer is healthy and idle. It still needs a fresh exact
+database-bound reviewed bundle and human
 confirmation, a complete candidate receipt, official pointer commit, live
 receipt, reconciliation, UI/SSE completion, and a user-approved observation
 period.

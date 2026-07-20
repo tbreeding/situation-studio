@@ -1,17 +1,18 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-19, after fresh independent Checkpoint 4 acceptance
+Last updated: 2026-07-20, after independent Checkpoint 5/6 production acceptance
 
 ## Purpose and authority
 
 Situation Studio is the private operations application for creating, reviewing,
-and publishing coherent Leadership Field Guide learning bundles. Production
-still uses the protected Leadership Git repository as the public-content
-authority. The approved migration in
-`SPEC-database-publication-migration.md` replaces that boundary with immutable
-PostgreSQL content snapshots, an official/candidate pointer, and a
-hash-verified Leadership last-known-good cache. Git remains application source
-control only after cutover.
+and publishing coherent Leadership Field Guide learning bundles. PostgreSQL is
+now the authority for public Leadership reads through immutable content
+snapshots, an official/candidate pointer, and a hash-verified last-known-good
+cache. The separate database materializer is active but idle: the first
+database-authoritative production publication has not yet been created. Git is
+still application source control and Git-era publication history/configuration
+is retained until Checkpoint 8; it is no longer the active reader or publisher
+backend.
 
 The original implementation specification is `/Users/timothybreeding/projects/leadership/SPEC-situation-studio.md`. It remains an untracked file in the Leadership workspace and must not be staged there without explicit direction. This repository is the implementation and deployment authority.
 
@@ -20,14 +21,51 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Current deployed implementation commit: `312bf7749a83388f3fe57433d9457efcdce4f743` (`Make baseline import safe for existing production data`).
-- Current RP1 release: `20260719T094530Z`.
-- The deployed release includes SSE-backed complete-review progress, clearer review/publication presentation, expanded workflow and deploy safety tests, and the corrected artifact-inspector/comment-composer spacing.
-- The complete local gate passed: formatting, lint, strict TypeScript, Prisma validation, immutable-baseline verification, 594 tests, secret scan, and the production web build.
+- Current deployed implementation commit: `7ae119a52ec247a058722d9b53283136fec52727` (`Reconcile legacy artifact registry during bootstrap`).
+- Current RP1 release: `20260720T161153Z`.
+- Production PostgreSQL is at all 13 forward migrations. The guarded bootstrap
+  created target generation 1 and was idempotent on rerun.
+- The complete corrected gate passed formatting, lint, strict TypeScript,
+  Prisma validation, bootstrap guards, 626 tests, secret scan, and the
+  production web build.
 - The 36-case Chromium matrix most recently passed 28 applicable cases with 8 intentional desktop-only mobile skips.
-- Leadership protected `main` is `b6e40575eb823dc32c62644775895ad84a80d2d1`.
+- Leadership application release `20260720T161451Z` runs exact approved commit
+  `80ac9b590c5efa4befc7b1227a6f7d5766e84059`.
 
-### Local database-publication migration state
+### Authoritative production migration status
+
+- Checkpoints 0–4 are complete. The independent final implementation review
+  accepted the corrected trees at 2026-07-20T03:58:50Z.
+- Checkpoint 5 is accepted for this deployment under the owner's explicit
+  off-host PITR/RPO/RTO waiver. The waiver did not make backup recovery pass:
+  `archive_mode=off` and the lack of a proven encrypted off-host WAL chain
+  remain catastrophic-recovery risk.
+- Production shadow comparison was exact for manifest
+  `cb57e75893b6852d58b5ce9d2d82c4954e455bdaa09defde5e2b0cb6bc54ea8e`.
+  All 24 canonical routes returned 200 and the not-found probe returned 404.
+- The database-outage drill served public `/` with HTTP 200 from the verified
+  last-known-good snapshot while health correctly returned 503/degraded, then
+  reconverged to the database. Both Leadership and Studio prior-release
+  symlink rehearsals passed and returned to the current releases.
+- Checkpoint 6 is complete and independently accepted. Leadership serves
+  snapshot `0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3` directly from PostgreSQL,
+  with one query per refresh and the exact manifest above. Studio and
+  Leadership alone were restarted; unrelated services remained online.
+- Checkpoint 7 is ready but has not started a publication. The publisher runs
+  `database-main` as least-privilege `situation_studio_materializer`, has no
+  session-table read privilege, and is idle with a null candidate pointer and
+  zero database publication rows. Production contains no database-bound
+  reviewed bundle and no live human Studio session. A fresh exact human review,
+  approval, recent reauthentication, private-candidate verification, and final
+  confirmation are still mandatory.
+- Checkpoint 8 remains blocked until the first database publication and the
+  real approved observation period (proposed seven days) complete, followed by
+  recovery revalidation and explicit decommission approval.
+
+### Historical predeployment implementation evidence
+
+The bullets in this subsection record the state before the 2026-07-20
+deployment and are superseded for live status by the section above.
 
 - Checkpoints 0–3 are complete locally. The first independent Checkpoint 4
   security/recovery review returned **changes required**. Its candidate-boundary,
@@ -92,10 +130,12 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Leadership observation requests have a per-call abort and finite live and
   restoration deadlines. Exhausted automatic recovery writes a terminal
   reconciliation receipt/event instead of retrying indefinitely.
-- `pnpm verify` passes in Studio with 623 tests and 22 generated routes/pages;
-  Leadership `pnpm verify` passes with 42 tests and 51 generated routes/pages.
-- No production migration, backfill, target selection, reader mode, cache,
-  publication, deployment, or Git remote mutation occurred in Checkpoints 1–5.
+- At that predeployment point, `pnpm verify` passed in Studio with 623 tests
+  and in Leadership with 42 tests. The current corrected gates pass 626 Studio
+  tests and 43 Leadership tests, with 22 and 51 generated routes/pages.
+- No production mutation occurred during the local Checkpoint 1–5
+  implementation/review work described here; guarded production execution was
+  subsequently completed as recorded in the authoritative status above.
 - Detailed evidence: `docs/database-publication-checkpoint-1.md` and
   `docs/database-publication-checkpoint-2.md`,
   `docs/database-publication-checkpoint-3.md`, and
@@ -126,7 +166,7 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 - Sole private origin: `http://192.168.1.120:3005`.
 - Sole PM2 process: `leadership-field-guide`.
 - Active symlink: `/home/admin/projects/leadership/current`.
-- Active verified release: `/home/admin/projects/leadership/releases/ae9f5987-017e-4a80-8c47-c10b5de8b994-b6e40575eb82`.
+- Active verified release: `/home/admin/projects/leadership/releases/20260720T161451Z`.
 - The published page for `repeatedly-misses-deadlines` visibly reports `Reviewed: 7/18/2026`.
 - The retired duplicate prototype is archived and returns 404. Its PM2 process, listener, runtime directory, and symlink are gone.
 
@@ -134,66 +174,64 @@ TimsPrototypes hosting is itself the candidate environment. There is intentional
 
 ## Current publication state
 
-- Situation: `repeatedly-misses-deadlines`.
-- Approved bundle hash: `9caa2f0ac652015fcba0839fd83f87d0ebe19a0e675b97cc9114c6b237688aeb`.
-- Publication request: `d6e3b43c-2d8a-4881-b056-908bf907b30a`.
-- Publication UUID: `ae9f5987-017e-4a80-8c47-c10b5de8b994`.
-- Published commit: `b6e40575eb823dc32c62644775895ad84a80d2d1`.
-- State: `RECONCILED` at internal step `RECONCILED`.
-- Final confirmation: recorded at `2026-07-19 07:55:43.540 UTC` after recent password reauthentication.
-- Publication record: `82be5ea1-5f3f-412f-b223-46e082497ec9`, health `VERIFIED`.
-- Protected Git `main`: `b6e40575eb823dc32c62644775895ad84a80d2d1`.
-- Publisher checkout: released at `2026-07-19 07:55:50.919 UTC` with reason `PUBLICATION_SUCCEEDED`; no active checkout remains.
+- Target: `leadership-production`, generation 1.
+- Official snapshot: `0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3`.
+- Official manifest: `cb57e75893b6852d58b5ce9d2d82c4954e455bdaa09defde5e2b0cb6bc54ea8e`.
+- Candidate snapshot: null.
+- Database publication rows: zero.
+- Active publication requests, rollback requests, and candidate
+  authorizations: zero.
+- Public Leadership source: `database`; the verified last-known-good cache is
+  populated with the same snapshot/hash.
+- Studio web and separate publisher backends: `database`. The publisher is
+  idle until an authorized request exists.
 
-The internal `PREVIEW_*` state names mean candidate build and candidate verification. They do not imply another running site.
-
-The UI now reports **Published successfully**, identifies `b6e40575` as the official protected-Git baseline, displays the live published guidance, and shows checkout as available. There is no current candidate or pending publication.
-
-The publication semantics are:
-
-1. **Stage approved bundle** validates and commits the exact approved bytes, builds them for the sole Leadership hostname, activates that candidate release on the sole Leadership process, and verifies its marker and health. Protected Git `main` does not move.
-2. **Confirm and publish b6e40575** re-verifies that same staged release, compare-and-swap advances protected Git `main` to the already-staged commit, and reconciles PostgreSQL. It does not build, deploy, or operate a second version. After confirmation, the Studio page automatically tracks confirmation, protected-main advancement, Leadership verification, and reconciliation/custody release.
-
-Production Git finalization has been exercised successfully. Production rollback has not; do not trigger it without explicit human direction.
+The reconciled Git-era publication for `repeatedly-misses-deadlines` remains
+readable historical provenance. Its request
+`d6e3b43c-2d8a-4881-b056-908bf907b30a`, commit
+`b6e40575eb823dc32c62644775895ad84a80d2d1`, and publication record
+`82be5ea1-5f3f-412f-b223-46e082497ec9` are not the current authority pointer.
+Production database publication and rollback have not yet been exercised; do
+not manufacture approval/confirmation or trigger rollback without the exact
+human workflow.
 
 ## Database and identities
 
 - PostgreSQL container: `postgres16`, PostgreSQL 16.
 - Database: `situation_studio`.
-- Seven committed migrations are applied.
-- The immutable baseline contains 15 situations and 37 artifacts; import is idempotent.
-- `situation_studio_migrator`, `situation_studio_web`, `situation_studio_ai`, and `situation_studio_publisher` are active, distinct identities with explicit grants and small connection pools.
-- The publisher has a repository-scoped read/write Leadership deploy key and a separate mode-0600 service environment. Production does not use a human Git credential.
+- All 13 committed forward migrations are applied.
+- The immutable official snapshot contains 32 active managed artifacts and 99
+  edges. The reconciled registry also retains eight explicitly inactive legacy
+  artifacts; bootstrap reruns are idempotent.
+- `situation_studio_migrator`, `situation_studio_web`, `situation_studio_ai`,
+  `situation_studio_publisher`, `leadership_content_reader`, and
+  `situation_studio_materializer` are distinct identities with explicit grants
+  and small connection pools.
+- Leadership uses the read-only identity. The database publisher uses
+  `situation_studio_materializer`, which cannot read sessions. Git-era
+  publisher credentials remain mode 0600 only for Checkpoint 8 cleanup and are
+  not the active backend.
 - The first administrator, username `tim`, is active and uniquely mapped to Leadership reviewer ID `timothy-breeding`.
 - The non-administrator acceptance account `agent` remains active but unmapped; it cannot prepare, approve, stage, publish, or access Administration.
 - Never place passwords, service keys, activation/reset links, or credential values in arguments, Git, documentation, logs, or chat.
 
-### Checkpoint 5 read-only discovery
+### Checkpoint 5 discovery, waiver, and completed drills
 
-Read-only discovery at 2026-07-19 15:22 UTC confirmed the active Studio and
-Leadership symlinks are unchanged, both application origins are healthy, the
-`postgres16` container is healthy, and the production database still has seven
-migrations. The host had 5.2 GiB memory available, zero swap in use, 401 GiB
-disk free, and load averages 0.19/0.10/0.08. All named PM2 processes were
-online; `poledne-web` already showed seven restarts and only three minutes of
-uptime before this migration made any production change, so that unrelated
-baseline needs rechecking at the deployment window.
+The original discovery found PostgreSQL 16.12 with `archive_mode=off`, no
+working archive command, and no proven encrypted off-host WAL chain. The
+required five-minute RPO, off-host PITR restore, and 60-minute RTO are still
+not established. The owner explicitly waived that gate for this deployment;
+the independent reviewer accepted Checkpoint 5 only under that scoped waiver
+and required the residual catastrophic-recovery risk to stay explicit.
 
-The same discovery found that PostgreSQL 16.12 has `archive_mode=off` and a
-disabled archive command. The newest visible Studio database dump remains
-`shared/predeploy-backups/20260719T053331Z.dump`; no encrypted `.gpg`/`.age`,
-WAL archive, or off-host backup evidence was present under the Studio shared
-tree. Therefore the required five-minute RPO, off-host PITR restore, and
-60-minute RTO are not established. This is a hard Checkpoint 5 gate, not a
-warning to waive. The user explicitly deferred backup/PITR configuration for
-now; no backup settings or production data were changed. This still blocks
-Checkpoint 5 acceptance and every public cutover checkpoint.
-
-The local Checkpoint 5 preparation added guarded runtime backend selection,
-external mode-0600 Leadership content configuration, exact-hash production
-bootstrap, safe health metrics, a recovery evidence record, and a timed
-shadow/cutover/abort runbook. None is deployed. Production must not be changed
-until the independent review is accepted and off-host PITR passes.
+The guarded release, 13 migrations/grants, exact bootstrap, shadow reader,
+cache, metrics, and abort controls are deployed. Shadow comparison was exact;
+the frozen-cache outage/reconvergence drill and both prior-release symlink
+rehearsals passed. At the final gate, load was 0.38/0.38/0.28, 4.55 GiB memory
+was available, about 400 GiB disk was available, PostgreSQL and all intended
+origins were healthy, and unrelated services remained online. `poledne-web`
+continued its pre-existing clean PM2 recycling with exit code 0 and zero
+unstable restarts; no migration command targeted it.
 
 ## Security boundaries
 
@@ -223,23 +261,27 @@ until the independent review is accepted and off-host PITR passes.
 
 ## Remaining work
 
-1. Obtain and record the required independent Checkpoint 4 security/recovery
-   review from someone other than the implementation agent using
-   `docs/database-publication-independent-review.md`. The review must challenge
-   schema invariants, candidate authorization, confirmation, crash-resume
-   behavior, automatic restoration, database-native rollback, and the recovery
-   runbook.
-2. Execute Checkpoint 5 from `docs/database-publication-checkpoint-5.md`:
-   configure encrypted off-host WAL archiving, prove the five-minute RPO and
-   60-minute restore, deploy only the additive/shadow boundary, prove frozen
-   cache and prior-release rollback, and record zero production mismatches.
-3. Complete Checkpoints 6–7 only after their live gates: public reader cutover,
-   first database-authoritative publication, and the approved observation
-   period.
-4. Complete Checkpoint 8 only after observation: remove Git publication
-   authority and active-state UI/code, retain Git-era history, and revalidate
-   database/frozen-cache recovery.
-5. Coordinate PostgreSQL listener/firewall hardening without disrupting other
+1. The owner must sign in to Studio, create/review a fresh bundle based on
+   official snapshot `0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3`, and approve the
+   exact candidate after reviewing its bytes. The existing Git-era approved
+   bundle is deliberately ineligible because neither its bundle nor approval
+   is bound to the database base snapshot.
+2. Run the first database publication only through the normal private
+   candidate flow. Before confirmation, prove its signed candidate receipt and
+   that anonymous routes still serve official hash `cb57e758...54ea8e`; then
+   require recent password reauthentication and the owner's exact final
+   confirmation.
+3. Observe the reconciled publication for the owner-approved duration
+   (proposed seven real days) with no unexplained snapshot, cache,
+   authorization, availability, or audit mismatch.
+4. After the elapsed observation and explicit decommission approval, complete
+   Checkpoint 8: revoke/remove Git publisher credentials/config/code, retain
+   readable Git-era history, apply only forward schema contraction, and rerun
+   recovery and production smoke evidence.
+5. The waived PITR/RPO/RTO capability remains resilience debt. Configure and
+   rehearse encrypted off-host recovery when backup work resumes; do not record
+   the deployment waiver as recovery proof.
+6. Coordinate PostgreSQL listener/firewall hardening without disrupting other
    RP1 applications. Configure Anthropic only if optional fallback is desired.
 
 ## Safe operational commands
@@ -309,11 +351,11 @@ Public URLs require the TimsPrototypes gate session and may return 403 to an una
 
 1. Confirm the worktree, `origin/main`, active RP1 release, PM2 process list, Leadership symlink, and protected Leadership `main` before mutation.
 2. Preserve the one-runtime model: one Leadership hostname, process, port, and active symlink.
-3. Until cutover, treat production Stage as candidate activation and Publish as
-   exact Git finalization/reconciliation. In the new database backend, prepare
-   a private snapshot candidate and atomically select only that confirmed hash;
-   never recreate a second Leadership runtime.
-4. Do not click the final publication or rollback controls without explicit human direction.
+3. Production readers and publisher are now database-backed. Prepare a private
+   immutable snapshot candidate and atomically select only that exact
+   human-confirmed hash; never recreate a second Leadership runtime.
+4. Do not click the final confirmation or rollback control without exact human
+   direction over the reviewed target.
 5. Keep provider, publisher, backup, gateway, database-role, firewall, and content-publication changes as separate security boundaries.
 6. Keep all credentials and activation/reset links out of source, arguments, documentation, logs, commits, and chat.
 7. Use immutable releases and preserve the last healthy symlink target for rollback.

@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-19T18:57:26Z",
+  "recordedAt": "2026-07-20T16:33:00Z",
   "source": {
     "leadershipCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1",
     "leadershipRepositoryModified": true,
@@ -18,7 +18,7 @@
     "prismaSchema": "passed",
     "secretScan": "passed",
     "productionBuild": "passed",
-    "unitContractTests": 623,
+    "unitContractTests": 626,
     "browserTests": {
       "total": 36,
       "passed": 28,
@@ -28,7 +28,7 @@
     },
     "database": {
       "postgresVersion": "16.12",
-      "productionMigrations": 7,
+      "productionMigrations": 13,
       "localValidationMigrations": 13,
       "historicalUpgrade": "passed",
       "idempotentRedeploy": "passed",
@@ -37,8 +37,8 @@
     }
   },
   "databasePublicationMigration": {
-    "status": "checkpoint-5-prepared-blocked-before-production-mutation",
-    "productionMutated": false,
+    "status": "checkpoint-7-awaiting-human-reviewed-bundle",
+    "productionMutated": true,
     "checkpoint1": {
       "schemaExpansion": "passed-postgresql-16.12",
       "dumpRestore": "passed",
@@ -83,7 +83,7 @@
     "checkpoint4": {
       "forwardMigrations": 13,
       "topLevelVerifier": "passed",
-      "studioUnitContractTests": 623,
+      "studioUnitContractTests": 626,
       "studioProductionBuild": "passed",
       "crashResume": "same-snapshot",
       "duplicateDeliveries": 2,
@@ -116,34 +116,67 @@
       "gitSshTransportBlocked": "passed-publication-and-rollback-reconciled",
       "uiFailureAndReconciliationMessages": "passed-exact-hashes-and-safe-action",
       "safeOperationalMetrics": "passed",
-      "independentSecurityRecoveryReview": "accepted-2026-07-19T18:57:26Z"
+      "independentSecurityRecoveryReview": "accepted-2026-07-20T03:58:50Z"
     },
     "checkpoint5": {
       "productionReadOnlyDiscovery": "passed",
-      "productionMutated": false,
-      "activeStudioRelease": "20260719T094530Z",
-      "activeLeadershipRelease": "ae9f5987-017e-4a80-8c47-c10b5de8b994-b6e40575eb82",
+      "productionMutated": true,
+      "activeStudioRelease": "20260720T161153Z",
+      "activeLeadershipRelease": "20260720T161451Z",
       "productionPostgresVersion": "16.12",
-      "productionMigrations": 7,
+      "productionMigrations": 13,
       "archiveMode": "off",
       "offHostWalEvidence": "missing",
       "fiveMinuteRpo": "not-established",
       "sixtyMinuteRto": "not-established",
-      "guardedBackendLaunchers": "passed-locally-defaults-unchanged",
-      "guardedLeadershipApplicationDeploy": "passed-static-contract-no-rsync",
-      "productionShapedBootstrapRehearsal": "passed-create-and-idempotent-reuse",
+      "guardedBackendLaunchers": "deployed-and-fail-closed",
+      "guardedLeadershipApplicationDeploy": "passed-approved-commit-atomic-cutover",
+      "productionShapedBootstrapRehearsal": "passed-production-create-and-idempotent-reuse",
       "bootstrapOfficialManifestHash": "cb57e75893b6852d58b5ce9d2d82c4954e455bdaa09defde5e2b0cb6bc54ea8e",
       "bootstrapTargetGeneration": "1",
-      "studioLocalGate": "passed-623-tests-and-production-build",
-      "leadershipLocalGate": "passed-42-tests-and-production-build",
+      "bootstrapOfficialSnapshotId": "0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3",
+      "bootstrapMembers": 32,
+      "bootstrapEdges": 99,
+      "studioLocalGate": "passed-626-tests-and-production-build",
+      "leadershipLocalGate": "passed-43-tests-and-production-build",
       "recoveryEvidenceTemplate": "prepared",
       "minuteByMinuteRunbook": "prepared",
       "cutoverAbortCard": "prepared",
-      "backupWork": "deferred-by-user-without-waiving-pitr-gate",
-      "productionShadow": "blocked-off-host-pitr-rpo-rto",
-      "publicReaderCutover": false
+      "backupWork": "explicitly-waived-for-this-deployment-not-passed",
+      "productionShadow": "passed-zero-mismatches-one-query-24-routes",
+      "frozenCacheOutageBoot": "passed-root-200-health-503-degraded-and-reconverged",
+      "leadershipPriorReleaseRollback": "passed-and-current-restored",
+      "studioPriorReleaseRollback": "passed-and-current-restored",
+      "independentReview": "accepted-under-scoped-pitr-waiver",
+      "publicReaderCutover": true
     },
-    "nextCheckpoint": "5-off-host-pitr-recovery-gate"
+    "checkpoint6": {
+      "status": "complete-independently-accepted",
+      "studioWebBackend": "database",
+      "leadershipReaderMode": "database",
+      "leadershipSource": "database",
+      "officialSnapshotId": "0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3",
+      "officialManifestHash": "cb57e75893b6852d58b5ce9d2d82c4954e455bdaa09defde5e2b0cb6bc54ea8e",
+      "queriesPerRefresh": 1,
+      "routeProbes": "24-of-24-passed",
+      "notFound": 404,
+      "unrelatedServices": "online-stable"
+    },
+    "checkpoint7": {
+      "status": "publisher-idle-awaiting-human-workflow",
+      "publisherBackend": "database-main",
+      "publisherRole": "situation_studio_materializer",
+      "publisherSessionsRead": false,
+      "candidateSnapshotId": null,
+      "databasePublicationRows": 0,
+      "requiredNextEvidence": "fresh-database-bound-human-reviewed-bundle-private-candidate-receipt-recent-reauthentication-exact-confirmation"
+    },
+    "checkpoint8": {
+      "status": "blocked-real-observation-period-not-started",
+      "proposedObservationDays": 7,
+      "gitEraHistoryRetained": true
+    },
+    "nextCheckpoint": "7-human-review-private-candidate-and-confirmation"
   },
   "inAppBrowser": {
     "runtime": "production-build",

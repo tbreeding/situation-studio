@@ -1,6 +1,6 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-20, after independent Checkpoint 5/6 production acceptance
+Last updated: 2026-07-20, during the first Checkpoint 7 production publication
 
 ## Purpose and authority
 
@@ -8,8 +8,8 @@ Situation Studio is the private operations application for creating, reviewing,
 and publishing coherent Leadership Field Guide learning bundles. PostgreSQL is
 now the authority for public Leadership reads through immutable content
 snapshots, an official/candidate pointer, and a hash-verified last-known-good
-cache. The separate database materializer is active but idle: the first
-database-authoritative production publication has not yet been created. Git is
+cache. The separate database materializer has created the first private
+database publication candidate, but the official pointer has not moved. Git is
 still application source control and Git-era publication history/configuration
 is retained until Checkpoint 8; it is no longer the active reader or publisher
 backend.
@@ -21,14 +21,18 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Current deployed implementation commit: `7ae119a52ec247a058722d9b53283136fec52727` (`Reconcile legacy artifact registry during bootstrap`).
-- Current RP1 release: `20260720T161153Z`.
-- Production PostgreSQL is at all 13 forward migrations. The guarded bootstrap
-  created target generation 1 and was idempotent on rerun.
+- Current deployed implementation commit: `794c268fdde6485a7f3e30123cbc7c8fb3657491` (`Keep editor clean across proposal refresh`).
+- Current RP1 release: `20260720T195142Z`.
+- Production PostgreSQL is at all 15 forward migrations. The guarded bootstrap
+  created target generation 1 and was idempotent on rerun; the active candidate
+  has reserved generation 2 without changing the official pointer.
 - The complete corrected gate passed formatting, lint, strict TypeScript,
-  Prisma validation, bootstrap guards, 626 tests, secret scan, and the
+  Prisma validation, bootstrap guards, 634 tests, secret scan, and the
   production web build.
-- The 36-case Chromium matrix most recently passed 28 applicable cases with 8 intentional desktop-only mobile skips.
+- The 36-case Chromium matrix passed 28 applicable cases with 8 intentional
+  desktop-only mobile skips against a production build and a disposable clone
+  of production. The run exercised two synthetic proposal workflows without
+  changing production content.
 - Leadership application release `20260720T161451Z` runs exact approved commit
   `80ac9b590c5efa4befc7b1227a6f7d5766e84059`.
 
@@ -51,13 +55,16 @@ The original implementation specification is `/Users/timothybreeding/projects/le
   snapshot `0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3` directly from PostgreSQL,
   with one query per refresh and the exact manifest above. Studio and
   Leadership alone were restarted; unrelated services remained online.
-- Checkpoint 7 is ready but has not started a publication. The publisher runs
-  `database-main` as least-privilege `situation_studio_materializer`, has no
-  session-table read privilege, and is idle with a null candidate pointer and
-  zero database publication rows. Production contains no database-bound
-  reviewed bundle and no live human Studio session. A fresh exact human review,
-  approval, recent reauthentication, private-candidate verification, and final
-  confirmation are still mandatory.
+- Checkpoint 7 is in progress. Human review and approval created immutable
+  bundle revision 3, hash
+  `9debf20662c65a508a35665b834ff4f527d3bd9084ef07d34b413abd9a03d2d9`.
+  Publication request `c078a261-9a02-41e4-9825-cddbd51ed428` is safely paused
+  at `CANDIDATE_AVAILABLE` on snapshot
+  `184cc9d9-6bc9-4833-90e2-ffac573e3d69`, hash
+  `ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34`.
+  The official snapshot is unchanged. Recent password reauthentication,
+  private-candidate observation, and exact final human confirmation remain
+  mandatory; neither may be manufactured or bypassed.
 - Checkpoint 8 remains blocked until the first database publication and the
   real approved observation period (proposed seven days) complete, followed by
   recovery revalidation and explicit decommission approval.
@@ -116,12 +123,13 @@ deployment and are superseded for live status by the section above.
 - Studio has an administrator-only safe publication-health endpoint;
   Leadership has sanitized official content/cache health endpoints. UI tests
   identify exact reconciliation hashes and the frozen-cache action.
-- The local schema now contains 13 forward migrations. The fresh top-level
-  `pnpm verify:database-publication` run completed `RECONCILED` publication and
-  `RECONCILED` rollback with 14 exact ordered events, rejected cross-table
-  target contention, released failed rollback candidate custody, and durably
-  recorded an exhausted recovery as `RECONCILIATION_REQUIRED`. Git SSH and
-  askpass were forced to fail throughout.
+- The local schema now contains 15 forward migrations. The fresh top-level
+  `pnpm verify:database-publication` run under the actual least-privilege
+  materializer role completed `RECONCILED` publication and `RECONCILED`
+  rollback with 14 exact ordered events, rejected cross-table target
+  contention, released failed rollback candidate custody, and durably recorded
+  an exhausted recovery as `RECONCILIATION_REQUIRED`. Git SSH and askpass were
+  forced to fail throughout.
 - Candidate exchange now requires an exact Leadership-to-Studio bearer secret;
   Studio's CSP allows forms only to the configured Leadership origin. Candidate
   cookies are HttpOnly/Secure/SameSite=Strict with a same-site continuation,
@@ -131,7 +139,7 @@ deployment and are superseded for live status by the section above.
   restoration deadlines. Exhausted automatic recovery writes a terminal
   reconciliation receipt/event instead of retrying indefinitely.
 - At that predeployment point, `pnpm verify` passed in Studio with 623 tests
-  and in Leadership with 42 tests. The current corrected gates pass 626 Studio
+  and in Leadership with 42 tests. The current corrected gates pass 634 Studio
   tests and 43 Leadership tests, with 22 and 51 generated routes/pages.
 - No production mutation occurred during the local Checkpoint 1–5
   implementation/review work described here; guarded production execution was
@@ -174,32 +182,36 @@ TimsPrototypes hosting is itself the candidate environment. There is intentional
 
 ## Current publication state
 
-- Target: `leadership-production`, generation 1.
+- Target: `leadership-production`, candidate generation 2.
 - Official snapshot: `0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3`.
 - Official manifest: `cb57e75893b6852d58b5ce9d2d82c4954e455bdaa09defde5e2b0cb6bc54ea8e`.
-- Candidate snapshot: null.
-- Database publication rows: zero.
-- Active publication requests, rollback requests, and candidate
-  authorizations: zero.
+- Candidate snapshot: `184cc9d9-6bc9-4833-90e2-ffac573e3d69`, hash
+  `ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34`.
+- Database publication rows: one; the first row is `CANDIDATE_AVAILABLE` and is
+  not an official publication.
+- Active publication request: `c078a261-9a02-41e4-9825-cddbd51ed428`.
+  Active rollback requests and candidate authorizations: zero. A short-lived
+  authorization is created only after recent human reauthentication.
 - Public Leadership source: `database`; the verified last-known-good cache is
   populated with the same snapshot/hash.
 - Studio web and separate publisher backends: `database`. The publisher is
-  idle until an authorized request exists.
+  waiting for the signed private-candidate observation and final confirmation.
 
 The reconciled Git-era publication for `repeatedly-misses-deadlines` remains
 readable historical provenance. Its request
 `d6e3b43c-2d8a-4881-b056-908bf907b30a`, commit
 `b6e40575eb823dc32c62644775895ad84a80d2d1`, and publication record
 `82be5ea1-5f3f-412f-b223-46e082497ec9` are not the current authority pointer.
-Production database publication and rollback have not yet been exercised; do
-not manufacture approval/confirmation or trigger rollback without the exact
-human workflow.
+The database materializer has exercised candidate preparation in production;
+the public official pointer has not moved and database rollback has not been
+exercised there. Do not manufacture candidate observation or final confirmation,
+and do not trigger rollback without the exact human workflow.
 
 ## Database and identities
 
 - PostgreSQL container: `postgres16`, PostgreSQL 16.
 - Database: `situation_studio`.
-- All 13 committed forward migrations are applied.
+- All 15 committed forward migrations are applied.
 - The immutable official snapshot contains 32 active managed artifacts and 99
   edges. The reconciled registry also retains eight explicitly inactive legacy
   artifacts; bootstrap reruns are idempotent.
@@ -224,7 +236,7 @@ not established. The owner explicitly waived that gate for this deployment;
 the independent reviewer accepted Checkpoint 5 only under that scoped waiver
 and required the residual catastrophic-recovery risk to stay explicit.
 
-The guarded release, 13 migrations/grants, exact bootstrap, shadow reader,
+The guarded release, 15 migrations/grants, exact bootstrap, shadow reader,
 cache, metrics, and abort controls are deployed. Shadow comparison was exact;
 the frozen-cache outage/reconvergence drill and both prior-release symlink
 rehearsals passed. At the final gate, load was 0.38/0.38/0.28, 4.55 GiB memory
@@ -245,6 +257,20 @@ unstable restarts; no migration command targeted it.
 
 ## Completed evidence
 
+- Production diagnostic job `1364ca78-ff7e-4c9b-acf1-672dc08a9013` ran a
+  complete review for `nothing-in-one-on-ones`: all 22 durable stages and all
+  22 primary `gpt-5.6-sol` calls succeeded with zero retries, failures, or
+  fallbacks. Proposal `87bdf2bb-f4cb-4c6d-9470-a1eccb7283fc`, hash
+  `d4d6f199306c3dbf621aa4f970dfe51bf8f2486f29686d3c17ce5f0291cd2f52`,
+  reached `HUMAN_REVIEW` with 3/3 approval-sensitive validations passed. It was
+  not approved or published. Its checkout was released with the saved revision
+  preserved and an explicit `AUTHORIZED_DIAGNOSTIC_CHECK_IN` service audit.
+- That real review exposed a false unsaved-change warning when an automatic
+  server refresh replaced a draft body with a proposal body. Release
+  `20260720T195142Z` synchronizes untouched editor state while preserving real
+  local edits. The independent reviewer accepted the correction; the full gate
+  passes 634 tests and the production-runtime Chromium matrix passes 28/28
+  applicable cases with 8 intentional mobile skips.
 - At 2026-07-20 16:42 UTC, a raw PM2 diagnostic emitted protected Studio
   environment values into the operator tool output. Every exposed application
   secret and the affected database credential were immediately rotated without
@@ -271,16 +297,15 @@ unstable restarts; no migration command targeted it.
 
 ## Remaining work
 
-1. The owner must sign in to Studio, create/review a fresh bundle based on
-   official snapshot `0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3`, and approve the
-   exact candidate after reviewing its bytes. The existing Git-era approved
-   bundle is deliberately ineligible because neither its bundle nor approval
-   is bound to the database base snapshot.
-2. Run the first database publication only through the normal private
-   candidate flow. Before confirmation, prove its signed candidate receipt and
-   that anonymous routes still serve official hash `cb57e758...54ea8e`; then
-   require recent password reauthentication and the owner's exact final
-   confirmation.
+1. The owner must enter their password in the open Studio reauthentication
+   dialog and choose **Review private candidate** for exact candidate
+   `ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34`.
+   Leadership must return the signed healthy private-candidate receipt while
+   anonymous routes continue serving official hash `cb57e758...54ea8e`.
+2. After personally inspecting those exact private bytes, the owner must use
+   the separate final confirmation for the same hash. Then verify the official
+   pointer, public routes, cache, durable events, reconciliation, and custody
+   release before declaring the first database publication complete.
 3. Observe the reconciled publication for the owner-approved duration
    (proposed seven real days) with no unexplained snapshot, cache,
    authorization, availability, or audit mismatch.

@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-20T16:46:00Z",
+  "recordedAt": "2026-07-20T20:06:29Z",
   "source": {
     "leadershipCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1",
     "leadershipRepositoryModified": true,
@@ -18,18 +18,19 @@
     "prismaSchema": "passed",
     "secretScan": "passed",
     "productionBuild": "passed",
-    "unitContractTests": 626,
+    "unitContractTests": 634,
     "browserTests": {
       "total": 36,
       "passed": 28,
       "skipped": 8,
       "desktop": 24,
-      "mobile": 4
+      "mobile": 4,
+      "environment": "production-build-disposable-production-clone"
     },
     "database": {
       "postgresVersion": "16.12",
-      "productionMigrations": 13,
-      "localValidationMigrations": 13,
+      "productionMigrations": 15,
+      "localValidationMigrations": 15,
       "historicalUpgrade": "passed",
       "idempotentRedeploy": "passed",
       "checkoutRace": "one-winner",
@@ -37,7 +38,7 @@
     }
   },
   "databasePublicationMigration": {
-    "status": "checkpoint-7-awaiting-human-reviewed-bundle",
+    "status": "checkpoint-7-candidate-available-awaiting-private-review",
     "productionMutated": true,
     "checkpoint1": {
       "schemaExpansion": "passed-postgresql-16.12",
@@ -81,9 +82,9 @@
       "leadershipProductionBuild": "passed"
     },
     "checkpoint4": {
-      "forwardMigrations": 13,
+      "forwardMigrations": 15,
       "topLevelVerifier": "passed",
-      "studioUnitContractTests": 626,
+      "studioUnitContractTests": 634,
       "studioProductionBuild": "passed",
       "crashResume": "same-snapshot",
       "duplicateDeliveries": 2,
@@ -116,15 +117,16 @@
       "gitSshTransportBlocked": "passed-publication-and-rollback-reconciled",
       "uiFailureAndReconciliationMessages": "passed-exact-hashes-and-safe-action",
       "safeOperationalMetrics": "passed",
-      "independentSecurityRecoveryReview": "accepted-2026-07-20T03:58:50Z"
+      "independentSecurityRecoveryReview": "accepted-including-production-recovery-materializer-and-ui-corrections"
     },
     "checkpoint5": {
       "productionReadOnlyDiscovery": "passed",
       "productionMutated": true,
-      "activeStudioRelease": "20260720T161153Z",
+      "activeStudioRelease": "20260720T195142Z",
+      "activeStudioCommit": "794c268fdde6485a7f3e30123cbc7c8fb3657491",
       "activeLeadershipRelease": "20260720T161451Z",
       "productionPostgresVersion": "16.12",
-      "productionMigrations": 13,
+      "productionMigrations": 15,
       "archiveMode": "off",
       "offHostWalEvidence": "missing",
       "fiveMinuteRpo": "not-established",
@@ -137,7 +139,7 @@
       "bootstrapOfficialSnapshotId": "0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3",
       "bootstrapMembers": 32,
       "bootstrapEdges": 99,
-      "studioLocalGate": "passed-626-tests-and-production-build",
+      "studioLocalGate": "passed-634-tests-and-production-build",
       "leadershipLocalGate": "passed-43-tests-and-production-build",
       "recoveryEvidenceTemplate": "prepared",
       "minuteByMinuteRunbook": "prepared",
@@ -164,20 +166,45 @@
       "unrelatedServices": "online-stable"
     },
     "checkpoint7": {
-      "status": "publisher-idle-awaiting-human-workflow",
+      "status": "candidate-available-awaiting-private-review",
       "publisherBackend": "database-main",
       "publisherRole": "situation_studio_materializer",
       "publisherSessionsRead": false,
-      "candidateSnapshotId": null,
-      "databasePublicationRows": 0,
-      "requiredNextEvidence": "fresh-database-bound-human-reviewed-bundle-private-candidate-receipt-recent-reauthentication-exact-confirmation"
+      "reviewedBundleId": "9f7b49c3-400a-4c61-bb35-261a0c6625b9",
+      "reviewedBundleRevision": 3,
+      "reviewedBundleHash": "9debf20662c65a508a35665b834ff4f527d3bd9084ef07d34b413abd9a03d2d9",
+      "publicationRequestId": "c078a261-9a02-41e4-9825-cddbd51ed428",
+      "candidateSnapshotId": "184cc9d9-6bc9-4833-90e2-ffac573e3d69",
+      "candidateSnapshotHash": "ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34",
+      "officialSnapshotUnchanged": "0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3",
+      "databasePublicationRows": 1,
+      "candidateAuthorizations": 0,
+      "privateCandidateObservations": 0,
+      "diagnosticCompleteReview": {
+        "situationSlug": "nothing-in-one-on-ones",
+        "jobId": "1364ca78-ff7e-4c9b-acf1-672dc08a9013",
+        "jobState": "SUCCEEDED",
+        "durableStages": "22-of-22",
+        "primaryModelRuns": "22-of-22",
+        "retries": 0,
+        "failures": 0,
+        "fallbacks": 0,
+        "bundleId": "87bdf2bb-f4cb-4c6d-9470-a1eccb7283fc",
+        "bundleHash": "d4d6f199306c3dbf621aa4f970dfe51bf8f2486f29686d3c17ce5f0291cd2f52",
+        "validationsPassed": "3-of-3",
+        "approval": "not-granted",
+        "publication": "not-requested",
+        "checkout": "released-saved-revision-preserved-audited"
+      },
+      "proposalRefreshEditorStateFix": "deployed-independently-accepted-genuine-local-edits-preserved",
+      "requiredNextEvidence": "recent-reauthentication-private-candidate-observation-exact-final-confirmation-reconciliation"
     },
     "checkpoint8": {
       "status": "blocked-real-observation-period-not-started",
       "proposedObservationDays": 7,
       "gitEraHistoryRetained": true
     },
-    "nextCheckpoint": "7-human-review-private-candidate-and-confirmation"
+    "nextCheckpoint": "7-human-private-candidate-review-and-confirmation"
   },
   "inAppBrowser": {
     "runtime": "production-build",

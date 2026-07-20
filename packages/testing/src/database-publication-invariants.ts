@@ -711,6 +711,15 @@ try {
     leadership_table_read: boolean;
     leadership_function_execute: boolean;
     materializer_target_update: boolean;
+    materializer_candidate_authorization_update: boolean;
+    materializer_checkout_read: boolean;
+    materializer_checkout_update: boolean;
+    materializer_checkout_resource_read: boolean;
+    materializer_checkout_resource_update: boolean;
+    materializer_bundle_update: boolean;
+    materializer_draft_update: boolean;
+    materializer_artifact_update: boolean;
+    materializer_blob_update: boolean;
     materializer_confirmation_insert: boolean;
     materializer_user_read: boolean;
     ai_target_update: boolean;
@@ -724,6 +733,15 @@ try {
       has_table_privilege('leadership_content_reader', 'content_snapshots', 'SELECT') AS leadership_table_read,
       has_function_privilege('leadership_content_reader', 'leadership_read_official_snapshot_v2(text)', 'EXECUTE') AS leadership_function_execute,
       has_table_privilege('situation_studio_materializer', 'publication_targets', 'UPDATE') AS materializer_target_update,
+      has_table_privilege('situation_studio_materializer', 'candidate_authorizations', 'UPDATE') AS materializer_candidate_authorization_update,
+      has_table_privilege('situation_studio_materializer', 'situation_checkouts', 'SELECT') AS materializer_checkout_read,
+      has_table_privilege('situation_studio_materializer', 'situation_checkouts', 'UPDATE') AS materializer_checkout_update,
+      has_table_privilege('situation_studio_materializer', 'checkout_resources', 'SELECT') AS materializer_checkout_resource_read,
+      has_table_privilege('situation_studio_materializer', 'checkout_resources', 'UPDATE') AS materializer_checkout_resource_update,
+      has_table_privilege('situation_studio_materializer', 'proposed_bundles', 'UPDATE') AS materializer_bundle_update,
+      has_table_privilege('situation_studio_materializer', 'drafts', 'UPDATE') AS materializer_draft_update,
+      has_table_privilege('situation_studio_materializer', 'artifacts', 'UPDATE') AS materializer_artifact_update,
+      has_table_privilege('situation_studio_materializer', 'content_blobs', 'UPDATE') AS materializer_blob_update,
       has_table_privilege('situation_studio_materializer', 'publication_confirmations', 'INSERT') AS materializer_confirmation_insert,
       has_table_privilege('situation_studio_materializer', 'users', 'SELECT') AS materializer_user_read,
       has_table_privilege('situation_studio_ai', 'publication_targets', 'UPDATE') AS ai_target_update,
@@ -739,6 +757,15 @@ try {
     grants.leadership_table_read ||
     !grants.leadership_function_execute ||
     !grants.materializer_target_update ||
+    !grants.materializer_candidate_authorization_update ||
+    !grants.materializer_checkout_read ||
+    !grants.materializer_checkout_update ||
+    !grants.materializer_checkout_resource_read ||
+    !grants.materializer_checkout_resource_update ||
+    !grants.materializer_bundle_update ||
+    !grants.materializer_draft_update ||
+    grants.materializer_artifact_update ||
+    grants.materializer_blob_update ||
     grants.materializer_confirmation_insert ||
     grants.materializer_user_read ||
     grants.ai_target_update ||

@@ -26,6 +26,15 @@ if (
   );
 
 const database = createDatabaseClient(databaseUrl, 3);
+const materializerUrl = new URL(databaseUrl);
+materializerUrl.searchParams.set(
+  "options",
+  "-c role=situation_studio_materializer",
+);
+const materializerDatabase = createDatabaseClient(
+  materializerUrl.toString(),
+  3,
+);
 const mode = process.argv[2] ?? "status";
 const fixtureKey =
   process.env.ACCEPTANCE_FIXTURE_KEY ?? "database-publication-acceptance-v1";
@@ -229,7 +238,7 @@ async function seedCandidate(stopAfterState?: string) {
   }
   if (!request) throw new Error("Acceptance request was not created.");
   const result = await processDatabasePublication(
-    database,
+    materializerDatabase,
     request.id,
     stopAfterState ? { stopAfterState } : {},
   );
@@ -275,8 +284,8 @@ async function duplicateDelivery() {
   const request = await fixtureRequest();
   if (!request) throw new Error("Acceptance request is unavailable.");
   const results = await Promise.all([
-    processDatabasePublication(database, request.id),
-    processDatabasePublication(database, request.id),
+    processDatabasePublication(materializerDatabase, request.id),
+    processDatabasePublication(materializerDatabase, request.id),
   ]);
   const snapshotIds = new Set(results.map((result) => result.snapshotId));
   if (snapshotIds.size !== 1)
@@ -312,7 +321,10 @@ async function attemptConcurrentPublication() {
     },
     orderBy: { createdAt: "asc" },
   });
-  const result = await processDatabasePublication(database, winner.id);
+  const result = await processDatabasePublication(
+    materializerDatabase,
+    winner.id,
+  );
   const activeCandidates = await database.publicationTarget.count({
     where: {
       code: "leadership-production",
@@ -339,7 +351,7 @@ async function observeCandidate() {
     snapshotId: request.databasePublication.candidateSnapshotId,
     kind: "CANDIDATE",
   });
-  return processDatabasePublication(database, request.id);
+  return processDatabasePublication(materializerDatabase, request.id);
 }
 
 async function confirm() {
@@ -370,7 +382,7 @@ async function confirm() {
       recentAuthenticationAt: session.reauthenticatedAt,
     },
   });
-  return processDatabasePublication(database, request.id);
+  return processDatabasePublication(materializerDatabase, request.id);
 }
 
 async function observeOfficial() {
@@ -382,7 +394,7 @@ async function observeOfficial() {
     snapshotId: request.databasePublication.candidateSnapshotId,
     kind: "OFFICIAL",
   });
-  return processDatabasePublication(database, request.id);
+  return processDatabasePublication(materializerDatabase, request.id);
 }
 
 async function restoreAfterLiveFailure() {
@@ -390,7 +402,7 @@ async function restoreAfterLiveFailure() {
   if (!request?.databasePublication)
     throw new Error("Committed publication fixture is unavailable.");
   const restored = await beginAutomaticRestoration(
-    database,
+    materializerDatabase,
     request.id,
     "Injected live health failure for disposable acceptance.",
   );
@@ -399,7 +411,7 @@ async function restoreAfterLiveFailure() {
     snapshotId: restored.previousOfficialSnapshotId,
     kind: "RESTORATION",
   });
-  return processDatabasePublication(database, request.id);
+  return processDatabasePublication(materializerDatabase, request.id);
 }
 
 async function manualRollback(stopBeforeOfficialObservation = false) {
@@ -440,7 +452,7 @@ async function manualRollback(stopBeforeOfficialObservation = false) {
       reason: "Disposable acceptance of audited database snapshot rollback.",
     },
   });
-  let result = await processDatabaseRollback(database, rollback.id);
+  let result = await processDatabaseRollback(materializerDatabase, rollback.id);
   if (result.state !== "CANDIDATE_AVAILABLE")
     throw new Error(`Rollback candidate was not available: ${result.state}.`);
   await recordSyntheticObservation(database, {
@@ -448,7 +460,7 @@ async function manualRollback(stopBeforeOfficialObservation = false) {
     snapshotId: result.snapshotId as string,
     kind: "CANDIDATE",
   });
-  result = await processDatabaseRollback(database, rollback.id);
+  result = await processDatabaseRollback(materializerDatabase, rollback.id);
   const session = await database.session.findUniqueOrThrow({
     where: { id: publicationRequest.approval.sessionId },
   });
@@ -473,7 +485,7 @@ async function manualRollback(stopBeforeOfficialObservation = false) {
       recentAuthenticationAt: session.reauthenticatedAt,
     },
   });
-  result = await processDatabaseRollback(database, rollback.id);
+  result = await processDatabaseRollback(materializerDatabase, rollback.id);
   if (stopBeforeOfficialObservation)
     return { ...result, rollbackRequestId: rollback.id };
   await recordSyntheticObservation(database, {
@@ -481,7 +493,7 @@ async function manualRollback(stopBeforeOfficialObservation = false) {
     snapshotId: result.snapshotId as string,
     kind: "OFFICIAL",
   });
-  result = await processDatabaseRollback(database, rollback.id);
+  result = await processDatabaseRollback(materializerDatabase, rollback.id);
   return { ...result, rollbackRequestId: rollback.id };
 }
 
@@ -496,7 +508,7 @@ async function restoreRollbackAfterLiveFailure() {
       "A committed rollback is required for failure restoration.",
     );
   const restored = await beginAutomaticRollbackRestoration(
-    database,
+    materializerDatabase,
     rollback.id,
     "Injected rollback live health failure for disposable acceptance.",
   );
@@ -505,7 +517,7 @@ async function restoreRollbackAfterLiveFailure() {
     snapshotId: restored.previousOfficialSnapshotId,
     kind: "RESTORATION",
   });
-  return processDatabaseRollback(database, rollback.id);
+  return processDatabaseRollback(materializerDatabase, rollback.id);
 }
 
 async function resumeManualRollback() {
@@ -513,7 +525,7 @@ async function resumeManualRollback() {
     where: { idempotencyKey: { startsWith: "manual-rollback-" } },
     orderBy: { createdAt: "desc" },
   });
-  return processDatabaseRollback(database, rollback.id);
+  return processDatabaseRollback(materializerDatabase, rollback.id);
 }
 
 async function createReverseAcceptanceRollback(idempotencyKey: string) {
@@ -556,7 +568,10 @@ async function createReverseAcceptanceRollback(idempotencyKey: string) {
 async function rollbackFailureCleanupAcceptance() {
   const { publicationRequest, rollback, target, selected } =
     await createReverseAcceptanceRollback(`failure-rollback-${fixtureKey}`);
-  const candidate = await processDatabaseRollback(database, rollback.id);
+  const candidate = await processDatabaseRollback(
+    materializerDatabase,
+    rollback.id,
+  );
   if (candidate.state !== "CANDIDATE_AVAILABLE")
     throw new Error("Rollback failure fixture did not reach candidate state.");
   const authorization = await database.candidateAuthorization.create({
@@ -572,7 +587,7 @@ async function rollbackFailureCleanupAcceptance() {
     },
   });
   await failDatabaseRollbackBeforeConfirmation(
-    database,
+    materializerDatabase,
     rollback.id,
     "Injected pre-confirmation rollback failure.",
   );
@@ -607,13 +622,13 @@ async function rollbackReconciliationRequiredAcceptance() {
     await createReverseAcceptanceRollback(
       `reconciliation-rollback-${fixtureKey}`,
     );
-  let result = await processDatabaseRollback(database, rollback.id);
+  let result = await processDatabaseRollback(materializerDatabase, rollback.id);
   await recordSyntheticObservation(database, {
     publicationId: requiredPublicationId(result),
     snapshotId: selected.id,
     kind: "CANDIDATE",
   });
-  result = await processDatabaseRollback(database, rollback.id);
+  result = await processDatabaseRollback(materializerDatabase, rollback.id);
   const session = await database.session.findUniqueOrThrow({
     where: { id: publicationRequest.approval.sessionId },
   });
@@ -635,11 +650,11 @@ async function rollbackReconciliationRequiredAcceptance() {
       recentAuthenticationAt: session.reauthenticatedAt,
     },
   });
-  result = await processDatabaseRollback(database, rollback.id);
+  result = await processDatabaseRollback(materializerDatabase, rollback.id);
   if (result.state !== "OFFICIAL_POINTER_COMMITTED")
     throw new Error("Reconciliation fixture did not commit its pointer.");
   const marked = await markRollbackReconciliationRequired(
-    database,
+    materializerDatabase,
     rollback.id,
     "Injected exhausted automatic-restoration deadline.",
   );
@@ -787,5 +802,6 @@ try {
                                 : await status();
   process.stdout.write(`${JSON.stringify(result)}\n`);
 } finally {
+  await materializerDatabase.$disconnect();
   await database.$disconnect();
 }

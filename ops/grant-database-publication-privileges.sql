@@ -49,6 +49,7 @@ BEGIN
     GRANT USAGE ON SCHEMA public TO situation_studio_materializer;
     GRANT SELECT ON
       situations,
+      drafts,
       content_blobs,
       artifacts,
       artifact_edges,
@@ -69,7 +70,9 @@ BEGIN
       publication_events,
       publication_confirmations,
       candidate_authorizations,
-      leadership_observation_receipts
+      leadership_observation_receipts,
+      situation_checkouts,
+      checkout_resources
     TO situation_studio_materializer;
     GRANT INSERT ON
       content_snapshots,
@@ -88,7 +91,11 @@ BEGIN
       publication_steps,
       rollback_requests,
       rollback_steps,
-      situation_checkouts
+      candidate_authorizations,
+      proposed_bundles,
+      drafts,
+      situation_checkouts,
+      checkout_resources
     TO situation_studio_materializer;
     GRANT EXECUTE ON FUNCTION
       append_publication_event(uuid, uuid, uuid, text, text, jsonb)

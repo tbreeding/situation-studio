@@ -7,6 +7,7 @@ import { ReauthenticationDialog } from "@/components/reauthentication-dialog";
 import { RenderedGuidance } from "@/components/rendered-guidance";
 import { SynchronizedDiff } from "@/components/synchronized-diff";
 import {
+  canPrepareDatabaseFailedPreviewRecovery,
   isAwaitingHumanConfirmation,
   publicationProgressSteps,
   reconciliationDisagreement,
@@ -85,6 +86,13 @@ export function WorkspaceEditor(props: Props) {
     props.revision !== null &&
     props.displayedArtifactState === "DRAFT",
   );
+  const canRecoverFailedPreview = canPrepareDatabaseFailedPreviewRecovery({
+    publicationBackend: props.publicationBackend,
+    bundleState: props.bundle?.state ?? null,
+    publicationRequestState: props.publicationRequest?.state ?? null,
+    ownsCheckout,
+    canApprove: props.permissions.includes("publication.approve"),
+  });
   const [body, setBody] = useState(props.artifact?.body ?? "");
   const [checkInPending, setCheckInPending] = useState(false);
   const [preparationPending, setPreparationPending] = useState(false);
@@ -420,7 +428,11 @@ export function WorkspaceEditor(props: Props) {
   async function prepareApproval() {
     if (!props.bundle) return;
     setPreparationPending(true);
-    setStatus("Writing your reviewer identity into a new exact bundle…");
+    setStatus(
+      canRecoverFailedPreview
+        ? "Creating a fresh database-bound review from the preserved candidate…"
+        : "Writing your reviewer identity into a new exact bundle…",
+    );
     const response = await fetch(
       `/api/bundles/${props.bundle.id}/prepare-approval`,
       {
@@ -435,7 +447,9 @@ export function WorkspaceEditor(props: Props) {
     if (
       await requestReauthentication(
         response,
-        "prepare this exact bundle for approval",
+        canRecoverFailedPreview
+          ? "prepare a fresh database-bound review"
+          : "prepare this exact bundle for approval",
         prepareApproval,
       )
     ) {
@@ -992,6 +1006,7 @@ export function WorkspaceEditor(props: Props) {
                 </button>
               )}
             {props.bundle?.state === "HUMAN_REVIEW" &&
+              !canRecoverFailedPreview &&
               props.permissions.includes("publication.approve") &&
               (props.bundle.provenanceReady ? (
                 <button
@@ -1039,6 +1054,28 @@ export function WorkspaceEditor(props: Props) {
                     : "Stage approved bundle"}
                 </button>
               )}
+            {canRecoverFailedPreview && (
+              <button
+                className="button warn"
+                type="button"
+                onClick={prepareApproval}
+                disabled={
+                  preparationPending ||
+                  !props.bundle?.repositoryReviewerId ||
+                  (props.bundle?.comments.some((comment) => comment.blocking) ??
+                    true)
+                }
+                title={
+                  props.bundle?.comments.some((comment) => comment.blocking)
+                    ? "Resolve blocking comments before preparing the fresh database review"
+                    : "Preserve the failed request as history and create a new immutable review bound to the current official database snapshot"
+                }
+              >
+                {preparationPending
+                  ? "Preparing fresh review…"
+                  : "Prepare fresh database review"}
+              </button>
+            )}
             {publicationPending && (
               <button
                 className="button secondary"
@@ -1057,7 +1094,9 @@ export function WorkspaceEditor(props: Props) {
             <p className="artifactStateNotice candidate" role="status">
               {props.publicationRequest.state === "FAILED_PREVIEW"
                 ? props.publicationBackend === "database"
-                  ? "Private preview failed safely. Public content was unchanged and publisher custody was released."
+                  ? canRecoverFailedPreview
+                    ? "Private preview failed safely. Public content was unchanged and publisher custody was released. Prepare a fresh database review to continue."
+                    : "Private preview failed safely. Public content was unchanged and publisher custody was released."
                   : "Candidate staging failed. The previous Leadership release was restored and your checkout has been returned."
                 : props.publicationRequest.state === "AUTO_ROLLED_BACK"
                   ? "Final publication did not verify. The previous Leadership release was restored safely."

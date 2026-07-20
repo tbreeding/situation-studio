@@ -1,8 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@situation-studio/db";
 import { authenticateMutation } from "@/server/auth/request";
 import { database } from "@/server/database";
 import { audit } from "@/server/audit";
+import { createReviewComment } from "@/server/workflows/review-comments";
 
 const schema = z.object({
   body: z.string().trim().min(3).max(4000),
@@ -20,52 +22,35 @@ export async function POST(
   if (!parsed.success)
     return NextResponse.json({ error: "invalid comment" }, { status: 400 });
   const { id } = await params;
-  const bundle = await database().proposedBundle.findUnique({ where: { id } });
-  if (!bundle || !["HUMAN_REVIEW", "APPROVED"].includes(bundle.state))
-    return NextResponse.json(
-      { error: "bundle not reviewable" },
-      { status: 409 },
-    );
-  const comment = await database().$transaction(
-    async (transaction) => {
-      const row = await transaction.comment.create({
-        data: {
-          bundleId: id,
-          authorId: auth.session.userId,
-          body: parsed.data.body,
-          blocking: parsed.data.blocking,
-        },
-      });
-      if (parsed.data.blocking && bundle.state === "APPROVED") {
-        await transaction.approval.updateMany({
-          where: { bundleId: id, invalidatedAt: null },
-          data: {
-            invalidatedAt: new Date(),
-            invalidationReason: "BLOCKING_COMMENT_ADDED",
-          },
-        });
-        await transaction.proposedBundle.update({
-          where: { id },
-          data: { state: "HUMAN_REVIEW" },
-        });
-        await transaction.draft.update({
-          where: { id: bundle.draftId },
-          data: { state: "HUMAN_REVIEW" },
-        });
-      }
-      return row;
-    },
-    { isolationLevel: "Serializable" },
-  );
+  let result;
+  try {
+    result = await createReviewComment(database(), {
+      bundleId: id,
+      authorId: auth.session.userId,
+      body: parsed.data.body,
+      blocking: parsed.data.blocking,
+    });
+  } catch (error) {
+    if (
+      (error instanceof Error && error.message === "BUNDLE_NOT_REVIEWABLE") ||
+      (error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034")
+    )
+      return NextResponse.json(
+        { error: "bundle not reviewable" },
+        { status: 409 },
+      );
+    throw error;
+  }
   await audit({
     actorId: auth.session.userId,
     permissions: [...auth.session.permissions],
     action: "comment.create",
     targetType: "comment",
-    targetId: comment.id,
-    targetVersion: bundle.canonicalHash,
+    targetId: result.comment.id,
+    targetVersion: result.bundle.canonicalHash,
     outcome: "SUCCEEDED",
-    after: { blocking: comment.blocking },
+    after: { blocking: result.comment.blocking },
   });
-  return NextResponse.json({ id: comment.id }, { status: 201 });
+  return NextResponse.json({ id: result.comment.id }, { status: 201 });
 }

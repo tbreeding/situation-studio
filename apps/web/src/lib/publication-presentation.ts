@@ -53,6 +53,22 @@ export function isAwaitingHumanConfirmation(
   return state === "AWAITING_CONFIRMATION" && !finalConfirmed;
 }
 
+export function canPrepareDatabaseFailedPreviewRecovery(input: {
+  publicationBackend: "git" | "database";
+  bundleState: string | null;
+  publicationRequestState: string | null;
+  ownsCheckout: boolean;
+  canApprove: boolean;
+}) {
+  return (
+    input.publicationBackend === "database" &&
+    ["APPROVED", "HUMAN_REVIEW"].includes(input.bundleState ?? "") &&
+    input.publicationRequestState === "FAILED_PREVIEW" &&
+    input.ownsCheckout &&
+    input.canApprove
+  );
+}
+
 export function shouldPollPublication(
   state: string,
   finalConfirmed: boolean,

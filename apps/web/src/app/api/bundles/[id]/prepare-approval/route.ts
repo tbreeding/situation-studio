@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { audit } from "@/server/audit";
 import { authenticateMutation } from "@/server/auth/request";
 import { database } from "@/server/database";
+import { environment } from "@/server/environment";
 import { prepareBundleForHumanApproval } from "@/server/workflows/review-provenance";
 
 export async function POST(
@@ -31,11 +32,16 @@ export async function POST(
       bundleId: id,
       userId: auth.session.userId,
       repositoryReviewerId,
+      ...(environment().PUBLICATION_BACKEND === "database"
+        ? { recoveryTargetCode: "leadership-production" }
+        : {}),
     });
     await audit({
       actorId: auth.session.userId,
       permissions: [...auth.session.permissions],
-      action: "bundle.prepare_human_approval",
+      action: result.recovered
+        ? "bundle.recover_failed_preview"
+        : "bundle.prepare_human_approval",
       targetType: "bundle",
       targetId: result.bundle.id,
       targetVersion: result.bundle.canonicalHash,
@@ -45,6 +51,7 @@ export async function POST(
         repositoryReviewerId,
         reviewDate: result.provenance.reviewDate,
         created: result.created,
+        recovered: result.recovered,
       },
     });
     return NextResponse.json(
@@ -52,6 +59,7 @@ export async function POST(
         bundleId: result.bundle.id,
         bundleHash: result.bundle.canonicalHash,
         reviewDate: result.provenance.reviewDate,
+        recovered: result.recovered,
       },
       { status: result.created ? 201 : 200 },
     );

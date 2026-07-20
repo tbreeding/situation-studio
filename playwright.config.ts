@@ -3,6 +3,9 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./browser",
   fullyParallel: false,
+  // Every viewport project shares one disposable PostgreSQL fixture database.
+  // Keep cross-project mutations from leaking into read-only workspace checks.
+  workers: 1,
   retries: 0,
   reporter: [["list"]],
   use: {

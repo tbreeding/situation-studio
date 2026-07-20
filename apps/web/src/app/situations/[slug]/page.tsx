@@ -10,7 +10,10 @@ import {
   exactArtifactsMatchStoredHashes,
   readPreparedReviewProvenance,
 } from "@/server/workflows/review-provenance";
-import { publicationDecisionLabel } from "@/lib/publication-presentation";
+import {
+  canPrepareDatabaseFailedPreviewRecovery,
+  publicationDecisionLabel,
+} from "@/lib/publication-presentation";
 import { reviewJobSnapshotById } from "@/server/review-progress";
 import { environment } from "@/server/environment";
 
@@ -237,6 +240,13 @@ export default async function SituationWorkspace({
   );
   const ownsCheckout =
     checkout?.holderUserId === session.userId && checkout.custody === "USER";
+  const canRecoverFailedPreview = canPrepareDatabaseFailedPreviewRecovery({
+    publicationBackend,
+    bundleState: bundle?.state ?? null,
+    publicationRequestState: publicationRequest?.state ?? null,
+    ownsCheckout,
+    canApprove: session.permissions.has("publication.approve"),
+  });
   const nextAction = publicationRequest
     ? publicationRequest.state === "AWAITING_CONFIRMATION" &&
       !publicationRequest.finalConfirmedAt
@@ -248,7 +258,11 @@ export default async function SituationWorkspace({
           ? "The private candidate is awaiting confirmation from an authorized publisher."
           : "The staged candidate is awaiting confirmation from an authorized publisher."
       : publicationRequest.state === "FAILED_PREVIEW"
-        ? "Candidate staging failed safely; inspect the recorded failure before retrying."
+        ? canRecoverFailedPreview
+          ? bundle?.comments.some((comment) => comment.blocking)
+            ? "Resolve the blocking review feedback before preparing a fresh database-bound review."
+            : "Prepare a fresh database-bound review from the preserved candidate, then approve its exact bytes."
+          : "Candidate staging failed safely; inspect the recorded failure before retrying."
         : publicationRequest.state === "RECONCILIATION_REQUIRED"
           ? databaseBackend
             ? "Publication is blocked until the database pointer, Leadership observation, and Studio agree."

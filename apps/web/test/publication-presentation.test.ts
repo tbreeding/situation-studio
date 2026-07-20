@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  canPrepareDatabaseFailedPreviewRecovery,
   isAwaitingHumanConfirmation,
   publicationDecisionLabel,
   publicationProgressSteps,
@@ -49,6 +50,47 @@ const expectedSteps = [
 ] as const;
 
 describe("publication presentation", () => {
+  test("offers failed-preview recovery only for the exact database workflow state", () => {
+    const eligible = {
+      publicationBackend: "database" as const,
+      bundleState: "APPROVED",
+      publicationRequestState: "FAILED_PREVIEW",
+      ownsCheckout: true,
+      canApprove: true,
+    };
+    expect(canPrepareDatabaseFailedPreviewRecovery(eligible)).toBe(true);
+    expect(
+      canPrepareDatabaseFailedPreviewRecovery({
+        ...eligible,
+        bundleState: "HUMAN_REVIEW",
+      }),
+    ).toBe(true);
+    expect(
+      canPrepareDatabaseFailedPreviewRecovery({
+        ...eligible,
+        publicationBackend: "git",
+      }),
+    ).toBe(false);
+    expect(
+      canPrepareDatabaseFailedPreviewRecovery({
+        ...eligible,
+        publicationRequestState: "RECONCILIATION_REQUIRED",
+      }),
+    ).toBe(false);
+    expect(
+      canPrepareDatabaseFailedPreviewRecovery({
+        ...eligible,
+        ownsCheckout: false,
+      }),
+    ).toBe(false);
+    expect(
+      canPrepareDatabaseFailedPreviewRecovery({
+        ...eligible,
+        canApprove: false,
+      }),
+    ).toBe(false);
+  });
+
   test.each(["publication", "rollback"] as const)(
     "identifies the exact %s reconciliation disagreement and safe action",
     (kind) => {

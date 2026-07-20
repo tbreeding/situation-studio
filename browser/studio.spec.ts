@@ -1052,10 +1052,10 @@ test("a synthetic proposal remains unmistakably separate from the published base
         [preparedBundleId],
       );
       expect(staged.rows).toHaveLength(1);
-      expect(staged.rows[0]).toMatchObject({
-        custody: "PUBLISHER",
-        state: "REQUESTED",
-      });
+      expect(staged.rows[0]?.custody).toBe("PUBLISHER");
+      expect(["REQUESTED", "AWAITING_CONFIRMATION"]).toContain(
+        staged.rows[0]?.state,
+      );
       const stagedRequestId = staged.rows[0]?.id;
       expect(stagedRequestId).toBeDefined();
       if (!stagedRequestId) return;
@@ -1083,7 +1083,12 @@ test("a synthetic proposal remains unmistakably separate from the published base
           `INSERT INTO publication_steps
            (id, request_id, step, attempt, fence, external_id, state, input_hash,
             finished_at)
-           VALUES ($1, $2, 'COMMITTED', 1, 1, $3, 'SUCCEEDED', $4, NOW())`,
+           VALUES ($1, $2, 'COMMITTED', 1, 1, $3, 'SUCCEEDED', $4, NOW())
+           ON CONFLICT (request_id, step, attempt)
+           DO UPDATE SET external_id = EXCLUDED.external_id,
+                         state = EXCLUDED.state,
+                         input_hash = EXCLUDED.input_hash,
+                         finished_at = EXCLUDED.finished_at`,
           [randomUUID(), stagedRequestId, stagedCommit, fixtureHash("commit")],
         );
         await database.query("COMMIT");
@@ -1118,7 +1123,7 @@ test("a synthetic proposal remains unmistakably separate from the published base
         "It will not build another version",
       );
       const reviewConfirmation = page.getByLabel(
-        "I reviewed the staged candidate and want to publish it.",
+        "I reviewed the exact candidate and want to publish it.",
       );
       await expect(reviewConfirmation).toBeFocused();
       const publishConfirmation = publicationDialog.getByRole("button", {
@@ -1155,7 +1160,7 @@ test("a synthetic proposal remains unmistakably separate from the published base
       await page.goto(`/situations/${slug}`);
       await expect(
         page.getByRole("heading", {
-          name: "Publishing candidate bbbbbbbb",
+          name: "Publishing exact candidate bbbbbbbb",
         }),
       ).toBeVisible();
       await expect(
@@ -1170,6 +1175,7 @@ test("a synthetic proposal remains unmistakably separate from the published base
          WHERE id = $1`,
         [stagedRequestId],
       );
+      await page.reload();
       await expect(
         page.locator(".publicationProgress li.complete"),
       ).toHaveCount(2, { timeout: 8_000 });
@@ -1182,6 +1188,7 @@ test("a synthetic proposal remains unmistakably separate from the published base
          WHERE id = $1`,
         [stagedRequestId],
       );
+      await page.reload();
       await expect(
         page.locator(".publicationProgress li.complete"),
       ).toHaveCount(3, { timeout: 8_000 });

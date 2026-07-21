@@ -1,6 +1,6 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-20, during the first Checkpoint 7 production publication
+Last updated: 2026-07-21, during the first Checkpoint 7 production publication
 
 ## Purpose and authority
 
@@ -33,8 +33,8 @@ The original implementation specification is `/Users/timothybreeding/projects/le
   desktop-only mobile skips against a production build and a disposable clone
   of production. The run exercised two synthetic proposal workflows without
   changing production content.
-- Leadership application release `20260720T161451Z` runs exact approved commit
-  `80ac9b590c5efa4befc7b1227a6f7d5766e84059`.
+- Leadership application release `20260721T052419Z` runs exact pushed commit
+  `7d8802371303958387eec177713f511c361a4556`.
 
 ### Authoritative production migration status
 
@@ -62,9 +62,15 @@ The original implementation specification is `/Users/timothybreeding/projects/le
   at `CANDIDATE_AVAILABLE` on snapshot
   `184cc9d9-6bc9-4833-90e2-ffac573e3d69`, hash
   `ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34`.
-  The official snapshot is unchanged. Recent password reauthentication,
-  private-candidate observation, and exact final human confirmation remain
-  mandatory; neither may be manufactured or bypassed.
+  The official snapshot is unchanged. The first private-review attempt exposed
+  a Leadership continuation bug: a Next.js client transition preserved the
+  pre-cookie root layout, so the candidate observer never mounted. Leadership
+  commit `7d8802371303958387eec177713f511c361a4556` forces the required
+  same-site document navigation and is independently accepted and deployed as
+  release `20260721T052419Z`. Production still has zero candidate
+  authorizations and zero candidate observations. Recent password
+  reauthentication, private-candidate observation, and exact final human
+  confirmation remain mandatory; neither may be manufactured or bypassed.
 - Checkpoint 8 remains blocked until the first database publication and the
   real approved observation period (proposed seven days) complete, followed by
   recovery revalidation and explicit decommission approval.
@@ -174,7 +180,7 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 - Sole private origin: `http://192.168.1.120:3005`.
 - Sole PM2 process: `leadership-field-guide`.
 - Active symlink: `/home/admin/projects/leadership/current`.
-- Active verified release: `/home/admin/projects/leadership/releases/20260720T161451Z`.
+- Active verified release: `/home/admin/projects/leadership/releases/20260721T052419Z`.
 - The published page for `repeatedly-misses-deadlines` visibly reports `Reviewed: 7/18/2026`.
 - The retired duplicate prototype is archived and returns 404. Its PM2 process, listener, runtime directory, and symlink are gone.
 
@@ -271,6 +277,17 @@ unstable restarts; no migration command targeted it.
   local edits. The independent reviewer accepted the correction; the full gate
   passes 634 tests and the production-runtime Chromium matrix passes 28/28
   applicable cases with 8 intentional mobile skips.
+- The first production private-review attempt exposed a separate Leadership
+  navigation defect. The strict candidate cookies were issued correctly, but
+  the continuation used a client-side transition and preserved the root
+  layout rendered before those cookies were available. The observer therefore
+  never mounted and Studio remained at `CANDIDATE_AVAILABLE`. Leadership
+  commit `7d8802371303958387eec177713f511c361a4556` replaces that transition
+  with a full document navigation. The full Leadership gate (43 tests and
+  production build), the focused regression on Chromium, Firefox, WebKit, and
+  mobile, and an independent review all passed. Guarded release
+  `20260721T052419Z` is healthy; its source hash matches the local commit and
+  `/health/content` reports the unchanged official database snapshot.
 - At 2026-07-20 16:42 UTC, a raw PM2 diagnostic emitted protected Studio
   environment values into the operator tool output. Every exposed application
   secret and the affected database credential were immediately rotated without
@@ -297,8 +314,9 @@ unstable restarts; no migration command targeted it.
 
 ## Remaining work
 
-1. The owner must enter their password in the open Studio reauthentication
-   dialog and choose **Review private candidate** for exact candidate
+1. The owner must sign in to the open Studio tab, choose **Review private
+   candidate**, enter their password when prompted, and then choose
+   **Continue to private candidate** in Leadership for exact candidate
    `ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34`.
    Leadership must return the signed healthy private-candidate receipt while
    anonymous routes continue serving official hash `cb57e758...54ea8e`.

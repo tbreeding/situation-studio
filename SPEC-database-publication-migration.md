@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-Last updated: 2026-07-20 during the first production database publication.
+Last updated: 2026-07-21 during the first production database publication.
 
 | Checkpoint                              | Status                                    | Evidence                                                                                                                                                                                                                                                                                                                                                       |
 | --------------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -13,15 +13,18 @@ Last updated: 2026-07-20 during the first production database publication.
 | 4 — Database publisher acceptance       | Complete — independently accepted         | The hardened implementation and production corrections were independently accepted. The current gate passes 634 Studio tests, 43 Leadership tests, PostgreSQL 16.12 migration/grant checks, a full publication/rollback under the actual materializer role, and Git-disabled acceptance.                                                                       |
 | 5 — Production shadow/recovery          | Complete under explicit deployment waiver | Shadow parity, frozen-cache outage boot/reconvergence, both prior-application symlink rehearsals, capacity, and unrelated-service gates passed. The owner explicitly waived only the off-host PITR/RPO/RTO gate for this deployment; the missing off-host recovery capability remains recorded debt.                                                           |
 | 6 — Public database-reader cutover      | Complete                                  | Studio web and Leadership alone were restarted. Leadership now serves the exact official snapshot from PostgreSQL with one query per refresh; 24/24 routes passed, not-found returned 404, Studio remained live/ready, and unrelated services remained online.                                                                                                 |
-| 7 — First database publication          | In progress — awaiting private review     | Reviewed bundle revision 3 was approved, and the publisher materialized private candidate snapshot `184cc9d9-6bc9-4833-90e2-ffac573e3d69` (`ca8d523a…`) before pausing safely at `CANDIDATE_AVAILABLE`; the official snapshot is unchanged. Recent reauthentication, private review, signed observation, and exact final confirmation remain human-only gates. |
+| 7 — First database publication          | In progress — awaiting private review     | Reviewed bundle revision 3 was approved, and the publisher materialized private candidate snapshot `184cc9d9-6bc9-4833-90e2-ffac573e3d69` (`ca8d523a…`) before pausing safely at `CANDIDATE_AVAILABLE`; the official snapshot is unchanged. The independently accepted Leadership continuation fix is deployed as release `20260721T052419Z`; production has zero authorizations/observations and now awaits a fresh human reauthentication and private review before exact final confirmation. |
 | 8 — Git decommission and contract       | Blocked by Checkpoint 7 observation       | Git-era configuration/code and readable history are intentionally retained. Decommission requires the first successful database publication, the approved observation period (proposed seven days), another recovery rehearsal, and explicit decommission approval.                                                                                            |
 
 Production is database-authoritative for public Leadership reads. The first
 database publication has prepared a private candidate but has not changed the
 official pointer. Studio release `20260720T195142Z` runs corrective commit
 `794c268fdde6485a7f3e30123cbc7c8fb3657491`; Leadership release
-`20260720T161451Z` runs approved commit
-`80ac9b590c5efa4befc7b1227a6f7d5766e84059`. PostgreSQL still has
+`20260721T052419Z` runs commit
+`7d8802371303958387eec177713f511c361a4556`. That corrective release forces a
+full same-site navigation after candidate exchange so the cookie-aware root
+layout mounts the signed candidate observer; its four-engine regression and
+full Leadership gate pass. PostgreSQL still has
 `archive_mode=off` and no proven off-host WAL chain. The owner's waiver allowed
 this deployment to proceed; it did not establish or claim the specified RPO,
 RTO, encryption, or off-host recovery guarantees.

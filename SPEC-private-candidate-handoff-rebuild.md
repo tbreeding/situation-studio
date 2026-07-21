@@ -4,8 +4,8 @@
 
 Restore a trustworthy, complete human review path from Situation Studio to the
 private Leadership candidate so an authorized publisher can reauthenticate,
-authorize the exact immutable candidate, explicitly continue through a native
-same-tab POST, cause Leadership to record its signed healthy observation,
+authorize the exact immutable candidate, explicitly continue through a
+same-tab cookie-bound handshake, cause Leadership to record its signed healthy observation,
 return to Studio, and only then receive the separate final-publication
 confirmation. The public official snapshot must remain unchanged throughout
 private review.
@@ -23,8 +23,9 @@ private review.
 - Leadership already uses a full same-site document navigation after candidate
   cookie exchange so its candidate observer mounts with the new cookies.
 - Candidate authorization is a sensitive, recent-reauthentication-gated,
-  session-and-permission-bound action. Exchange tokens are one-time and must be
-  sent in a POST body, never a URL.
+  session-and-permission-bound action. The production outer gate rejects
+  cross-origin POSTs, so the final implementation uses a signed callback plus
+  an HttpOnly Leadership verifier cookie; no bearer value enters a URL.
 - PostgreSQL is the authority for publication state, candidate authorization,
   signed observation receipts, final confirmation, and the official pointer.
 - `.temp-logins` contains temporary live credentials. It is local-only,
@@ -41,8 +42,9 @@ private review.
   the original handoff action.
 - Create one-time, candidate-bound authorization only after all server-side
   state, ownership, target, permission, and recency checks pass.
-- Submit the exchange token and safe relative return path to Leadership with a
-  user-activated same-tab cross-origin POST and full document navigation.
+- Establish the Leadership verifier with a user-activated same-tab GET,
+  create the exact authorization only after the signed callback returns, and
+  complete the one-time exchange through the authenticated server backchannel.
 - Prevent duplicate clicks while authorization or navigation is in progress and
   give accessible, deterministic status/error feedback.
 - Add Playwright E2E coverage that provisions a fresh PostgreSQL 16 database
@@ -78,9 +80,10 @@ private review.
 - No popup, named window, `window.open`, or `about:blank` may participate in the
   candidate path.
 - The handoff must work in a single-tab browser.
-- The exchange uses POST to the configured Leadership candidate origin. The
-  token must not enter the URL, browser history, referrer, client logs, or
-  persistent browser storage.
+- The browser handoff uses only top-level GET navigation accepted by the outer
+  gate. The one-time verifier remains in an HttpOnly Leadership cookie and the
+  backchannel exchange uses POST; no bearer value enters browser history,
+  referrers, client logs, or persistent browser storage.
 - Return destinations are generated from a validated Studio situation slug and
   remain relative paths.
 - Candidate authorization remains bound to request, target, snapshot, exact
@@ -109,10 +112,10 @@ private review.
       cannot create concurrent authorizations.
 - [x] Studio creates an authorization only for the active exact candidate and
       returns no token when any state/binding precondition fails.
-- [x] The browser performs a same-tab POST to Leadership `/candidate/exchange`
-      with only `token` and the expected relative `returnTo` fields.
-- [x] Leadership can exchange the token once through Studio's authenticated
-      backchannel; replay fails.
+- [x] The browser performs a same-tab GET bootstrap and signed callback; the
+      outer-gate-blocked cross-site POST path is never used.
+- [x] Leadership can exchange the cookie-bound handoff once through Studio's
+      authenticated backchannel; a wrong verifier and replay fail.
 - [x] Successful exchange causes a full document navigation to the expected
       private candidate route and does not expose the exchange token in the URL.
 - [x] The test candidate route shows the exact candidate hash while a fresh
@@ -125,11 +128,11 @@ private review.
       the E2E test and live verification do not click it.
 - [x] Authorization/network failure leaves the user in Studio with a retryable
       error and no blank or orphaned tab.
-- [x] Publication and rollback handoffs share the same tested form/navigation
+- [x] Publication and rollback handoffs share the same tested handshake/navigation
       implementation.
 - [x] `pnpm verify`, the Testcontainers-backed Playwright suite, and the
       production build pass.
-- [ ] The guarded deployment reports the exact pushed commit healthy, and a
+- [x] The guarded deployment reports the exact pushed commit healthy, and a
       signed-in live browser reaches the expected private candidate review step
       without moving the official pointer or recording final confirmation.
 
@@ -141,7 +144,7 @@ private review.
   Prisma migrations, seeds the normal local fixture, and starts Studio with
   database-publication configuration.
 - Use a purpose-built local Leadership contract server in E2E only. It must call
-  Studio's real `/api/candidates/exchange` backchannel, issue a private test
+  Studio's real `/api/candidates/exchange-handoff` backchannel, issue a private test
   cookie, expose candidate/official identities, and retain request evidence for
   assertions without logging token values.
 - Query the disposable database to prove authorization, exchange, observation,

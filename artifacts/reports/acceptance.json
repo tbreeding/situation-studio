@@ -1,9 +1,9 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-20T20:06:29Z",
+  "recordedAt": "2026-07-21T07:57:42Z",
   "source": {
-    "leadershipCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1",
-    "leadershipRepositoryModified": true,
+    "leadershipCommit": "0d7d161e9fbac5f723754f6611c87a4cbbf90f28",
+    "leadershipRepositoryModified": false,
     "leadershipPublishedMainModified": true,
     "leadershipRemoteCandidateBranchCreated": true,
     "leadershipCandidateCommit": "b6e40575eb823dc32c62644775895ad84a80d2d1",
@@ -18,19 +18,20 @@
     "prismaSchema": "passed",
     "secretScan": "passed",
     "productionBuild": "passed",
-    "unitContractTests": 634,
+    "unitContractTests": 635,
     "browserTests": {
-      "total": 36,
-      "passed": 28,
+      "total": 37,
+      "passed": 29,
       "skipped": 8,
       "desktop": 24,
       "mobile": 4,
+      "privateCandidateHandoff": 1,
       "environment": "production-build-disposable-production-clone"
     },
     "database": {
       "postgresVersion": "16.12",
-      "productionMigrations": 15,
-      "localValidationMigrations": 15,
+      "productionMigrations": 17,
+      "localValidationMigrations": 17,
       "historicalUpgrade": "passed",
       "idempotentRedeploy": "passed",
       "checkoutRace": "one-winner",
@@ -38,7 +39,7 @@
     }
   },
   "databasePublicationMigration": {
-    "status": "checkpoint-7-candidate-available-awaiting-private-review",
+    "status": "checkpoint-7-awaiting-exact-final-confirmation",
     "productionMutated": true,
     "checkpoint1": {
       "schemaExpansion": "passed-postgresql-16.12",
@@ -82,9 +83,9 @@
       "leadershipProductionBuild": "passed"
     },
     "checkpoint4": {
-      "forwardMigrations": 15,
+      "forwardMigrations": 17,
       "topLevelVerifier": "passed",
-      "studioUnitContractTests": 634,
+      "studioUnitContractTests": 635,
       "studioProductionBuild": "passed",
       "crashResume": "same-snapshot",
       "duplicateDeliveries": 2,
@@ -122,11 +123,12 @@
     "checkpoint5": {
       "productionReadOnlyDiscovery": "passed",
       "productionMutated": true,
-      "activeStudioRelease": "20260720T195142Z",
-      "activeStudioCommit": "794c268fdde6485a7f3e30123cbc7c8fb3657491",
-      "activeLeadershipRelease": "20260720T161451Z",
+      "activeStudioRelease": "20260721T074446Z",
+      "activeStudioCommit": "8e63f6c9f1eea5408d30101709e3cddb4428d5f3",
+      "activeLeadershipRelease": "20260721T075238Z",
+      "activeLeadershipCommit": "0d7d161e9fbac5f723754f6611c87a4cbbf90f28",
       "productionPostgresVersion": "16.12",
-      "productionMigrations": 15,
+      "productionMigrations": 17,
       "archiveMode": "off",
       "offHostWalEvidence": "missing",
       "fiveMinuteRpo": "not-established",
@@ -139,8 +141,8 @@
       "bootstrapOfficialSnapshotId": "0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3",
       "bootstrapMembers": 32,
       "bootstrapEdges": 99,
-      "studioLocalGate": "passed-634-tests-and-production-build",
-      "leadershipLocalGate": "passed-43-tests-and-production-build",
+      "studioLocalGate": "passed-635-tests-and-production-build",
+      "leadershipLocalGate": "passed-47-tests-and-production-build",
       "recoveryEvidenceTemplate": "prepared",
       "minuteByMinuteRunbook": "prepared",
       "cutoverAbortCard": "prepared",
@@ -166,7 +168,7 @@
       "unrelatedServices": "online-stable"
     },
     "checkpoint7": {
-      "status": "candidate-available-awaiting-private-review",
+      "status": "awaiting-exact-final-confirmation",
       "publisherBackend": "database-main",
       "publisherRole": "situation_studio_materializer",
       "publisherSessionsRead": false,
@@ -178,8 +180,21 @@
       "candidateSnapshotHash": "ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34",
       "officialSnapshotUnchanged": "0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3",
       "databasePublicationRows": 1,
-      "candidateAuthorizations": 0,
-      "privateCandidateObservations": 0,
+      "candidateAuthorizations": 9,
+      "cookieBoundAuthorizations": 2,
+      "exchangedAuthorizations": 2,
+      "revokedAuthorizations": 7,
+      "liveUnexchangedAuthorizations": 0,
+      "privateCandidateObservations": 1,
+      "exactHealthyCandidateObservations": 1,
+      "finalConfirmations": 0,
+      "finalConfirmedAt": null,
+      "requestState": "AWAITING_CONFIRMATION",
+      "databasePublicationState": "AWAITING_CONFIRMATION",
+      "handoff": "cookie-bound-same-tab-get-signed-callback-http-only-verifier",
+      "crossSitePosts": 0,
+      "replayStatus": 404,
+      "liveProductionChromium": "passed-private-banner-clean-url-observation-200-zero-popups",
       "diagnosticCompleteReview": {
         "situationSlug": "nothing-in-one-on-ones",
         "jobId": "1364ca78-ff7e-4c9b-acf1-672dc08a9013",
@@ -197,14 +212,14 @@
         "checkout": "released-saved-revision-preserved-audited"
       },
       "proposalRefreshEditorStateFix": "deployed-independently-accepted-genuine-local-edits-preserved",
-      "requiredNextEvidence": "recent-reauthentication-private-candidate-observation-exact-final-confirmation-reconciliation"
+      "requiredNextEvidence": "owner-exact-final-confirmation-live-verification-reconciliation"
     },
     "checkpoint8": {
       "status": "blocked-real-observation-period-not-started",
       "proposedObservationDays": 7,
       "gitEraHistoryRetained": true
     },
-    "nextCheckpoint": "7-human-private-candidate-review-and-confirmation"
+    "nextCheckpoint": "7-owner-exact-final-confirmation"
   },
   "inAppBrowser": {
     "runtime": "production-build",
@@ -221,7 +236,12 @@
     "publication": "passed",
     "archiveRestore": "passed-in-prior-clean-acceptance-run",
     "rollback": "passed-in-prior-clean-acceptance-run",
-    "nonceContentSecurityPolicy": "passed"
+    "nonceContentSecurityPolicy": "passed",
+    "privateCandidateHandoff": "passed-cookie-bound-same-tab-get",
+    "privateCandidateObservationStatus": 200,
+    "candidateUrlClean": true,
+    "candidatePopupCount": 0,
+    "finalConfirmationClicked": false
   },
   "publicationEvidence": {
     "fixtureSlug": "hold-the-agreement-boundary",

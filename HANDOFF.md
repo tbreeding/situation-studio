@@ -21,20 +21,21 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Current deployed implementation commit: `794c268fdde6485a7f3e30123cbc7c8fb3657491` (`Keep editor clean across proposal refresh`).
-- Current RP1 release: `20260720T195142Z`.
-- Production PostgreSQL is at all 15 forward migrations. The guarded bootstrap
+- Current deployed application implementation commit: `8e63f6c` (`Replace candidate form with cookie-bound handoff`).
+- Current RP1 application release: `20260721T074446Z`; current `main` also
+  contains the non-runtime public-callback environment documentation commit.
+- Production PostgreSQL is at all 17 forward migrations. The guarded bootstrap
   created target generation 1 and was idempotent on rerun; the active candidate
   has reserved generation 2 without changing the official pointer.
 - The complete corrected gate passed formatting, lint, strict TypeScript,
-  Prisma validation, bootstrap guards, 634 tests, secret scan, and the
+  Prisma validation, bootstrap guards, 635 tests, secret scan, and the
   production web build.
 - The 36-case Chromium matrix passed 28 applicable cases with 8 intentional
   desktop-only mobile skips against a production build and a disposable clone
-  of production. The run exercised two synthetic proposal workflows without
-  changing production content.
-- Leadership application release `20260721T052419Z` runs exact pushed commit
-  `7d8802371303958387eec177713f511c361a4556`.
+  of production. The separate role-faithful Testcontainers candidate handoff
+  case passed, for 29 passed and 8 skipped browser cases overall.
+- Leadership application release `20260721T075238Z` runs exact pushed commit
+  `0d7d161` and passed 47 tests plus its production build.
 
 ### Authoritative production migration status
 
@@ -55,39 +56,27 @@ The original implementation specification is `/Users/timothybreeding/projects/le
   snapshot `0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3` directly from PostgreSQL,
   with one query per refresh and the exact manifest above. Studio and
   Leadership alone were restarted; unrelated services remained online.
-- Checkpoint 7 is in progress. Human review and approval created immutable
+- Checkpoint 7 is in progress at the exact final-confirmation boundary. Human
+  review and approval created immutable
   bundle revision 3, hash
   `9debf20662c65a508a35665b834ff4f527d3bd9084ef07d34b413abd9a03d2d9`.
-  Publication request `c078a261-9a02-41e4-9825-cddbd51ed428` is safely paused
-  at `CANDIDATE_AVAILABLE` on snapshot
+  Publication request `c078a261-9a02-41e4-9825-cddbd51ed428` and its database
+  publication are safely paused at `AWAITING_CONFIRMATION` on snapshot
   `184cc9d9-6bc9-4833-90e2-ffac573e3d69`, hash
   `ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34`.
-  The official snapshot is unchanged. The first private-review attempt exposed
-  a Leadership continuation bug: a Next.js client transition preserved the
-  pre-cookie root layout, so the candidate observer never mounted. Leadership
-  commit `7d8802371303958387eec177713f511c361a4556` forces the required
-  same-site document navigation and is independently accepted and deployed as
-  release `20260721T052419Z`. Production still has zero candidate
-  authorizations and zero candidate observations. Recent password
-  reauthentication, private-candidate observation, and exact final human
-  confirmation remain mandatory; neither may be manufactured or bypassed.
-- A subsequent signed-in live validation reproduced another blocker before any
-  authorization was created. Selecting **Review private candidate** in the
-  Codex in-app browser replaced the Studio tab with `about:blank`; the
-  asynchronous authorization request did not complete. A read-only production
-  query immediately afterward still showed `CANDIDATE_AVAILABLE`, zero
-  candidate authorizations, zero candidate observations, and no final
-  confirmation. The Studio tab was restored to the situation workspace.
-- The apparent cause is Studio's preauthorization
-  `window.open("about:blank", "leadership-candidate")` strategy, which is not
-  safe in a constrained single-tab browser. A local, uncommitted patch removes
-  the popup and submits the one-time candidate exchange in the current tab. It
-  also adds a pure regression for the `_self` handoff. Those changes are
-  formatted but have **not** been verified, independently reviewed, committed,
-  pushed, or deployed. They currently modify
-  `apps/web/src/components/workspace-editor.tsx`,
-  `apps/web/src/lib/publication-presentation.ts`, and
-  `apps/web/test/publication-presentation.test.ts`.
+  The exact signed healthy Leadership candidate observation is recorded once.
+  The official snapshot remains `0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3`, the
+  official manifest remains `cb57e758…`, `final_confirmed_at` is null, and the
+  confirmation row count is zero. Studio visibly offers **Confirm and publish
+  ca8d523a**, which was deliberately not clicked.
+- The final handoff is a cookie-bound two-origin protocol. Studio prepares a
+  state cookie and visible same-tab Leadership bootstrap link; Leadership sets
+  an HttpOnly verifier, signs the callback, and completes the one-time exchange
+  through its authenticated private backchannel. The outer gate sees only
+  top-level GET navigation, no popup or `about:blank` exists, no bearer value
+  enters a URL, and replay returns 404. Real Chromium production acceptance
+  passed both login layers, the private candidate banner, a clean URL, signed
+  observation HTTP 200, and zero popups.
 - Checkpoint 8 remains blocked until the first database publication and the
   real approved observation period (proposed seven days) complete, followed by
   recovery revalidation and explicit decommission approval.
@@ -146,15 +135,15 @@ deployment and are superseded for live status by the section above.
 - Studio has an administrator-only safe publication-health endpoint;
   Leadership has sanitized official content/cache health endpoints. UI tests
   identify exact reconciliation hashes and the frozen-cache action.
-- The local schema now contains 15 forward migrations. The fresh top-level
+- The local schema now contains 17 forward migrations. The fresh top-level
   `pnpm verify:database-publication` run under the actual least-privilege
   materializer role completed `RECONCILED` publication and `RECONCILED`
   rollback with 14 exact ordered events, rejected cross-table target
   contention, released failed rollback candidate custody, and durably recorded
   an exhausted recovery as `RECONCILIATION_REQUIRED`. Git SSH and askpass were
   forced to fail throughout.
-- Candidate exchange now requires an exact Leadership-to-Studio bearer secret;
-  Studio's CSP allows forms only to the configured Leadership origin. Candidate
+- Candidate exchange now requires an exact Leadership-to-Studio bearer secret
+  plus the one-time Leadership verifier; Studio's CSP restricts forms to self. Candidate
   cookies are HttpOnly/Secure/SameSite=Strict with a same-site continuation,
   and candidate routes/sessions force no-store, no-referrer, noindex and omit
   analytics/advertising. Observation receipts require the configured key ID.
@@ -162,8 +151,8 @@ deployment and are superseded for live status by the section above.
   restoration deadlines. Exhausted automatic recovery writes a terminal
   reconciliation receipt/event instead of retrying indefinitely.
 - At that predeployment point, `pnpm verify` passed in Studio with 623 tests
-  and in Leadership with 42 tests. The current corrected gates pass 634 Studio
-  tests and 43 Leadership tests, with 22 and 51 generated routes/pages.
+  and in Leadership with 42 tests. The current corrected gates pass 635 Studio
+  tests and 47 Leadership tests, with 24 and 53 generated routes/pages.
 - No production mutation occurred during the local Checkpoint 1–5
   implementation/review work described here; guarded production execution was
   subsequently completed as recorded in the authoritative status above.
@@ -197,7 +186,7 @@ Direct private-IP root requests intentionally return only `{"status":"origin-rea
 - Sole private origin: `http://192.168.1.120:3005`.
 - Sole PM2 process: `leadership-field-guide`.
 - Active symlink: `/home/admin/projects/leadership/current`.
-- Active verified release: `/home/admin/projects/leadership/releases/20260721T052419Z`.
+- Active verified release: `/home/admin/projects/leadership/releases/20260721T075238Z`.
 - The published page for `repeatedly-misses-deadlines` visibly reports `Reviewed: 7/18/2026`.
 - The retired duplicate prototype is archived and returns 404. Its PM2 process, listener, runtime directory, and symlink are gone.
 
@@ -210,18 +199,19 @@ TimsPrototypes hosting is itself the candidate environment. There is intentional
 - Official manifest: `cb57e75893b6852d58b5ce9d2d82c4954e455bdaa09defde5e2b0cb6bc54ea8e`.
 - Candidate snapshot: `184cc9d9-6bc9-4833-90e2-ffac573e3d69`, hash
   `ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34`.
-- Database publication rows: one; the first row is `CANDIDATE_AVAILABLE` and is
+- Database publication rows: one; the first row is `AWAITING_CONFIRMATION` and is
   not an official publication.
 - Active publication request: `c078a261-9a02-41e4-9825-cddbd51ed428`.
-  Active rollback requests and candidate authorizations: zero. A short-lived
-  authorization is created only after recent human reauthentication.
-- Latest signed-in validation also found zero candidate observations and no
-  final confirmation. The official pointer and public Leadership bytes remain
-  unchanged.
+  Active rollback requests: zero. Production records nine historical handoff
+  attempts from diagnosis: seven revoked, two cookie-bound and exchanged, and
+  zero live unexchanged authorizations.
+- Latest signed-in validation found one exact healthy candidate observation,
+  zero final confirmations, and null `final_confirmed_at`. The official pointer
+  and public Leadership bytes remain unchanged.
 - Public Leadership source: `database`; the verified last-known-good cache is
   populated with the same snapshot/hash.
 - Studio web and separate publisher backends: `database`. The publisher is
-  waiting for the signed private-candidate observation and final confirmation.
+  waiting only for the owner's exact final confirmation.
 
 The reconciled Git-era publication for `repeatedly-misses-deadlines` remains
 readable historical provenance. Its request
@@ -262,7 +252,7 @@ not established. The owner explicitly waived that gate for this deployment;
 the independent reviewer accepted Checkpoint 5 only under that scoped waiver
 and required the residual catastrophic-recovery risk to stay explicit.
 
-The guarded release, 15 migrations/grants, exact bootstrap, shadow reader,
+The guarded release, 17 migrations/grants, exact bootstrap, shadow reader,
 cache, metrics, and abort controls are deployed. Shadow comparison was exact;
 the frozen-cache outage/reconvergence drill and both prior-release symlink
 rehearsals passed. At the final gate, load was 0.38/0.38/0.28, 4.55 GiB memory
@@ -334,32 +324,22 @@ unstable restarts; no migration command targeted it.
 
 ## Remaining work
 
-1. Resume from the three-file uncommitted Studio patch described above. Verify
-   it, obtain independent review, commit/push it, deploy it through the guarded
-   exact-commit release path, and reproduce the handoff in the in-app browser.
-   Do not ask the owner to retry the current production review button first;
-   its popup behavior is the active blocker.
-2. After that correction is deployed, the owner must sign in, choose **Review
-   private candidate**, enter their password if prompted, and then choose
-   **Continue to private candidate** in Leadership for exact candidate
-   `ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34`.
-   Leadership must return the signed healthy private-candidate receipt while
-   anonymous routes continue serving official hash `cb57e758...54ea8e`.
-3. After personally inspecting those exact private bytes, the owner must use
+1. After personally inspecting the exact private bytes already displayed in
+   Leadership, the owner must use
    the separate final confirmation for the same hash. Then verify the official
    pointer, public routes, cache, durable events, reconciliation, and custody
    release before declaring the first database publication complete.
-4. Observe the reconciled publication for the owner-approved duration
+2. Observe the reconciled publication for the owner-approved duration
    (proposed seven real days) with no unexplained snapshot, cache,
    authorization, availability, or audit mismatch.
-5. After the elapsed observation and explicit decommission approval, complete
+3. After the elapsed observation and explicit decommission approval, complete
    Checkpoint 8: revoke/remove Git publisher credentials/config/code, retain
    readable Git-era history, apply only forward schema contraction, and rerun
    recovery and production smoke evidence.
-6. The waived PITR/RPO/RTO capability remains resilience debt. Configure and
+4. The waived PITR/RPO/RTO capability remains resilience debt. Configure and
    rehearse encrypted off-host recovery when backup work resumes; do not record
    the deployment waiver as recovery proof.
-7. Coordinate PostgreSQL listener/firewall hardening without disrupting other
+5. Coordinate PostgreSQL listener/firewall hardening without disrupting other
    RP1 applications. Configure Anthropic only if optional fallback is desired.
 
 ## Safe operational commands

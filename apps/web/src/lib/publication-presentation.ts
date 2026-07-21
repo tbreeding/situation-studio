@@ -7,6 +7,91 @@ export type PublicationProgressStep = {
   status: PublicationProgressStatus;
 };
 
+export type PublicationLiveStage = {
+  label: string;
+  detail: string;
+};
+
+const publicationActivityLabels: Record<string, string> = {
+  SNAPSHOT_MATERIALIZED: "Exact candidate snapshot created",
+  SNAPSHOT_VALIDATED: "Candidate content validated",
+  CANDIDATE_AVAILABLE: "Private candidate made available",
+  CANDIDATE_VERIFIED: "Private candidate verified by Leadership",
+  OFFICIAL_POINTER_COMMITTED: "Official database snapshot selected",
+  PUBLICATION_RECONCILED: "Leadership verified and publication reconciled",
+  PUBLICATION_RESTORING_PREVIOUS: "Restoring the previous official snapshot",
+  PUBLICATION_AUTO_ROLLED_BACK: "Previous official snapshot restored",
+  PUBLICATION_RECONCILIATION_REQUIRED:
+    "Publication stopped for operator reconciliation",
+  PUBLICATION_FAILED_BEFORE_CONFIRMATION:
+    "Private preview stopped before publication",
+};
+
+export function publicationActivityLabel(eventType: string) {
+  return (
+    publicationActivityLabels[eventType] ??
+    eventType
+      .toLowerCase()
+      .replaceAll("_", " ")
+      .replace(/^./u, (letter) => letter.toUpperCase())
+  );
+}
+
+export function publicationLiveStage(
+  state: string,
+  backend: "git" | "database" = "git",
+): PublicationLiveStage {
+  if (state === "AWAITING_CONFIRMATION")
+    return {
+      label: "Confirmation is queued for the publisher",
+      detail:
+        "The confirmation is durable. The publisher will resume this exact request without another click.",
+    };
+  if (state === "OFFICIAL_POINTER_COMMITTED")
+    return {
+      label:
+        backend === "database"
+          ? "Checking Leadership for the exact official snapshot"
+          : "Checking the activated Leadership release",
+      detail:
+        backend === "database"
+          ? "Leadership is loading the new official database snapshot and returning a signed health receipt. This check is bounded; Studio restores the previous snapshot automatically if it cannot verify the new one."
+          : "Leadership is proving that the already-staged release is live before Studio completes publication.",
+    };
+  if (state === "CUTOVER")
+    return {
+      label: "Activating the reviewed Leadership release",
+      detail:
+        "The publisher is switching the live release to the exact candidate and will verify it before reconciliation.",
+    };
+  if (state === "LIVE_VERIFIED")
+    return {
+      label: "Leadership is verified; finishing reconciliation",
+      detail:
+        "The exact live content passed verification. Studio is recording the new baseline and releasing publisher custody.",
+    };
+  if (state === "RECONCILED")
+    return {
+      label: "Publication completed successfully",
+      detail:
+        "Leadership and Studio agree on the exact official snapshot, and publisher custody has been released.",
+    };
+  if (state === "RESTORING_PREVIOUS")
+    return {
+      label: "Restoring the previous official snapshot",
+      detail:
+        "The new snapshot did not verify in time. Studio is restoring and verifying the last known-good official content.",
+    };
+  return {
+    label:
+      backend === "database"
+        ? "Preparing the exact database snapshot"
+        : "Preparing the exact Leadership release",
+    detail:
+      "The trusted publisher is advancing the durable request. Closing this page will not interrupt it.",
+  };
+}
+
 export function privateCandidateHandoffDestination(bootstrapUrl: string) {
   const candidate = new URL(bootstrapUrl);
   if (

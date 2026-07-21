@@ -3,7 +3,10 @@ import { z } from "zod";
 import { currentSession } from "@/server/auth/sessions";
 import { database } from "@/server/database";
 import {
+  encodePublicationHeartbeat,
   encodePublicationEvent,
+  encodePublicationRetry,
+  encodePublicationStreamStatus,
   publicationReplaySequence,
 } from "@/lib/publication-events";
 
@@ -27,12 +30,25 @@ export async function GET(
       !session.permissions.has("system.admin"))
   )
     return new Response("Not found", { status: 404 });
+  if (request.nextUrl.searchParams.get("snapshot") === "1")
+    return Response.json(
+      {
+        state: publication.state,
+        currentStep: publication.currentStep,
+        updatedAt: publication.updatedAt.toISOString(),
+        finalConfirmed: Boolean(publication.finalConfirmedAt),
+        serverTime: new Date().toISOString(),
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   const encoder = new TextEncoder();
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let sequence = publicationReplaySequence(
     request.headers.get("last-event-id"),
   );
+  let statusFingerprint = "";
+  let lastHeartbeatAt = 0;
   const startedAt = Date.now();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -47,6 +63,7 @@ export async function GET(
         }
       };
       request.signal.addEventListener("abort", stop, { once: true });
+      controller.enqueue(encoder.encode(encodePublicationRetry(2_000)));
       const emit = async () => {
         if (stopped) return;
         try {
@@ -58,15 +75,47 @@ export async function GET(
             orderBy: { sequence: "asc" },
             take: 100,
           });
-          if (!events.length)
+          const current = await database().publicationRequest.findUnique({
+            where: { id: publication.id },
+            select: {
+              state: true,
+              currentStep: true,
+              updatedAt: true,
+              finalConfirmedAt: true,
+            },
+          });
+          if (!current) return stop();
+          const now = new Date();
+          const status = {
+            state: current.state,
+            currentStep: current.currentStep,
+            updatedAt: current.updatedAt.toISOString(),
+            finalConfirmed: Boolean(current.finalConfirmedAt),
+            serverTime: now.toISOString(),
+          };
+          const nextFingerprint = JSON.stringify({
+            state: status.state,
+            currentStep: status.currentStep,
+            updatedAt: status.updatedAt,
+            finalConfirmed: status.finalConfirmed,
+          });
+          if (nextFingerprint !== statusFingerprint) {
+            statusFingerprint = nextFingerprint;
             controller.enqueue(
-              encoder.encode(`: heartbeat ${new Date().toISOString()}\n\n`),
+              encoder.encode(encodePublicationStreamStatus(status)),
             );
+          }
           for (const event of events) {
             sequence = event.sequence;
             controller.enqueue(encoder.encode(encodePublicationEvent(event)));
           }
-          if (Date.now() - startedAt >= 60_000) return stop();
+          if (now.getTime() - lastHeartbeatAt >= 5_000) {
+            lastHeartbeatAt = now.getTime();
+            controller.enqueue(
+              encoder.encode(encodePublicationHeartbeat(status)),
+            );
+          }
+          if (now.getTime() - startedAt >= 5 * 60_000) return stop();
           timer = setTimeout(emit, 1_000);
         } catch (error) {
           stopped = true;

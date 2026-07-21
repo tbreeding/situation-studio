@@ -4,7 +4,9 @@ import {
   isAwaitingHumanConfirmation,
   isPrivateCandidateReviewPending,
   privateCandidateHandoffDestination,
+  publicationActivityLabel,
   publicationDecisionLabel,
+  publicationLiveStage,
   publicationProgressSteps,
   reconciliationDisagreement,
   shouldPollPublication,
@@ -250,6 +252,32 @@ describe("publication presentation", () => {
       );
     },
   );
+
+  test("explains the bounded Leadership verification instead of showing a spinner alone", () => {
+    const stage = publicationLiveStage(
+      "OFFICIAL_POINTER_COMMITTED",
+      "database",
+    );
+    expect(stage.label).toBe(
+      "Checking Leadership for the exact official snapshot",
+    );
+    expect(stage.detail).toContain("signed health receipt");
+    expect(stage.detail).toContain("restores the previous snapshot");
+  });
+
+  test("describes completion and durable publisher activity in user language", () => {
+    expect(publicationLiveStage("RECONCILED", "database")).toEqual({
+      label: "Publication completed successfully",
+      detail:
+        "Leadership and Studio agree on the exact official snapshot, and publisher custody has been released.",
+    });
+    expect(publicationActivityLabel("OFFICIAL_POINTER_COMMITTED")).toBe(
+      "Official database snapshot selected",
+    );
+    expect(publicationActivityLabel("PUBLICATION_RECONCILED")).toBe(
+      "Leadership verified and publication reconciled",
+    );
+  });
 
   test.each(terminalCases)(
     "%s is terminal and has an unambiguous label",

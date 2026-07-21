@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PublicationConfirmationDialog } from "@/components/publication-confirmation-dialog";
+import { PublicationLiveProgress } from "@/components/publication-live-progress";
 import { ReauthenticationDialog } from "@/components/reauthentication-dialog";
 import { PrivateCandidateHandoffButton } from "@/components/private-candidate-handoff-button";
 import { RenderedGuidance } from "@/components/rendered-guidance";
@@ -11,9 +12,7 @@ import {
   canPrepareDatabaseFailedPreviewRecovery,
   isAwaitingHumanConfirmation,
   isPrivateCandidateReviewPending,
-  publicationProgressSteps,
   reconciliationDisagreement,
-  shouldPollPublication,
 } from "@/lib/publication-presentation";
 import { reconcileDisplayedArtifactBody } from "@/lib/workspace-editor-state";
 
@@ -159,14 +158,6 @@ export function WorkspaceEditor(props: Props) {
       props.publicationRequest.finalConfirmed ||
       props.publicationRequest.state !== "AWAITING_CONFIRMATION"),
   );
-  const progressSteps = props.publicationRequest
-    ? publicationProgressSteps(
-        props.publicationRequest.state,
-        props.publicationRequest.finalConfirmed,
-        publicationConfirmationSubmitted,
-        props.publicationBackend,
-      )
-    : [];
   const publicationSucceeded =
     publicationConfirmationSubmitted && !props.publicationRequest;
   const lifecycleReasonError =
@@ -262,30 +253,6 @@ export function WorkspaceEditor(props: Props) {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [closeExpandedSource, sourceExpanded]);
-
-  useEffect(() => {
-    if (!props.publicationRequest) return;
-    if (
-      !shouldPollPublication(
-        props.publicationRequest.state,
-        props.publicationRequest.finalConfirmed,
-        publicationConfirmationSubmitted,
-      )
-    )
-      return;
-    const source = new EventSource(
-      `/api/publications/${props.publicationRequest.id}/events`,
-    );
-    let fallback: number | null = null;
-    source.addEventListener("publication", () => router.refresh());
-    source.onerror = () => {
-      fallback ??= window.setInterval(() => router.refresh(), 2_500);
-    };
-    return () => {
-      source.close();
-      if (fallback !== null) window.clearInterval(fallback);
-    };
-  }, [props.publicationRequest, publicationConfirmationSubmitted, router]);
 
   useEffect(() => {
     if (
@@ -887,44 +854,12 @@ export function WorkspaceEditor(props: Props) {
           )}
 
         {props.publicationRequest && publicationProgressVisible && (
-          <section
-            className="publicationDecisionCard publishing"
-            aria-labelledby="publication-progress-title"
-            aria-live="polite"
-            role="status"
-          >
-            <div className="publicationDecisionCopy">
-              <p className="eyebrow">Final publication in progress</p>
-              <h3 id="publication-progress-title">
-                Publishing exact candidate{" "}
-                {props.publicationRequest.previewCommitSha?.slice(0, 8)}
-              </h3>
-              <p>
-                Confirmation is recorded. This status updates automatically; no
-                additional action is required.
-              </p>
-            </div>
-            <ol className="publicationProgress">
-              {progressSteps.map((step, index) => (
-                <li className={step.status} key={step.key}>
-                  <span aria-hidden="true">
-                    {step.status === "complete" ? "✓" : index + 1}
-                  </span>
-                  <div>
-                    <strong>{step.label}</strong>
-                    <small>{step.description}</small>
-                  </div>
-                </li>
-              ))}
-            </ol>
-            <p className="publicationProgressFootnote">
-              Previous official baseline{" "}
-              <code>
-                {props.publishedCommitSha?.slice(0, 8) ?? "unavailable"}
-              </code>{" "}
-              remains recoverable until reconciliation completes.
-            </p>
-          </section>
+          <PublicationLiveProgress
+            confirmationSubmitted={publicationConfirmationSubmitted}
+            publicationBackend={props.publicationBackend}
+            publishedBaseline={props.publishedCommitSha}
+            request={props.publicationRequest}
+          />
         )}
 
         <div className="saveBar primaryActionBar">

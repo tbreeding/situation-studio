@@ -1169,32 +1169,48 @@ test("a synthetic proposal remains unmistakably separate from the published base
       await expect(page.locator(".publicationProgress li.current")).toHaveCount(
         1,
       );
+      await expect(
+        page.getByTestId("publication-live-connection"),
+      ).toContainText("Live updates connected");
+      await expect(page.getByTestId("publication-live-stage")).toContainText(
+        "Confirmation is queued for the publisher",
+      );
       await database.query(
         `UPDATE publication_requests
-         SET state = 'CUTOVER', current_step = 'CUTOVER'
+         SET state = 'OFFICIAL_POINTER_COMMITTED',
+             current_step = 'OFFICIAL_POINTER_COMMITTED'
          WHERE id = $1`,
         [stagedRequestId],
       );
-      await page.reload();
       await expect(
         page.locator(".publicationProgress li.complete"),
       ).toHaveCount(2, { timeout: 8_000 });
       await expect(page.locator(".publicationProgress li.current")).toHaveCount(
         1,
       );
+      await expect(page.getByTestId("publication-live-stage")).toContainText(
+        "Checking the activated Leadership release",
+      );
       await database.query(
         `UPDATE publication_requests
-         SET state = 'LIVE_VERIFIED', current_step = 'LIVE_VERIFIED'
+         SET state = 'RECONCILED', current_step = 'RECONCILED'
          WHERE id = $1`,
         [stagedRequestId],
       );
-      await page.reload();
       await expect(
         page.locator(".publicationProgress li.complete"),
-      ).toHaveCount(3, { timeout: 8_000 });
-      await expect(page.locator(".publicationProgress li.current")).toHaveCount(
-        1,
+      ).toHaveCount(4, { timeout: 8_000 });
+      await expect(page.getByTestId("publication-live-stage")).toContainText(
+        "Publication completed successfully",
       );
+      await expect(
+        page.getByTestId("publication-live-connection"),
+      ).toContainText("Live publication complete");
+      await expect(
+        page.getByRole("heading", {
+          name: "Published exact candidate bbbbbbbb",
+        }),
+      ).toBeVisible();
       await expect(page.locator(".publicationProgress")).toContainText(
         "Studio reconciled and custody released",
       );

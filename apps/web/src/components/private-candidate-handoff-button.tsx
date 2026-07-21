@@ -118,6 +118,7 @@ export function PrivateCandidateHandoffButton({
   return submission ? (
     <form
       action={submission.action}
+      encType="application/x-www-form-urlencoded"
       method={submission.method}
       target={submission.target}
       onSubmit={() =>

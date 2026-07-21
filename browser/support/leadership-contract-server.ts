@@ -88,6 +88,7 @@ export async function startLeadershipContractServer(input: {
   const observedRequests = new Set<string>();
   const state = {
     exchangeAttempts: 0,
+    lastContentType: null as string | null,
     lastFieldNames: [] as string[],
     lastReturnTo: null as string | null,
     replayStatus: null as number | null,
@@ -108,6 +109,21 @@ export async function startLeadershipContractServer(input: {
       }
       if (request.method === "POST" && url.pathname === "/candidate/exchange") {
         state.exchangeAttempts += 1;
+        const contentType = request.headers["content-type"] ?? "";
+        state.lastContentType = contentType;
+        if (
+          !contentType
+            .toLowerCase()
+            .startsWith("application/x-www-form-urlencoded")
+        ) {
+          send(
+            response,
+            415,
+            "text/plain; charset=utf-8",
+            "Candidate exchange requires URL-encoded form data",
+          );
+          return;
+        }
         const fields = new URLSearchParams(await body(request));
         state.lastFieldNames = [...fields.keys()].sort();
         const exchangeToken = fields.get("token") ?? "";

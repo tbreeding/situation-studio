@@ -263,6 +263,9 @@ test("recent reauthentication hands the exact candidate through one same-tab exc
     ).json();
     expect(contractState).toMatchObject({
       exchangeAttempts: 1,
+      lastContentType: expect.stringMatching(
+        /^application\/x-www-form-urlencoded(?:;|$)/u,
+      ),
       lastFieldNames: ["returnTo", "token"],
       lastReturnTo: `/situations/${fixture.situationSlug}`,
       replayStatus: 404,

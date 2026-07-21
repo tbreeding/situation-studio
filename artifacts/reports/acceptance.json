@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-21T08:02:04Z",
+  "recordedAt": "2026-07-21T19:23:37Z",
   "source": {
     "leadershipCommit": "0d7d161e9fbac5f723754f6611c87a4cbbf90f28",
     "leadershipRepositoryModified": false,
@@ -18,20 +18,21 @@
     "prismaSchema": "passed",
     "secretScan": "passed",
     "productionBuild": "passed",
-    "unitContractTests": 635,
+    "unitContractTests": 842,
     "browserTests": {
-      "total": 37,
-      "passed": 29,
+      "total": 38,
+      "passed": 30,
       "skipped": 8,
       "desktop": 24,
       "mobile": 4,
       "privateCandidateHandoff": 1,
+      "databasePublicationPresentation": 1,
       "environment": "production-build-disposable-production-clone"
     },
     "database": {
       "postgresVersion": "16.12",
-      "productionMigrations": 17,
-      "localValidationMigrations": 17,
+      "productionMigrations": 18,
+      "localValidationMigrations": 18,
       "historicalUpgrade": "passed",
       "idempotentRedeploy": "passed",
       "checkoutRace": "one-winner",
@@ -39,7 +40,7 @@
     }
   },
   "databasePublicationMigration": {
-    "status": "checkpoint-7-awaiting-exact-final-confirmation",
+    "status": "checkpoint-8-observation-period",
     "productionMutated": true,
     "checkpoint1": {
       "schemaExpansion": "passed-postgresql-16.12",
@@ -123,8 +124,8 @@
     "checkpoint5": {
       "productionReadOnlyDiscovery": "passed",
       "productionMutated": true,
-      "activeStudioRelease": "20260721T080009Z",
-      "activeStudioCommit": "b495e1b61b45e6c927155638635ee02297f412c4",
+      "activeStudioRelease": "20260721T192033Z",
+      "activeStudioCommit": "23c4b5faea8ec39e68e534a030403125040e5b2d",
       "activeLeadershipRelease": "20260721T075238Z",
       "activeLeadershipCommit": "0d7d161e9fbac5f723754f6611c87a4cbbf90f28",
       "productionPostgresVersion": "16.12",
@@ -141,7 +142,7 @@
       "bootstrapOfficialSnapshotId": "0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3",
       "bootstrapMembers": 32,
       "bootstrapEdges": 99,
-      "studioLocalGate": "passed-635-tests-and-production-build",
+      "studioLocalGate": "passed-842-tests-and-production-build",
       "leadershipLocalGate": "passed-47-tests-and-production-build",
       "recoveryEvidenceTemplate": "prepared",
       "minuteByMinuteRunbook": "prepared",
@@ -168,7 +169,7 @@
       "unrelatedServices": "online-stable"
     },
     "checkpoint7": {
-      "status": "awaiting-exact-final-confirmation",
+      "status": "complete-published-and-reconciled",
       "publisherBackend": "database-main",
       "publisherRole": "situation_studio_materializer",
       "publisherSessionsRead": false,
@@ -178,8 +179,9 @@
       "publicationRequestId": "c078a261-9a02-41e4-9825-cddbd51ed428",
       "candidateSnapshotId": "184cc9d9-6bc9-4833-90e2-ffac573e3d69",
       "candidateSnapshotHash": "ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34",
-      "officialSnapshotUnchanged": "0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3",
-      "databasePublicationRows": 1,
+      "officialSnapshotBeforePublication": "0a43cd58-5690-4c2b-ac2e-9a0c4ad86df3",
+      "officialSnapshotAfterPublication": "184cc9d9-6bc9-4833-90e2-ffac573e3d69",
+      "databasePublicationRows": 2,
       "candidateAuthorizations": 9,
       "cookieBoundAuthorizations": 2,
       "exchangedAuthorizations": 2,
@@ -187,10 +189,11 @@
       "liveUnexchangedAuthorizations": 0,
       "privateCandidateObservations": 1,
       "exactHealthyCandidateObservations": 1,
-      "finalConfirmations": 0,
-      "finalConfirmedAt": null,
-      "requestState": "AWAITING_CONFIRMATION",
-      "databasePublicationState": "AWAITING_CONFIRMATION",
+      "finalConfirmations": 1,
+      "finalConfirmedAt": "2026-07-21T16:04:09.144Z",
+      "requestState": "RECONCILED",
+      "databasePublicationState": "RECONCILED",
+      "terminalOutcome": "PUBLISHED",
       "handoff": "cookie-bound-same-tab-get-signed-callback-http-only-verifier",
       "crossSitePosts": 0,
       "replayStatus": 404,
@@ -212,14 +215,14 @@
         "checkout": "released-saved-revision-preserved-audited"
       },
       "proposalRefreshEditorStateFix": "deployed-independently-accepted-genuine-local-edits-preserved",
-      "requiredNextEvidence": "owner-exact-final-confirmation-live-verification-reconciliation"
+      "requiredNextEvidence": "complete-observation-period-and-recovery-revalidation"
     },
     "checkpoint8": {
-      "status": "blocked-real-observation-period-not-started",
+      "status": "blocked-real-observation-period-in-progress",
       "proposedObservationDays": 7,
       "gitEraHistoryRetained": true
     },
-    "nextCheckpoint": "7-owner-exact-final-confirmation"
+    "nextCheckpoint": "8-observation-and-explicit-decommission-approval"
   },
   "inAppBrowser": {
     "runtime": "production-build",
@@ -241,7 +244,33 @@
     "privateCandidateObservationStatus": 200,
     "candidateUrlClean": true,
     "candidatePopupCount": 0,
-    "finalConfirmationClicked": false
+    "finalConfirmationRecorded": true,
+    "finalConfirmationClickedDuringThisAcceptance": false,
+    "publicationStateConsistency": "passed-live-failed-preview-and-checked-in-action-mutual-exclusion",
+    "liveAcceptanceMutations": "none"
+  },
+  "publicationPresentationRegression": {
+    "status": "production-deployed-and-live-verified",
+    "verifiedAt": "2026-07-21T19:23:37Z",
+    "studioCommit": "23c4b5faea8ec39e68e534a030403125040e5b2d",
+    "studioRelease": "20260721T192033Z",
+    "persistedStates": 21,
+    "focusedContractTests": 258,
+    "completeRepositoryTests": 842,
+    "testcontainersBrowserPassed": 30,
+    "testcontainersBrowserSkipped": 8,
+    "failedPreviewState": "FAILED_PREVIEW",
+    "failedPreviewTerminalOutcome": "FAILED_BEFORE_CONFIRMATION",
+    "failedPreviewCandidatePointer": null,
+    "failedPreviewActiveCheckout": null,
+    "failedPreviewLiveCandidateStatus": "Preview failed",
+    "failedPreviewLiveLeadershipStatus": "Official baseline unchanged",
+    "failedPreviewLiveProgressCards": 0,
+    "failedPreviewLiveRecoveryAction": "Check out for editing",
+    "checkedInReviewCheckout": "No active owner",
+    "checkedInReviewAction": "Check out for editing",
+    "checkedInReviewPrepareActionCount": 0,
+    "consoleErrors": 0
   },
   "publicationEvidence": {
     "fixtureSlug": "hold-the-agreement-boundary",

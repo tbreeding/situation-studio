@@ -1,6 +1,6 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-21, during the first Checkpoint 7 production publication
+Last updated: 2026-07-21, after live validation of the private-review handoff
 
 ## Purpose and authority
 
@@ -71,6 +71,23 @@ The original implementation specification is `/Users/timothybreeding/projects/le
   authorizations and zero candidate observations. Recent password
   reauthentication, private-candidate observation, and exact final human
   confirmation remain mandatory; neither may be manufactured or bypassed.
+- A subsequent signed-in live validation reproduced another blocker before any
+  authorization was created. Selecting **Review private candidate** in the
+  Codex in-app browser replaced the Studio tab with `about:blank`; the
+  asynchronous authorization request did not complete. A read-only production
+  query immediately afterward still showed `CANDIDATE_AVAILABLE`, zero
+  candidate authorizations, zero candidate observations, and no final
+  confirmation. The Studio tab was restored to the situation workspace.
+- The apparent cause is Studio's preauthorization
+  `window.open("about:blank", "leadership-candidate")` strategy, which is not
+  safe in a constrained single-tab browser. A local, uncommitted patch removes
+  the popup and submits the one-time candidate exchange in the current tab. It
+  also adds a pure regression for the `_self` handoff. Those changes are
+  formatted but have **not** been verified, independently reviewed, committed,
+  pushed, or deployed. They currently modify
+  `apps/web/src/components/workspace-editor.tsx`,
+  `apps/web/src/lib/publication-presentation.ts`, and
+  `apps/web/test/publication-presentation.test.ts`.
 - Checkpoint 8 remains blocked until the first database publication and the
   real approved observation period (proposed seven days) complete, followed by
   recovery revalidation and explicit decommission approval.
@@ -198,6 +215,9 @@ TimsPrototypes hosting is itself the candidate environment. There is intentional
 - Active publication request: `c078a261-9a02-41e4-9825-cddbd51ed428`.
   Active rollback requests and candidate authorizations: zero. A short-lived
   authorization is created only after recent human reauthentication.
+- Latest signed-in validation also found zero candidate observations and no
+  final confirmation. The official pointer and public Leadership bytes remain
+  unchanged.
 - Public Leadership source: `database`; the verified last-known-good cache is
   populated with the same snapshot/hash.
 - Studio web and separate publisher backends: `database`. The publisher is
@@ -314,27 +334,32 @@ unstable restarts; no migration command targeted it.
 
 ## Remaining work
 
-1. The owner must sign in to the open Studio tab, choose **Review private
-   candidate**, enter their password when prompted, and then choose
+1. Resume from the three-file uncommitted Studio patch described above. Verify
+   it, obtain independent review, commit/push it, deploy it through the guarded
+   exact-commit release path, and reproduce the handoff in the in-app browser.
+   Do not ask the owner to retry the current production review button first;
+   its popup behavior is the active blocker.
+2. After that correction is deployed, the owner must sign in, choose **Review
+   private candidate**, enter their password if prompted, and then choose
    **Continue to private candidate** in Leadership for exact candidate
    `ca8d523a5a4acef439a368c3511296d6058fccd20fb02c7d50cfa17ec7868a34`.
    Leadership must return the signed healthy private-candidate receipt while
    anonymous routes continue serving official hash `cb57e758...54ea8e`.
-2. After personally inspecting those exact private bytes, the owner must use
+3. After personally inspecting those exact private bytes, the owner must use
    the separate final confirmation for the same hash. Then verify the official
    pointer, public routes, cache, durable events, reconciliation, and custody
    release before declaring the first database publication complete.
-3. Observe the reconciled publication for the owner-approved duration
+4. Observe the reconciled publication for the owner-approved duration
    (proposed seven real days) with no unexplained snapshot, cache,
    authorization, availability, or audit mismatch.
-4. After the elapsed observation and explicit decommission approval, complete
+5. After the elapsed observation and explicit decommission approval, complete
    Checkpoint 8: revoke/remove Git publisher credentials/config/code, retain
    readable Git-era history, apply only forward schema contraction, and rerun
    recovery and production smoke evidence.
-5. The waived PITR/RPO/RTO capability remains resilience debt. Configure and
+6. The waived PITR/RPO/RTO capability remains resilience debt. Configure and
    rehearse encrypted off-host recovery when backup work resumes; do not record
    the deployment waiver as recovery proof.
-6. Coordinate PostgreSQL listener/firewall hardening without disrupting other
+7. Coordinate PostgreSQL listener/firewall hardening without disrupting other
    RP1 applications. Configure Anthropic only if optional fallback is desired.
 
 ## Safe operational commands

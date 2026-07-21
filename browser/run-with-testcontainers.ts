@@ -145,22 +145,27 @@ async function main() {
       (process.platform === "darwin"
         ? "/opt/homebrew/opt/libpq/bin/psql"
         : "psql");
-    await run(
-      psql,
-      [
-        "-h",
-        container.getHost(),
-        "-p",
-        String(container.getPort()),
-        "-U",
-        container.getUsername(),
-        "-d",
-        container.getDatabase(),
-        "-f",
-        path.join(projectRoot, "ops/grant-database-publication-privileges.sql"),
-      ],
-      { ...baseEnvironment, PGPASSWORD: container.getPassword() },
-    );
+    for (const grants of [
+      "grant-runtime-privileges.sql",
+      "grant-service-privileges.sql",
+      "grant-database-publication-privileges.sql",
+    ])
+      await run(
+        psql,
+        [
+          "-h",
+          container.getHost(),
+          "-p",
+          String(container.getPort()),
+          "-U",
+          container.getUsername(),
+          "-d",
+          container.getDatabase(),
+          "-f",
+          path.join(projectRoot, "ops", grants),
+        ],
+        { ...baseEnvironment, PGPASSWORD: container.getPassword() },
+      );
     await run(
       "pnpm",
       ["tsx", "packages/testing/src/seed-legacy-database-bootstrap.ts"],
@@ -175,6 +180,12 @@ async function main() {
       ["tsx", "packages/testing/src/seed-browser-workspace.ts"],
       baseEnvironment,
     );
+    const webDatabase = new URL(databaseUrl);
+    webDatabase.searchParams.set("options", "-c role=situation_studio_web");
+    const webEnvironment = {
+      ...baseEnvironment,
+      DATABASE_URL: webDatabase.toString(),
+    };
 
     const gitPort = await freePort();
     const databasePort = await freePort();
@@ -198,7 +209,7 @@ async function main() {
       LEADERSHIP_REPO_PATH: path.resolve(projectRoot, "../leadership"),
     };
     await run("pnpm", ["build"], {
-      ...baseEnvironment,
+      ...webEnvironment,
       ...applicationSecrets,
       SITUATION_STUDIO_ORIGIN: gitOrigin,
       SITUATION_STUDIO_HOST: new URL(gitOrigin).host,
@@ -229,7 +240,7 @@ async function main() {
         String(gitPort),
       ],
       {
-        ...baseEnvironment,
+        ...webEnvironment,
         ...applicationSecrets,
         SITUATION_STUDIO_ORIGIN: gitOrigin,
         SITUATION_STUDIO_HOST: new URL(gitOrigin).host,
@@ -251,7 +262,7 @@ async function main() {
         String(databasePort),
       ],
       {
-        ...baseEnvironment,
+        ...webEnvironment,
         ...applicationSecrets,
         SITUATION_STUDIO_ORIGIN: databaseOrigin,
         SITUATION_STUDIO_HOST: new URL(databaseOrigin).host,

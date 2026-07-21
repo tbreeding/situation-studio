@@ -21,7 +21,8 @@
     "bootstrap:database-publication:apply": "tsx packages/testing/src/backfill-database-bootstrap.ts",
     "verify:database-publication": "pnpm db:validate && tsx packages/testing/src/verify-database-bootstrap.ts && tsx packages/testing/src/database-publication-invariants.ts && tsx packages/testing/src/verify-legacy-database-bootstrap-guards.ts && tsx packages/testing/src/seed-legacy-database-bootstrap.ts && tsx packages/testing/src/backfill-database-bootstrap.ts && tsx packages/testing/src/verify-legacy-database-bootstrap.ts && tsx packages/testing/src/failed-preview-recovery-acceptance.ts && tsx packages/testing/src/database-publication-acceptance.ts full",
     "verify:failed-preview-recovery": "tsx packages/testing/src/failed-preview-recovery-acceptance.ts",
-    "test:browser": "playwright test",
+    "test:browser": "tsx browser/run-with-testcontainers.ts",
+    "test:browser:playwright": "playwright test",
     "db:generate": "prisma generate --config packages/db/prisma.config.ts",
     "db:validate": "prisma validate --config packages/db/prisma.config.ts",
     "db:migrate:deploy": "prisma migrate deploy --config packages/db/prisma.config.ts",
@@ -37,6 +38,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "1.61.1",
+    "@testcontainers/postgresql": "^12.0.4",
     "@types/node": "24.13.3",
     "@types/pg": "8.20.0",
     "eslint": "9.39.5",

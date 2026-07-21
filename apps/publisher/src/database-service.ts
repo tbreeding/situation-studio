@@ -109,6 +109,7 @@ async function ensurePublication(database: DatabaseClient, requestId: string) {
     target.code !== targetCode ||
     !target.officialSnapshotId ||
     !target.bootstrappedAt ||
+    request.targetGeneration !== target.generation ||
     request.baseContentSnapshotId !== target.officialSnapshotId ||
     request.baseContentSnapshotHash !==
       request.approval.baseContentSnapshotHash ||
@@ -176,6 +177,7 @@ async function materializeSnapshot(
     request.approval.bundleHash !== request.bundleHash ||
     request.approval.baseContentSnapshotId !== base.id ||
     request.approval.baseContentSnapshotHash !== base.manifestHash ||
+    request.targetGeneration !== target.generation ||
     request.bundle.state !== "APPROVED"
   )
     throw new Error("Candidate materialization preconditions changed.");

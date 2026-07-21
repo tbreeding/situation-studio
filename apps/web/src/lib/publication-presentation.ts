@@ -7,6 +7,37 @@ export type PublicationProgressStep = {
   status: PublicationProgressStatus;
 };
 
+export type PrivateCandidateExchangeSubmission = ReturnType<
+  typeof privateCandidateExchangeSubmission
+>;
+
+export function privateCandidateExchangeSubmission(input: {
+  candidateUrl: string;
+  exchangeToken: string;
+  situationSlug: string;
+}) {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(input.situationSlug))
+    throw new Error("Invalid situation slug");
+  if (!/^[a-f0-9]{64}$/u.test(input.exchangeToken))
+    throw new Error("Invalid candidate exchange token");
+  const candidate = new URL(input.candidateUrl);
+  if (
+    !["http:", "https:"].includes(candidate.protocol) ||
+    candidate.username ||
+    candidate.password
+  )
+    throw new Error("Invalid candidate origin");
+  return {
+    method: "post" as const,
+    action: new URL("/candidate/exchange", candidate.origin).toString(),
+    target: "_self" as const,
+    fields: {
+      token: input.exchangeToken,
+      returnTo: `/situations/${input.situationSlug}`,
+    },
+  };
+}
+
 export function reconciliationDisagreement(input: {
   kind: "publication" | "rollback";
   officialSnapshotHash: string | null;

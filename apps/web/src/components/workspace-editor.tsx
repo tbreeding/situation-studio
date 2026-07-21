@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PublicationConfirmationDialog } from "@/components/publication-confirmation-dialog";
 import { ReauthenticationDialog } from "@/components/reauthentication-dialog";
+import { PrivateCandidateHandoffButton } from "@/components/private-candidate-handoff-button";
 import { RenderedGuidance } from "@/components/rendered-guidance";
 import { SynchronizedDiff } from "@/components/synchronized-diff";
 import {
@@ -588,77 +589,6 @@ export function WorkspaceEditor(props: Props) {
     }
   }
 
-  async function exchangePrivateCandidate(
-    requestId: string,
-    requestKind: "publication" | "rollback",
-  ) {
-    const candidateWindow = window.open("about:blank", "leadership-candidate");
-    setStatus("Creating a one-time private candidate authorization…");
-    const response = await fetch(
-      `/api/${requestKind === "publication" ? "publications" : "rollbacks"}/${requestId}/candidate-authorization`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-csrf-token": props.csrfToken,
-        },
-        body: "{}",
-      },
-    );
-    if (
-      await requestReauthentication(
-        response,
-        "open this private candidate",
-        () => exchangePrivateCandidate(requestId, requestKind),
-      )
-    ) {
-      candidateWindow?.close();
-      return;
-    }
-    const result = (await response.json().catch(() => null)) as {
-      exchangeToken?: string;
-      candidateUrl?: string;
-      error?: string;
-    } | null;
-    if (!response.ok || !result?.exchangeToken || !result.candidateUrl) {
-      candidateWindow?.close();
-      setStatus(result?.error ?? "Private candidate authorization failed.");
-      return;
-    }
-    const form = document.createElement("form");
-    form.method = "post";
-    form.action = new URL(
-      "/candidate/exchange",
-      result.candidateUrl,
-    ).toString();
-    form.target = "leadership-candidate";
-    const fields = {
-      token: result.exchangeToken,
-      returnTo: `/situations/${props.situationSlug}`,
-    };
-    for (const [name, value] of Object.entries(fields)) {
-      const input = document.createElement("input");
-      input.type = "hidden";
-      input.name = name;
-      input.value = value;
-      form.append(input);
-    }
-    document.body.append(form);
-    form.submit();
-    form.remove();
-    setStatus("Private candidate opened in Leadership for exact review.");
-  }
-
-  async function openPrivateCandidate() {
-    if (!props.publicationRequest) return;
-    await exchangePrivateCandidate(props.publicationRequest.id, "publication");
-  }
-
-  async function openRollbackCandidate() {
-    if (!props.rollbackRequest) return;
-    await exchangePrivateCandidate(props.rollbackRequest.id, "rollback");
-  }
-
   async function confirmRollback() {
     if (!props.rollbackRequest) return;
     setStatus("Recording confirmation for the exact rollback snapshot…");
@@ -869,7 +799,7 @@ export function WorkspaceEditor(props: Props) {
                 </h3>
                 <p>
                   {privateCandidateReviewPending
-                    ? "Open the exact candidate in the private Leadership window. A healthy observation will unlock final confirmation; the official database pointer has not moved."
+                    ? "Open the exact candidate in Leadership. A healthy observation will unlock final confirmation; the official database pointer has not moved."
                     : `It is reviewed and verified, but it is not yet the official published baseline. ${props.publicationBackend === "database" ? "The official database pointer has not moved." : "Protected Git main has not moved."}`}
                 </p>
               </div>
@@ -914,13 +844,18 @@ export function WorkspaceEditor(props: Props) {
                 <div className="publicationDecisionActions">
                   {props.publicationBackend === "database" &&
                   props.permissions.includes("publication.publish") ? (
-                    <button
+                    <PrivateCandidateHandoffButton
+                      actionLabel="open this private candidate"
                       className="button secondary"
-                      type="button"
-                      onClick={openPrivateCandidate}
+                      csrfToken={props.csrfToken}
+                      requestId={props.publicationRequest.id}
+                      requestKind="publication"
+                      situationSlug={props.situationSlug}
+                      onReauthenticationRequired={setReauthenticationRequest}
+                      onStatus={setStatus}
                     >
-                      Review private candidate ↗
-                    </button>
+                      Review private candidate
+                    </PrivateCandidateHandoffButton>
                   ) : props.publicationBackend === "git" ? (
                     <a
                       className="button secondary"
@@ -1185,23 +1120,34 @@ export function WorkspaceEditor(props: Props) {
                       : `Rollback in progress: ${props.rollbackRequest.currentStep.toLowerCase().replaceAll("_", " ")}.`}
             </p>
             {props.publicationBackend === "database" &&
-              props.rollbackRequest.state === "AWAITING_CONFIRMATION" && (
+              [
+                "CANDIDATE_AVAILABLE",
+                "CANDIDATE_VERIFIED",
+                "AWAITING_CONFIRMATION",
+              ].includes(props.rollbackRequest.state) && (
                 <div className="workspaceActions">
-                  <button
+                  <PrivateCandidateHandoffButton
+                    actionLabel="open this private rollback candidate"
                     className="button secondary"
-                    type="button"
-                    onClick={openRollbackCandidate}
+                    csrfToken={props.csrfToken}
+                    requestId={props.rollbackRequest.id}
+                    requestKind="rollback"
+                    situationSlug={props.situationSlug}
+                    onReauthenticationRequired={setReauthenticationRequest}
+                    onStatus={setStatus}
                   >
-                    Review rollback candidate ↗
-                  </button>
-                  <button
-                    className="button warn"
-                    type="button"
-                    onClick={confirmRollback}
-                  >
-                    Confirm rollback{" "}
-                    {props.rollbackRequest.candidateIdentity?.slice(0, 8)}
-                  </button>
+                    Review rollback candidate
+                  </PrivateCandidateHandoffButton>
+                  {props.rollbackRequest.state === "AWAITING_CONFIRMATION" && (
+                    <button
+                      className="button warn"
+                      type="button"
+                      onClick={confirmRollback}
+                    >
+                      Confirm rollback{" "}
+                      {props.rollbackRequest.candidateIdentity?.slice(0, 8)}
+                    </button>
+                  )}
                 </div>
               )}
           </div>

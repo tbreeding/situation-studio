@@ -1,11 +1,13 @@
-import { randomBytes } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { sha256 } from "@situation-studio/domain";
 import { authenticateMutation } from "@/server/auth/request";
 import { database } from "@/server/database";
 import { environment } from "@/server/environment";
 import { audit } from "@/server/audit";
+import {
+  CandidateUnavailableError,
+  createCandidateAuthorization,
+} from "@/server/publication/candidate-authorization";
 
 const paramsSchema = z.object({ id: z.string().uuid() });
 
@@ -27,49 +29,33 @@ export async function POST(
   const parsed = paramsSchema.safeParse(await params);
   if (!parsed.success)
     return NextResponse.json({ error: "not found" }, { status: 404 });
-  const publication = await database().publicationRequest.findUnique({
-    where: { id: parsed.data.id },
-    include: { databasePublication: true, publicationTarget: true },
-  });
-  if (
-    !publication?.databasePublication?.candidateSnapshotId ||
-    !publication.candidateContentSnapshotHash ||
-    !publication.publicationTarget ||
-    publication.publicationTarget.candidateSnapshotId !==
-      publication.databasePublication.candidateSnapshotId ||
-    ![
-      "CANDIDATE_AVAILABLE",
-      "CANDIDATE_VERIFIED",
-      "AWAITING_CONFIRMATION",
-    ].includes(publication.databasePublication.state)
-  )
-    return NextResponse.json(
-      { error: "candidate is unavailable" },
-      { status: 409 },
-    );
-  const exchangeToken = randomBytes(32).toString("hex");
-  const authorization = await database().candidateAuthorization.create({
-    data: {
-      publicationRequestId: publication.id,
-      targetId: publication.publicationTarget.id,
-      snapshotId: publication.databasePublication.candidateSnapshotId,
-      snapshotHash: publication.candidateContentSnapshotHash,
+  let issued;
+  try {
+    issued = await createCandidateAuthorization(database(), {
+      requestId: parsed.data.id,
+      requestKind: "publication",
       reviewerId: auth.session.userId,
-      exchangeTokenHash: sha256(exchangeToken),
       audience: environment().LEADERSHIP_CANDIDATE_AUDIENCE,
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
-    },
-  });
+    });
+  } catch (error) {
+    if (error instanceof CandidateUnavailableError)
+      return NextResponse.json(
+        { error: "candidate is unavailable" },
+        { status: 409 },
+      );
+    throw error;
+  }
+  const { authorization, exchangeToken } = issued;
   await audit({
     actorId: auth.session.userId,
     permissions: [...auth.session.permissions],
     action: "publication.candidate_authorize",
     targetType: "candidate_authorization",
     targetId: authorization.id,
-    targetVersion: publication.candidateContentSnapshotHash,
+    targetVersion: authorization.snapshotHash,
     outcome: "SUCCEEDED",
     after: {
-      publicationRequestId: publication.id,
+      publicationRequestId: parsed.data.id,
       expiresAt: authorization.expiresAt,
     },
   });

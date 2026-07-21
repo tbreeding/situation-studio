@@ -6,7 +6,7 @@ import { Client } from "pg";
 import {
   canonicalBundleHash,
   type BundleManifest,
-} from "@situation-studio/domain";
+} from "../packages/domain/src/index";
 
 const password = "Studio-Test-Only-Password-2026!";
 

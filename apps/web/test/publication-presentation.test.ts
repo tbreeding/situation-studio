@@ -3,6 +3,7 @@ import {
   canPrepareDatabaseFailedPreviewRecovery,
   isAwaitingHumanConfirmation,
   isPrivateCandidateReviewPending,
+  privateCandidateExchangeSubmission,
   publicationDecisionLabel,
   publicationProgressSteps,
   reconciliationDisagreement,
@@ -51,6 +52,48 @@ const expectedSteps = [
 ] as const;
 
 describe("publication presentation", () => {
+  test("hands private candidate exchange to Leadership in the current tab", () => {
+    expect(
+      privateCandidateExchangeSubmission({
+        candidateUrl: "https://leadership.example.test/candidate",
+        exchangeToken: "a".repeat(64),
+        situationSlug: "example-situation",
+      }),
+    ).toEqual({
+      method: "post",
+      action: "https://leadership.example.test/candidate/exchange",
+      target: "_self",
+      fields: {
+        token: "a".repeat(64),
+        returnTo: "/situations/example-situation",
+      },
+    });
+  });
+
+  test("rejects unsafe private candidate handoff inputs", () => {
+    expect(() =>
+      privateCandidateExchangeSubmission({
+        candidateUrl: "javascript:alert(1)",
+        exchangeToken: "a".repeat(64),
+        situationSlug: "example-situation",
+      }),
+    ).toThrow("Invalid candidate origin");
+    expect(() =>
+      privateCandidateExchangeSubmission({
+        candidateUrl: "https://leadership.example.test",
+        exchangeToken: "not-a-token",
+        situationSlug: "example-situation",
+      }),
+    ).toThrow("Invalid candidate exchange token");
+    expect(() =>
+      privateCandidateExchangeSubmission({
+        candidateUrl: "https://leadership.example.test",
+        exchangeToken: "a".repeat(64),
+        situationSlug: "../administration",
+      }),
+    ).toThrow("Invalid situation slug");
+  });
+
   test("exposes database candidate review before final confirmation", () => {
     expect(
       isPrivateCandidateReviewPending("database", "CANDIDATE_AVAILABLE"),

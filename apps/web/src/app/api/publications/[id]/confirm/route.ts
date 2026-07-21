@@ -74,7 +74,6 @@ export async function POST(
       !target ||
       target.candidateSnapshotId !== databasePublication.candidateSnapshotId ||
       target.candidatePublicationRequestId !== publicationRequest.id ||
-      publicationRequest.targetGeneration !== target.generation ||
       databasePublication.state !== "AWAITING_CONFIRMATION"
     )
       return NextResponse.json(

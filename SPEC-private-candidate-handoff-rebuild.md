@@ -4,10 +4,11 @@
 
 Restore a trustworthy, complete human review path from Situation Studio to the
 private Leadership candidate so an authorized publisher can reauthenticate,
-open the exact immutable candidate in the same browser tab, cause Leadership to
-record its signed healthy observation, return to Studio, and only then receive
-the separate final-publication confirmation. The public official snapshot must
-remain unchanged throughout private review.
+authorize the exact immutable candidate, explicitly continue through a native
+same-tab POST, cause Leadership to record its signed healthy observation,
+return to Studio, and only then receive the separate final-publication
+confirmation. The public official snapshot must remain unchanged throughout
+private review.
 
 ## Context
 
@@ -41,7 +42,7 @@ remain unchanged throughout private review.
 - Create one-time, candidate-bound authorization only after all server-side
   state, ownership, target, permission, and recency checks pass.
 - Submit the exchange token and safe relative return path to Leadership with a
-  same-tab cross-origin POST and full document navigation.
+  user-activated same-tab cross-origin POST and full document navigation.
 - Prevent duplicate clicks while authorization or navigation is in progress and
   give accessible, deterministic status/error feedback.
 - Add Playwright E2E coverage that provisions a fresh PostgreSQL 16 database

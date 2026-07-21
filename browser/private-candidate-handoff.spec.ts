@@ -242,9 +242,14 @@ test("recent reauthentication hands the exact candidate through one same-tab exc
     expect(popupCount).toBe(0);
 
     await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Confirm and continue" }).click();
+    const continueToLeadership = page.getByRole("button", {
+      name: "Continue to private candidate in Leadership",
+    });
+    await expect(continueToLeadership).toBeVisible();
     await Promise.all([
       page.waitForURL(`${leadershipOrigin}/candidate/continue`),
-      page.getByRole("button", { name: "Confirm and continue" }).click(),
+      continueToLeadership.click(),
     ]);
     expect(page.url()).not.toContain("token");
     expect(page.url()).not.toBe("about:blank");

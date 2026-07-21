@@ -33,13 +33,7 @@ export function PrivateCandidateHandoffButton({
   const [pending, setPending] = useState(false);
   const [submission, setSubmission] =
     useState<PrivateCandidateExchangeSubmission | null>(null);
-  const formRef = useRef<HTMLFormElement>(null);
   const startHandoffRef = useRef<() => Promise<void>>(async () => undefined);
-
-  useEffect(() => {
-    if (!submission || !formRef.current) return;
-    formRef.current.submit();
-  }, [submission]);
 
   const startHandoff = useCallback(async () => {
     if (pending) return;
@@ -98,7 +92,10 @@ export function PrivateCandidateHandoffButton({
           situationSlug,
         }),
       );
-      onStatus("Opening the private candidate in Leadership for exact review…");
+      setPending(false);
+      onStatus(
+        "Private candidate authorization ready. Continue to Leadership for exact review.",
+      );
     } catch {
       setPending(false);
       onStatus("Leadership returned an invalid private candidate destination.");
@@ -118,30 +115,33 @@ export function PrivateCandidateHandoffButton({
     startHandoffRef.current = startHandoff;
   }, [startHandoff]);
 
-  return (
-    <>
-      <button
-        aria-busy={pending}
-        className={className}
-        disabled={pending}
-        type="button"
-        onClick={startHandoff}
-      >
-        {pending ? "Opening private candidate…" : children}
+  return submission ? (
+    <form
+      action={submission.action}
+      method={submission.method}
+      target={submission.target}
+      onSubmit={() =>
+        onStatus(
+          "Opening the private candidate in Leadership for exact review…",
+        )
+      }
+    >
+      {Object.entries(submission.fields).map(([name, value]) => (
+        <input key={name} name={name} type="hidden" value={value} />
+      ))}
+      <button className={className} type="submit">
+        Continue to private candidate in Leadership
       </button>
-      {submission && (
-        <form
-          ref={formRef}
-          action={submission.action}
-          aria-hidden="true"
-          method={submission.method}
-          target={submission.target}
-        >
-          {Object.entries(submission.fields).map(([name, value]) => (
-            <input key={name} name={name} type="hidden" value={value} />
-          ))}
-        </form>
-      )}
-    </>
+    </form>
+  ) : (
+    <button
+      aria-busy={pending}
+      className={className}
+      disabled={pending}
+      type="button"
+      onClick={startHandoff}
+    >
+      {pending ? "Opening private candidate…" : children}
+    </button>
   );
 }

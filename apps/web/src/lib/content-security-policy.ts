@@ -1,18 +1,4 @@
-const defaultCandidateOrigin = "https://leadership.timsprototypes.com";
-
-export function candidateFormActionOrigin(configured?: string) {
-  try {
-    return new URL(configured ?? defaultCandidateOrigin).origin;
-  } catch {
-    return defaultCandidateOrigin;
-  }
-}
-
-export function studioContentSecurityPolicy(
-  nonce: string,
-  configuredCandidateOrigin?: string,
-) {
-  const candidateOrigin = candidateFormActionOrigin(configuredCandidateOrigin);
+export function studioContentSecurityPolicy(nonce: string) {
   return [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
@@ -22,7 +8,7 @@ export function studioContentSecurityPolicy(
     "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
-    `form-action 'self' ${candidateOrigin}`,
+    "form-action 'self'",
     "frame-ancestors 'none'",
   ].join("; ");
 }

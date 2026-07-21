@@ -24,9 +24,13 @@ export async function createCandidateAuthorization(
     requestKind: CandidateRequestKind;
     reviewerId: string;
     audience: string;
+    handoffId?: string;
+    handoffVerifierHash?: string;
     now?: Date;
   },
 ) {
+  if (Boolean(input.handoffId) !== Boolean(input.handoffVerifierHash))
+    throw new Error("candidate handoff binding must be complete");
   const now = input.now ?? new Date();
   const expiresAt = new Date(now.getTime() + 15 * 60 * 1000);
   const exchangeToken = randomBytes(32).toString("hex");
@@ -94,6 +98,8 @@ export async function createCandidateAuthorization(
           snapshotHash: snapshot.manifestHash,
           reviewerId: input.reviewerId,
           exchangeTokenHash: sha256(exchangeToken),
+          handoffId: input.handoffId ?? null,
+          handoffVerifierHash: input.handoffVerifierHash ?? null,
           audience: input.audience,
           expiresAt,
         },
@@ -148,6 +154,8 @@ export async function createCandidateAuthorization(
         snapshotHash: snapshot.manifestHash,
         reviewerId: input.reviewerId,
         exchangeTokenHash: sha256(exchangeToken),
+        handoffId: input.handoffId ?? null,
+        handoffVerifierHash: input.handoffVerifierHash ?? null,
         audience: input.audience,
         expiresAt,
       },

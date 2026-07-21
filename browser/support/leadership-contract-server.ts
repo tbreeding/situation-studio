@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import {
   createServer,
   type IncomingMessage,
@@ -8,6 +8,7 @@ import { Pool } from "pg";
 import { createDatabaseClient } from "../../packages/db/src/client";
 import { sha256 } from "../../packages/domain/src/index";
 import { leadershipObservationSignedBody } from "../../apps/web/src/lib/leadership-observation";
+import { candidateHandoffSignature } from "../../apps/web/src/server/publication/candidate-handoff";
 import { processDatabasePublication } from "../../apps/publisher/src/database-service";
 
 type CandidateSession = {
@@ -34,18 +35,6 @@ function responseHeaders(contentType: string) {
     "x-content-type-options": "nosniff",
     "x-robots-tag": "noindex, nofollow, noarchive",
   };
-}
-
-async function body(request: IncomingMessage) {
-  const chunks: Buffer[] = [];
-  let length = 0;
-  for await (const chunk of request) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    length += bytes.length;
-    if (length > 16_384) throw new Error("request body is too large");
-    chunks.push(bytes);
-  }
-  return Buffer.concat(chunks).toString("utf8");
 }
 
 function cookie(request: IncomingMessage, name: string) {
@@ -87,9 +76,10 @@ export async function startLeadershipContractServer(input: {
   const sessions = new Map<string, CandidateSession>();
   const observedRequests = new Set<string>();
   const state = {
+    bootstrapAttempts: 0,
+    completeAttempts: 0,
+    crossSitePostAttempts: 0,
     exchangeAttempts: 0,
-    lastContentType: null as string | null,
-    lastFieldNames: [] as string[],
     lastReturnTo: null as string | null,
     replayStatus: null as number | null,
     observations: 0,
@@ -108,43 +98,87 @@ export async function startLeadershipContractServer(input: {
         return;
       }
       if (request.method === "POST" && url.pathname === "/candidate/exchange") {
-        state.exchangeAttempts += 1;
-        const contentType = request.headers["content-type"] ?? "";
-        state.lastContentType = contentType;
+        state.crossSitePostAttempts += 1;
+        send(response, 403, "application/json", '{"error":"Access denied."}');
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/candidate/bootstrap") {
+        state.bootstrapAttempts += 1;
+        const callbackValue = url.searchParams.get("callback") ?? "";
+        const stateValue = url.searchParams.get("state") ?? "";
+        const callback = new URL(callbackValue);
         if (
-          !contentType
-            .toLowerCase()
-            .startsWith("application/x-www-form-urlencoded")
+          callback.origin !== input.studioOrigin ||
+          callback.pathname !== "/api/candidates/handoff" ||
+          callback.searchParams.get("state") !== stateValue ||
+          !/^[a-f0-9]{64}$/u.test(stateValue)
         ) {
-          send(
-            response,
-            415,
-            "text/plain; charset=utf-8",
-            "Candidate exchange requires URL-encoded form data",
-          );
+          send(response, 400, "text/plain; charset=utf-8", "Invalid bootstrap");
           return;
         }
-        const fields = new URLSearchParams(await body(request));
-        state.lastFieldNames = [...fields.keys()].sort();
-        const exchangeToken = fields.get("token") ?? "";
-        const returnTo = fields.get("returnTo") ?? "";
+        const requestId = callback.searchParams.get("requestId") ?? "";
+        const requestKind = callback.searchParams.get("requestKind") ?? "";
+        const situationSlug = callback.searchParams.get("situationSlug") ?? "";
+        if (
+          !/^[0-9a-f-]{36}$/u.test(requestId) ||
+          !["publication", "rollback"].includes(requestKind) ||
+          !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(situationSlug)
+        ) {
+          send(response, 400, "text/plain; charset=utf-8", "Invalid callback");
+          return;
+        }
+        const handoffId = randomUUID();
+        const verifier = randomBytes(32).toString("hex");
+        const proof = {
+          expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          handoffId,
+          requestId,
+          requestKind: requestKind as "publication" | "rollback",
+          situationSlug,
+          state: stateValue,
+          verifierHash: sha256(verifier),
+        };
+        callback.searchParams.set("expiresAt", proof.expiresAt);
+        callback.searchParams.set("handoffId", proof.handoffId);
+        callback.searchParams.set("verifierHash", proof.verifierHash);
+        callback.searchParams.set(
+          "signature",
+          candidateHandoffSignature(input.exchangeSecret, proof),
+        );
+        response.writeHead(303, {
+          ...responseHeaders("text/plain; charset=utf-8"),
+          location: callback.toString(),
+          "set-cookie": `leadership_handoff_e2e=${handoffId}.${verifier}; HttpOnly; SameSite=Lax; Path=/; Max-Age=300`,
+        });
+        response.end("Continue");
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/candidate/complete") {
+        state.completeAttempts += 1;
+        const handoffCookie = cookie(request, "leadership_handoff_e2e") ?? "";
+        const [cookieHandoffId, verifier] = handoffCookie.split(".");
+        const handoffId = url.searchParams.get("handoffId") ?? "";
+        const returnTo = url.searchParams.get("returnTo") ?? "";
         state.lastReturnTo = returnTo;
         if (
-          state.lastFieldNames.join(",") !== "returnTo,token" ||
+          cookieHandoffId !== handoffId ||
+          !verifier ||
+          !/^[a-f0-9]{64}$/u.test(verifier) ||
           !/^\/situations\/[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(returnTo)
         ) {
-          send(response, 400, "text/plain; charset=utf-8", "Invalid handoff");
+          send(response, 404, "text/plain; charset=utf-8", "Invalid handoff");
           return;
         }
+        state.exchangeAttempts += 1;
         const exchange = await fetch(
-          `${input.studioOrigin}/api/candidates/exchange`,
+          `${input.studioOrigin}/api/candidates/exchange-handoff`,
           {
             method: "POST",
             headers: {
               authorization: `Bearer ${input.exchangeSecret}`,
               "content-type": "application/json",
             },
-            body: JSON.stringify({ exchangeToken }),
+            body: JSON.stringify({ handoffId, verifier }),
           },
         );
         const result = (await exchange.json().catch(() => null)) as {
@@ -165,14 +199,14 @@ export async function startLeadershipContractServer(input: {
           return;
         }
         const replay = await fetch(
-          `${input.studioOrigin}/api/candidates/exchange`,
+          `${input.studioOrigin}/api/candidates/exchange-handoff`,
           {
             method: "POST",
             headers: {
               authorization: `Bearer ${input.exchangeSecret}`,
               "content-type": "application/json",
             },
-            body: JSON.stringify({ exchangeToken }),
+            body: JSON.stringify({ handoffId, verifier }),
           },
         );
         state.replayStatus = replay.status;
@@ -186,7 +220,10 @@ export async function startLeadershipContractServer(input: {
         response.writeHead(303, {
           ...responseHeaders("text/plain; charset=utf-8"),
           location: "/candidate/continue",
-          "set-cookie": `leadership_candidate_e2e=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=900`,
+          "set-cookie": [
+            `leadership_candidate_e2e=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=900`,
+            "leadership_handoff_e2e=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+          ],
         });
         response.end("Continue");
         return;

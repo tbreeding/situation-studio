@@ -243,8 +243,8 @@ test("recent reauthentication hands the exact candidate through one same-tab exc
 
     await page.getByLabel("Password", { exact: true }).fill(password);
     await page.getByRole("button", { name: "Confirm and continue" }).click();
-    const continueToLeadership = page.getByRole("button", {
-      name: "Continue to private candidate in Leadership",
+    const continueToLeadership = page.getByRole("link", {
+      name: "Continue securely to Leadership",
     });
     await expect(continueToLeadership).toBeVisible();
     await Promise.all([
@@ -262,22 +262,24 @@ test("recent reauthentication hands the exact candidate through one same-tab exc
       await request.get(`${leadershipOrigin}/__test/state`)
     ).json();
     expect(contractState).toMatchObject({
+      bootstrapAttempts: 1,
+      completeAttempts: 1,
+      crossSitePostAttempts: 0,
       exchangeAttempts: 1,
-      lastContentType: expect.stringMatching(
-        /^application\/x-www-form-urlencoded(?:;|$)/u,
-      ),
-      lastFieldNames: ["returnTo", "token"],
       lastReturnTo: `/situations/${fixture.situationSlug}`,
       replayStatus: 404,
       observations: 0,
     });
     const authorization = await database.query<{
       exchanged_at: Date | null;
+      handoff_id: string | null;
+      handoff_verifier_hash: string | null;
       publication_request_id: string;
       snapshot_hash: string;
       revoked_at: Date | null;
     }>(
-      `SELECT publication_request_id, snapshot_hash, exchanged_at, revoked_at
+      `SELECT publication_request_id, snapshot_hash, exchanged_at, revoked_at,
+              handoff_id, trim(handoff_verifier_hash) AS handoff_verifier_hash
        FROM candidate_authorizations
        WHERE publication_request_id = $1`,
       [fixture.requestId],
@@ -289,6 +291,10 @@ test("recent reauthentication hands the exact candidate through one same-tab exc
       revoked_at: null,
     });
     expect(authorization.rows[0]?.exchanged_at).not.toBeNull();
+    expect(authorization.rows[0]?.handoff_id).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(authorization.rows[0]?.handoff_verifier_hash).toMatch(
+      /^[a-f0-9]{64}$/u,
+    );
 
     await page
       .getByRole("link", { name: "Continue to private candidate" })

@@ -1285,6 +1285,8 @@ model CandidateAuthorization {
   snapshotHash         String              @map("snapshot_hash") @db.Char(64)
   reviewerId           String              @map("reviewer_id") @db.Uuid
   exchangeTokenHash    String              @unique @map("exchange_token_hash") @db.Char(64)
+  handoffId            String?             @unique @map("handoff_id") @db.Uuid
+  handoffVerifierHash  String?             @map("handoff_verifier_hash") @db.Char(64)
   cookieTokenHash      String?             @unique @map("cookie_token_hash") @db.Char(64)
   audience             String              @db.VarChar(120)
   expiresAt            DateTime            @map("expires_at") @db.Timestamptz(3)

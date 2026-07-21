@@ -5,10 +5,7 @@ import { studioContentSecurityPolicy } from "@/lib/content-security-policy";
 
 export function proxy(request: NextRequest) {
   const nonce = btoa(crypto.randomUUID());
-  const contentSecurityPolicy = studioContentSecurityPolicy(
-    nonce,
-    process.env.LEADERSHIP_CANDIDATE_ORIGIN,
-  );
+  const contentSecurityPolicy = studioContentSecurityPolicy(nonce);
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", contentSecurityPolicy);

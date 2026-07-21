@@ -7,35 +7,20 @@ export type PublicationProgressStep = {
   status: PublicationProgressStatus;
 };
 
-export type PrivateCandidateExchangeSubmission = ReturnType<
-  typeof privateCandidateExchangeSubmission
->;
-
-export function privateCandidateExchangeSubmission(input: {
-  candidateUrl: string;
-  exchangeToken: string;
-  situationSlug: string;
-}) {
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(input.situationSlug))
-    throw new Error("Invalid situation slug");
-  if (!/^[a-f0-9]{64}$/u.test(input.exchangeToken))
-    throw new Error("Invalid candidate exchange token");
-  const candidate = new URL(input.candidateUrl);
+export function privateCandidateHandoffDestination(bootstrapUrl: string) {
+  const candidate = new URL(bootstrapUrl);
   if (
     !["http:", "https:"].includes(candidate.protocol) ||
     candidate.username ||
-    candidate.password
+    candidate.password ||
+    candidate.pathname !== "/candidate/bootstrap" ||
+    !/^[a-f0-9]{64}$/u.test(candidate.searchParams.get("state") ?? "")
   )
     throw new Error("Invalid candidate origin");
-  return {
-    method: "post" as const,
-    action: new URL("/candidate/exchange", candidate.origin).toString(),
-    target: "_self" as const,
-    fields: {
-      token: input.exchangeToken,
-      returnTo: `/situations/${input.situationSlug}`,
-    },
-  };
+  const callback = new URL(candidate.searchParams.get("callback") ?? "");
+  if (!["http:", "https:"].includes(callback.protocol))
+    throw new Error("Invalid candidate callback");
+  return candidate.toString();
 }
 
 export function reconciliationDisagreement(input: {

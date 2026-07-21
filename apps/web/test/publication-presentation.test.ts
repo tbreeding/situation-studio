@@ -3,7 +3,7 @@ import {
   canPrepareDatabaseFailedPreviewRecovery,
   isAwaitingHumanConfirmation,
   isPrivateCandidateReviewPending,
-  privateCandidateExchangeSubmission,
+  privateCandidateHandoffDestination,
   publicationDecisionLabel,
   publicationProgressSteps,
   reconciliationDisagreement,
@@ -52,46 +52,26 @@ const expectedSteps = [
 ] as const;
 
 describe("publication presentation", () => {
-  test("hands private candidate exchange to Leadership in the current tab", () => {
+  test("hands private candidate bootstrap to Leadership in the current tab", () => {
+    const callback = encodeURIComponent(
+      "https://studio.example.test/api/candidates/handoff?requestId=00000000-0000-4000-8000-000000000001",
+    );
     expect(
-      privateCandidateExchangeSubmission({
-        candidateUrl: "https://leadership.example.test/candidate",
-        exchangeToken: "a".repeat(64),
-        situationSlug: "example-situation",
-      }),
-    ).toEqual({
-      method: "post",
-      action: "https://leadership.example.test/candidate/exchange",
-      target: "_self",
-      fields: {
-        token: "a".repeat(64),
-        returnTo: "/situations/example-situation",
-      },
-    });
+      privateCandidateHandoffDestination(
+        `https://leadership.example.test/candidate/bootstrap?state=${"a".repeat(64)}&callback=${callback}`,
+      ),
+    ).toContain("https://leadership.example.test/candidate/bootstrap?");
   });
 
   test("rejects unsafe private candidate handoff inputs", () => {
     expect(() =>
-      privateCandidateExchangeSubmission({
-        candidateUrl: "javascript:alert(1)",
-        exchangeToken: "a".repeat(64),
-        situationSlug: "example-situation",
-      }),
+      privateCandidateHandoffDestination("javascript:alert(1)"),
     ).toThrow("Invalid candidate origin");
     expect(() =>
-      privateCandidateExchangeSubmission({
-        candidateUrl: "https://leadership.example.test",
-        exchangeToken: "not-a-token",
-        situationSlug: "example-situation",
-      }),
-    ).toThrow("Invalid candidate exchange token");
-    expect(() =>
-      privateCandidateExchangeSubmission({
-        candidateUrl: "https://leadership.example.test",
-        exchangeToken: "a".repeat(64),
-        situationSlug: "../administration",
-      }),
-    ).toThrow("Invalid situation slug");
+      privateCandidateHandoffDestination(
+        "https://leadership.example.test/candidate/bootstrap?state=invalid&callback=https%3A%2F%2Fstudio.example.test",
+      ),
+    ).toThrow("Invalid candidate origin");
   });
 
   test("exposes database candidate review before final confirmation", () => {

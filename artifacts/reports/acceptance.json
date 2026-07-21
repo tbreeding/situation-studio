@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "recordedAt": "2026-07-21T07:57:42Z",
+  "recordedAt": "2026-07-21T08:02:04Z",
   "source": {
     "leadershipCommit": "0d7d161e9fbac5f723754f6611c87a4cbbf90f28",
     "leadershipRepositoryModified": false,
@@ -123,8 +123,8 @@
     "checkpoint5": {
       "productionReadOnlyDiscovery": "passed",
       "productionMutated": true,
-      "activeStudioRelease": "20260721T074446Z",
-      "activeStudioCommit": "8e63f6c9f1eea5408d30101709e3cddb4428d5f3",
+      "activeStudioRelease": "20260721T080009Z",
+      "activeStudioCommit": "b495e1b61b45e6c927155638635ee02297f412c4",
       "activeLeadershipRelease": "20260721T075238Z",
       "activeLeadershipCommit": "0d7d161e9fbac5f723754f6611c87a4cbbf90f28",
       "productionPostgresVersion": "16.12",

@@ -21,9 +21,9 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Current deployed application implementation commit: `8e63f6c` (`Replace candidate form with cookie-bound handoff`).
-- Current RP1 application release: `20260721T074446Z`; current `main` also
-  contains the non-runtime public-callback environment documentation commit.
+- Current deployed source commit: `b495e1b` (`Record verified candidate handoff`).
+- Current RP1 application release: `20260721T080009Z`; current `main` additionally
+  contains only this final release-state evidence update.
 - Production PostgreSQL is at all 17 forward migrations. The guarded bootstrap
   created target generation 1 and was idempotent on rerun; the active candidate
   has reserved generation 2 without changing the official pointer.

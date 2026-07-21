@@ -63,6 +63,7 @@ try {
   const ids = {
     repositorySnapshot: randomUUID(),
     situation: randomUUID(),
+    checkout: randomUUID(),
     draft: randomUUID(),
     artifactA: randomUUID(),
     artifactB: randomUUID(),
@@ -274,6 +275,14 @@ try {
       (id, situation_id, base_snapshot_id, state, updated_at)
      VALUES ($1, $2, $3, 'APPROVED', clock_timestamp())`,
     [ids.draft, ids.situation, ids.repositorySnapshot],
+  );
+  await client.query(
+    `INSERT INTO situation_checkouts
+      (id, situation_id, holder_user_id, mode, custody, draft_id,
+       fencing_token, expires_at)
+     VALUES ($1, $2, $3, 'PUBLISHING', 'PUBLISHER', $4, 0,
+       clock_timestamp() + interval '30 minutes')`,
+    [ids.checkout, ids.situation, ids.publisher, ids.draft],
   );
   const bundleHash = hash("checkpoint-1-bundle");
   await client.query(
@@ -712,6 +721,7 @@ try {
     leadership_function_execute: boolean;
     materializer_target_update: boolean;
     materializer_candidate_authorization_update: boolean;
+    materializer_situation_update: boolean;
     materializer_checkout_read: boolean;
     materializer_checkout_update: boolean;
     materializer_checkout_resource_read: boolean;
@@ -734,6 +744,7 @@ try {
       has_function_privilege('leadership_content_reader', 'leadership_read_official_snapshot_v2(text)', 'EXECUTE') AS leadership_function_execute,
       has_table_privilege('situation_studio_materializer', 'publication_targets', 'UPDATE') AS materializer_target_update,
       has_table_privilege('situation_studio_materializer', 'candidate_authorizations', 'UPDATE') AS materializer_candidate_authorization_update,
+      has_table_privilege('situation_studio_materializer', 'situations', 'UPDATE') AS materializer_situation_update,
       has_table_privilege('situation_studio_materializer', 'situation_checkouts', 'SELECT') AS materializer_checkout_read,
       has_table_privilege('situation_studio_materializer', 'situation_checkouts', 'UPDATE') AS materializer_checkout_update,
       has_table_privilege('situation_studio_materializer', 'checkout_resources', 'SELECT') AS materializer_checkout_resource_read,
@@ -758,6 +769,7 @@ try {
     !grants.leadership_function_execute ||
     !grants.materializer_target_update ||
     !grants.materializer_candidate_authorization_update ||
+    grants.materializer_situation_update ||
     !grants.materializer_checkout_read ||
     !grants.materializer_checkout_update ||
     !grants.materializer_checkout_resource_read ||
@@ -776,6 +788,38 @@ try {
     grants.operations_session_read
   )
     throw new Error(`Least-privilege matrix failed: ${JSON.stringify(grants)}`);
+
+  const fenceBeforeRelease = await client.query<{ fence: string }>(
+    `SELECT fence::text AS fence FROM situations WHERE id = $1`,
+    [ids.situation],
+  );
+  await client.query("SET LOCAL ROLE situation_studio_materializer");
+  await expectRejected("materializer direct situation mutation", () =>
+    client.query(`UPDATE situations SET fence = fence + 1 WHERE id = $1`, [
+      ids.situation,
+    ]),
+  );
+  const releasedCheckout = await client.query(
+    `UPDATE situation_checkouts
+     SET released_at = clock_timestamp(),
+         release_reason = 'database publication reconciled'
+     WHERE id = $1 AND released_at IS NULL`,
+    [ids.checkout],
+  );
+  await client.query("RESET ROLE");
+  if (releasedCheckout.rowCount !== 1)
+    throw new Error("Materializer could not release the publication checkout.");
+  const fenceAfterRelease = await client.query<{ fence: string }>(
+    `SELECT fence::text AS fence FROM situations WHERE id = $1`,
+    [ids.situation],
+  );
+  if (
+    BigInt(fenceAfterRelease.rows[0]?.fence ?? "-1") !==
+    BigInt(fenceBeforeRelease.rows[0]?.fence ?? "-1") + 1n
+  )
+    throw new Error(
+      "Checkout release did not advance the situation fence through the trigger boundary.",
+    );
 
   await client.query("SET LOCAL ROLE situation_studio_web");
   const webRecoveryLock = await client.query<{ target_id: string }>(

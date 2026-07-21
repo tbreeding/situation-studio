@@ -196,10 +196,22 @@ async function approveAndStage() {
     throw new Error(
       "Full-flow human account requires a repository reviewer identity.",
     );
+  const reviewCheckout = await database.situationCheckout.findFirstOrThrow({
+    where: {
+      situationId: aiBundle.situationId,
+      draftId: aiBundle.draftId,
+      holderUserId: user.id,
+      custody: "USER",
+      releasedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+  });
   const prepared = await prepareBundleForHumanApproval(database, {
     bundleId: aiBundle.id,
     userId: user.id,
     repositoryReviewerId: user.repositoryReviewerId,
+    checkoutId: reviewCheckout.id,
+    fencingToken: reviewCheckout.fencingToken,
   });
   const bundle = await database.proposedBundle.findUniqueOrThrow({
     where: { id: prepared.bundle.id },

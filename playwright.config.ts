@@ -61,5 +61,17 @@ export default defineConfig({
         viewport: { width: 1280, height: 800 },
       },
     },
+    {
+      name: "database-publication-presentation",
+      testMatch: "database-publication-presentation.spec.ts",
+      use: {
+        ...devices["Desktop Chrome"],
+        baseURL:
+          process.env.PLAYWRIGHT_DATABASE_BASE_URL ??
+          process.env.PLAYWRIGHT_BASE_URL ??
+          "http://127.0.0.1:3015",
+        viewport: { width: 1280, height: 800 },
+      },
+    },
   ],
 });

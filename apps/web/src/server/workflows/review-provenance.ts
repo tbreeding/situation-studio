@@ -160,6 +160,8 @@ export async function prepareBundleForHumanApproval(
     bundleId: string;
     userId: string;
     repositoryReviewerId: string;
+    checkoutId: string;
+    fencingToken: bigint;
     recoveryTargetCode?: string;
     now?: Date;
   },
@@ -197,6 +199,22 @@ export async function prepareBundleForHumanApproval(
             source.draft.staleReason
           )
             throw new Error("BUNDLE_NOT_REVIEWABLE");
+
+          await transaction.$executeRaw`SELECT id FROM situation_checkouts WHERE id = ${input.checkoutId}::uuid FOR UPDATE`;
+          const checkout = await transaction.situationCheckout.findUnique({
+            where: { id: input.checkoutId },
+          });
+          if (
+            !checkout ||
+            checkout.releasedAt ||
+            checkout.expiresAt <= now ||
+            checkout.custody !== "USER" ||
+            checkout.holderUserId !== input.userId ||
+            checkout.draftId !== source.draftId ||
+            checkout.situationId !== source.situationId ||
+            checkout.fencingToken !== input.fencingToken
+          )
+            throw new Error("ACTIVE_REVIEW_CHECKOUT_REQUIRED");
 
           const parsedSourceManifest = bundleManifestSchema.safeParse(
             source.manifest,
@@ -286,10 +304,6 @@ export async function prepareBundleForHumanApproval(
             });
             const failedRequest = latestPublicationRequest;
             const approval = source.approvals[0];
-            const activeCheckout =
-              await transaction.situationCheckout.findFirst({
-                where: { situationId: source.situationId, releasedAt: null },
-              });
             const activePublication = target
               ? await transaction.publicationRequest.findFirst({
                   where: {
@@ -375,11 +389,7 @@ export async function prepareBundleForHumanApproval(
                 source.artifacts,
                 alreadyPrepared,
               ) ||
-              !activeCheckout ||
-              activeCheckout.holderUserId !== input.userId ||
-              activeCheckout.custody !== "USER" ||
-              activeCheckout.draftId !== source.draftId ||
-              activeCheckout.expiresAt <= now ||
+              checkout.mode !== "EDITING" ||
               parsedSourceManifest.data.relationshipChanges.length !== 0 ||
               !exactBundleBaseMatchesOfficialSnapshot(
                 source.artifacts,

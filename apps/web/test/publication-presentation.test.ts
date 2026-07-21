@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   canPrepareDatabaseFailedPreviewRecovery,
+  canPrepareHumanApproval,
   isAwaitingHumanConfirmation,
   isPrivateCandidateReviewPending,
   privateCandidateHandoffDestination,
@@ -129,6 +130,35 @@ describe("publication presentation", () => {
     ).toBe(false);
   });
 
+  test("offers approval preparation only while the reviewer owns checkout custody", () => {
+    const eligible = {
+      bundleState: "HUMAN_REVIEW",
+      publicationRequestState: null,
+      ownsCheckout: true,
+      canApprove: true,
+    };
+    expect(canPrepareHumanApproval(eligible)).toBe(true);
+    for (const ineligible of [
+      { ...eligible, bundleState: "APPROVED" },
+      { ...eligible, publicationRequestState: "FAILED_PREVIEW" },
+      { ...eligible, ownsCheckout: false },
+      { ...eligible, canApprove: false },
+    ])
+      expect(canPrepareHumanApproval(ineligible)).toBe(false);
+  });
+
+  test("ignores an impossible early confirmation flag instead of claiming publication progress", () => {
+    expect(publicationDecisionLabel("REQUESTED", true, "database")).toBe(
+      "Preparing private preview",
+    );
+    expect(
+      publicationDecisionLabel("CANDIDATE_AVAILABLE", true, "database"),
+    ).toBe("Private candidate ready for review");
+    expect(publicationDecisionLabel("UNKNOWN", true, "database")).toBe(
+      "Publication state unavailable",
+    );
+  });
+
   test.each(["publication", "rollback"] as const)(
     "identifies the exact %s reconciliation disagreement and safe action",
     (kind) => {
@@ -150,7 +180,9 @@ describe("publication presentation", () => {
   test.each(stagingStates)("polls while the publisher is in %s", (state) => {
     expect(shouldPollPublication(state, false)).toBe(true);
     expect(publicationDecisionLabel(state, false)).toBe(
-      "Preparing the staged candidate",
+      state === "PREVIEW_VERIFIED"
+        ? "Candidate staged and verified"
+        : "Preparing the staged candidate",
     );
     expect(isAwaitingHumanConfirmation(state, false)).toBe(false);
   });
@@ -321,12 +353,12 @@ describe("publication presentation", () => {
   });
 
   test.each(["", "UNKNOWN", "CORRUPT_STATE"])(
-    "fails a foreign state %j into a non-polling preparation presentation",
+    "fails a foreign state %j closed without inventing preparation",
     (state) => {
       expect(shouldPollPublication(state, false)).toBe(false);
       expect(isAwaitingHumanConfirmation(state, false)).toBe(false);
       expect(publicationDecisionLabel(state, false)).toBe(
-        "Preparing the staged candidate",
+        "Publication state unavailable",
       );
     },
   );

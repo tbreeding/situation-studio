@@ -14,6 +14,7 @@ import {
   canPrepareDatabaseFailedPreviewRecovery,
   isPrivateCandidateReviewPending,
   publicationDecisionLabel,
+  publicationWorkspacePresentation,
 } from "@/lib/publication-presentation";
 import { reviewJobSnapshotById } from "@/server/review-progress";
 import { environment } from "@/server/environment";
@@ -177,15 +178,14 @@ export default async function SituationWorkspace({
       : publicationRequest?.steps.find(
           (step) => step.step === "COMMITTED" && step.state === "SUCCEEDED",
         )?.externalId) ?? null;
-  const candidateObserved = Boolean(
-    publicationRequest &&
-    [
-      "AWAITING_CONFIRMATION",
-      "OFFICIAL_POINTER_COMMITTED",
-      "LIVE_VERIFIED",
-      "RECONCILED",
-    ].includes(publicationRequest.state),
-  );
+  const publicationPresentation = publicationRequest
+    ? publicationWorkspacePresentation({
+        state: publicationRequest.state,
+        finalConfirmed: Boolean(publicationRequest.finalConfirmedAt),
+        backend: publicationBackend,
+        candidateIdentity: candidateCommitSha,
+      })
+    : null;
   const bundleArtifactEntry =
     bundle?.artifacts.find(
       (item) => item.artifact.logicalId === `situation:${slug}`,
@@ -266,10 +266,16 @@ export default async function SituationWorkspace({
             ? "The private candidate is awaiting confirmation from an authorized publisher."
             : "The staged candidate is awaiting confirmation from an authorized publisher."
         : publicationRequest.state === "FAILED_PREVIEW"
-          ? canRecoverFailedPreview
-            ? bundle?.comments.some((comment) => comment.blocking)
-              ? "Resolve the blocking review feedback before preparing a fresh database-bound review."
-              : "Prepare a fresh database-bound review from the preserved candidate, then approve its exact bytes."
+          ? databaseBackend
+            ? canRecoverFailedPreview
+              ? bundle?.comments.some((comment) => comment.blocking)
+                ? "Resolve the blocking review feedback before preparing a fresh database-bound review."
+                : "Prepare a fresh database-bound review from the preserved candidate, then approve its exact bytes."
+              : !checkout &&
+                  session.permissions.has("draft.update") &&
+                  session.permissions.has("publication.approve")
+                ? "Check out this situation to prepare a fresh review against the current official snapshot."
+                : "The private preview failed safely. Inspect the recorded failure before retrying."
             : "Candidate staging failed safely; inspect the recorded failure before retrying."
           : publicationRequest.state === "RECONCILIATION_REQUIRED"
             ? databaseBackend
@@ -314,19 +320,17 @@ export default async function SituationWorkspace({
           {publicationRequest ? (
             <>
               <span className="badge ink">Official baseline</span>
-              <span className="badge gold">
-                {candidateObserved
-                  ? databaseBackend
-                    ? "Private candidate ready"
-                    : "Candidate staged"
-                  : "Candidate preparing"}
+              <span
+                className="badge gold"
+                data-testid="publication-candidate-status"
+              >
+                {publicationPresentation?.candidateBadge}
               </span>
-              <span className="badge rust">
-                {publicationDecisionLabel(
-                  publicationRequest.state,
-                  Boolean(publicationRequest.finalConfirmedAt),
-                  publicationBackend,
-                )}
+              <span
+                className="badge rust"
+                data-testid="publication-decision-status"
+              >
+                {publicationPresentation?.decisionLabel}
               </span>
             </>
           ) : (
@@ -369,17 +373,11 @@ export default async function SituationWorkspace({
         {publicationRequest ? (
           <div>
             <span>Leadership display</span>
-            <strong>
-              {candidateObserved
-                ? databaseBackend
-                  ? "Private candidate"
-                  : "Staged candidate"
-                : "Preparing candidate"}
+            <strong data-testid="leadership-display-status">
+              {publicationPresentation?.leadershipDisplay}
             </strong>
-            <small>
-              {candidateObserved && candidateCommitSha
-                ? `${databaseBackend ? "Snapshot" : "Commit"} ${candidateCommitSha.slice(0, 8)} · not yet official`
-                : "Publisher is preparing the exact approved bytes"}
+            <small data-testid="leadership-display-detail">
+              {publicationPresentation?.leadershipDetail}
             </small>
           </div>
         ) : (
@@ -535,6 +533,8 @@ export default async function SituationWorkspace({
                     finalConfirmed: Boolean(
                       publicationRequest.finalConfirmedAt,
                     ),
+                    reconciliationReason:
+                      publicationRequest.reconciliationReason,
                   }
                 : null
             }
@@ -755,11 +755,12 @@ export default async function SituationWorkspace({
                       ? publicationRequest.state === "AWAITING_CONFIRMATION" &&
                         !publicationRequest.finalConfirmedAt
                         ? `Candidate ${candidateCommitSha?.slice(0, 8) ?? ""} ${databaseBackend ? "privately verified" : "staged"} · awaiting you`
-                        : publicationDecisionLabel(
+                        : (publicationPresentation?.decisionLabel ??
+                          publicationDecisionLabel(
                             publicationRequest.state,
                             Boolean(publicationRequest.finalConfirmedAt),
                             publicationBackend,
-                          )
+                          ))
                       : "No candidate publication is pending."}
                   </small>
                 </div>

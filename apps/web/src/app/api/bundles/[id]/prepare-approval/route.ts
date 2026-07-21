@@ -1,9 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
 import { audit } from "@/server/audit";
 import { authenticateMutation } from "@/server/auth/request";
 import { database } from "@/server/database";
 import { environment } from "@/server/environment";
 import { prepareBundleForHumanApproval } from "@/server/workflows/review-provenance";
+
+const schema = z.object({
+  checkoutId: z.string().uuid(),
+  fencingToken: z.string().regex(/^\d+$/u),
+});
 
 export async function POST(
   request: NextRequest,
@@ -27,11 +33,19 @@ export async function POST(
       { status: 409 },
     );
   const { id } = await params;
+  const parsed = schema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success)
+    return NextResponse.json(
+      { error: "active checkout required" },
+      { status: 409 },
+    );
   try {
     const result = await prepareBundleForHumanApproval(database(), {
       bundleId: id,
       userId: auth.session.userId,
       repositoryReviewerId,
+      checkoutId: parsed.data.checkoutId,
+      fencingToken: BigInt(parsed.data.fencingToken),
       ...(environment().PUBLICATION_BACKEND === "database"
         ? { recoveryTargetCode: "leadership-production" }
         : {}),

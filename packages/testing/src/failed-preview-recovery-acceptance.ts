@@ -34,6 +34,7 @@ type Fixture = {
   parentBundleId: string;
   sourceBundleId: string;
   checkoutId: string | null;
+  checkoutFencingToken: bigint | null;
   requestId: string;
 };
 
@@ -286,6 +287,7 @@ async function seedFixture(input?: {
         },
       });
       let checkoutId: string | null = null;
+      let checkoutFencingToken: bigint | null = null;
       if (input?.withCheckout !== false) {
         const fenced = await transaction.situation.update({
           where: { id: situation.id },
@@ -303,6 +305,7 @@ async function seedFixture(input?: {
           },
         });
         checkoutId = checkout.id;
+        checkoutFencingToken = checkout.fencingToken;
       }
       return {
         userId: user.id,
@@ -312,11 +315,19 @@ async function seedFixture(input?: {
         parentBundleId: parent.id,
         sourceBundleId: source.id,
         checkoutId,
+        checkoutFencingToken,
         requestId: request.id,
       };
     },
     { isolationLevel: "Serializable" },
   );
+}
+
+function checkoutBinding(fixture: Fixture) {
+  return {
+    checkoutId: fixture.checkoutId ?? randomUUID(),
+    fencingToken: fixture.checkoutFencingToken ?? 0n,
+  };
 }
 
 async function cleanupFixture(fixture: Fixture) {
@@ -370,6 +381,7 @@ async function verifySuccessfulLegacyRecovery() {
       bundleId: fixture.sourceBundleId,
       userId: fixture.userId,
       repositoryReviewerId: fixture.reviewerId,
+      ...checkoutBinding(fixture),
       recoveryTargetCode: targetCode,
       now: nextDay,
     });
@@ -460,6 +472,7 @@ async function verifySuccessfulLegacyRecovery() {
           bundleId: fixture.sourceBundleId,
           userId: fixture.userId,
           repositoryReviewerId: fixture.reviewerId,
+          ...checkoutBinding(fixture),
           recoveryTargetCode: targetCode,
         }),
       "Double recovery",
@@ -495,6 +508,7 @@ async function verifyDeterministicCommentFirst() {
           bundleId: fixture.sourceBundleId,
           userId: fixture.userId,
           repositoryReviewerId: fixture.reviewerId,
+          ...checkoutBinding(fixture),
           recoveryTargetCode: targetCode,
         }),
       "Comment-first recovery",
@@ -529,6 +543,7 @@ async function verifyRecoveryCommentRace() {
         bundleId: fixture.sourceBundleId,
         userId: fixture.userId,
         repositoryReviewerId: fixture.reviewerId,
+        ...checkoutBinding(fixture),
         recoveryTargetCode: targetCode,
       }),
       createReviewComment(concurrentDatabase, {
@@ -582,6 +597,7 @@ async function verifyRejectedPreconditions() {
           bundleId: mismatched.sourceBundleId,
           userId: mismatched.userId,
           repositoryReviewerId: mismatched.reviewerId,
+          ...checkoutBinding(mismatched),
           recoveryTargetCode: targetCode,
         }),
       "Mismatched affected base",
@@ -598,6 +614,7 @@ async function verifyRejectedPreconditions() {
           bundleId: missingCheckout.sourceBundleId,
           userId: missingCheckout.userId,
           repositoryReviewerId: missingCheckout.reviewerId,
+          ...checkoutBinding(missingCheckout),
           recoveryTargetCode: targetCode,
         }),
       "Missing checkout",
@@ -633,6 +650,7 @@ async function verifyRejectedPreconditions() {
           bundleId: frozen.sourceBundleId,
           userId: frozen.userId,
           repositoryReviewerId: frozen.reviewerId,
+          ...checkoutBinding(frozen),
           recoveryTargetCode: targetCode,
         }),
       "Reconciliation-frozen target",

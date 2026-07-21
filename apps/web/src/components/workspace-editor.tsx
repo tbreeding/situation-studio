@@ -10,6 +10,7 @@ import { RenderedGuidance } from "@/components/rendered-guidance";
 import { SynchronizedDiff } from "@/components/synchronized-diff";
 import {
   canPrepareDatabaseFailedPreviewRecovery,
+  canPrepareHumanApproval,
   isAwaitingHumanConfirmation,
   isPrivateCandidateReviewPending,
   reconciliationDisagreement,
@@ -58,6 +59,7 @@ type Props = {
     currentStep: string;
     previewCommitSha: string | null;
     finalConfirmed: boolean;
+    reconciliationReason: string | null;
   } | null;
   reconciliation: {
     officialSnapshotHash: string | null;
@@ -90,6 +92,12 @@ export function WorkspaceEditor(props: Props) {
   );
   const canRecoverFailedPreview = canPrepareDatabaseFailedPreviewRecovery({
     publicationBackend: props.publicationBackend,
+    bundleState: props.bundle?.state ?? null,
+    publicationRequestState: props.publicationRequest?.state ?? null,
+    ownsCheckout,
+    canApprove: props.permissions.includes("publication.approve"),
+  });
+  const canPrepareApproval = canPrepareHumanApproval({
     bundleState: props.bundle?.state ?? null,
     publicationRequestState: props.publicationRequest?.state ?? null,
     ownsCheckout,
@@ -150,6 +158,7 @@ export function WorkspaceEditor(props: Props) {
     [
       "AWAITING_CONFIRMATION",
       "OFFICIAL_POINTER_COMMITTED",
+      "RESTORING_PREVIOUS",
       "CUTOVER",
       "LIVE_VERIFIED",
       "RECONCILED",
@@ -417,7 +426,12 @@ export function WorkspaceEditor(props: Props) {
   }
 
   async function prepareApproval() {
-    if (!props.bundle) return;
+    if (!props.bundle || !ownsCheckout || !props.checkout) {
+      setStatus(
+        "Check out this situation before preparing a new exact review bundle.",
+      );
+      return;
+    }
     setPreparationPending(true);
     setStatus(
       canRecoverFailedPreview
@@ -432,7 +446,10 @@ export function WorkspaceEditor(props: Props) {
           "content-type": "application/json",
           "x-csrf-token": props.csrfToken,
         },
-        body: "{}",
+        body: JSON.stringify({
+          checkoutId: props.checkout.id,
+          fencingToken: props.checkout.fencingToken,
+        }),
       },
     );
     if (
@@ -928,7 +945,7 @@ export function WorkspaceEditor(props: Props) {
                 >
                   Approve exact bundle
                 </button>
-              ) : (
+              ) : canPrepareApproval ? (
                 <button
                   className="button"
                   type="button"
@@ -948,7 +965,7 @@ export function WorkspaceEditor(props: Props) {
                       ? "Prepare exact bundle for my approval"
                       : "Reviewer identity required"}
                 </button>
-              ))}
+              ) : null)}
             {props.bundle?.state === "APPROVED" &&
               props.permissions.includes("publication.publish") &&
               !props.publicationRequest && (
@@ -1019,9 +1036,18 @@ export function WorkspaceEditor(props: Props) {
                     : props.publicationRequest.state === "RECONCILED"
                       ? "Publication reconciled against the live release marker."
                       : `Preparing the ${props.publicationBackend === "database" ? "private" : "staged"} candidate: ${props.publicationRequest.state.toLowerCase().replaceAll("_", " ")}.`}{" "}
+              {props.publicationRequest.state === "FAILED_PREVIEW" &&
+                props.publicationRequest.reconciliationReason && (
+                  <>
+                    <strong>Recorded reason:</strong>{" "}
+                    {props.publicationRequest.reconciliationReason}{" "}
+                  </>
+                )}
               {props.publicationRequest.previewCommitSha && (
                 <>
-                  Candidate{" "}
+                  {props.publicationRequest.state === "FAILED_PREVIEW"
+                    ? "Failed candidate"
+                    : "Candidate"}{" "}
                   {props.publicationBackend === "database"
                     ? "snapshot"
                     : "commit"}{" "}

@@ -6,13 +6,18 @@ import {
   validationPolicyHash,
 } from "../../packages/content-contracts/src/index";
 import { createDatabaseClient } from "../../packages/db/src/client";
-import { processDatabasePublication } from "../../apps/publisher/src/database-service";
+import {
+  failDatabasePublicationBeforeConfirmation,
+  processDatabasePublication,
+} from "../../apps/publisher/src/database-service";
 
 export const browserCandidateFixtureKey =
   "playwright-private-candidate-handoff-v1";
 export const browserCandidateSituationSlug = "make-bad-attitude-specific";
+export const browserCandidateFailureReason =
+  "No-change artifact practice:feedback-fork changed identity.";
 
-export async function seedDatabaseCandidateFixture(databaseUrl: string) {
+function assertDisposableDatabase(databaseUrl: string) {
   const databaseName = decodeURIComponent(
     new URL(databaseUrl).pathname.slice(1),
   );
@@ -20,6 +25,10 @@ export async function seedDatabaseCandidateFixture(databaseUrl: string) {
     throw new Error(
       "Refusing private-candidate fixture outside the Testcontainers database.",
     );
+}
+
+export async function seedDatabaseCandidateFixture(databaseUrl: string) {
+  assertDisposableDatabase(databaseUrl);
 
   const database = createDatabaseClient(databaseUrl, 3);
   const materializerUrl = new URL(databaseUrl);
@@ -233,6 +242,52 @@ export async function seedDatabaseCandidateFixture(databaseUrl: string) {
       officialSnapshotId: official.id,
       officialSnapshotHash: official.manifestHash,
       situationSlug: browserCandidateSituationSlug,
+    };
+  } finally {
+    await Promise.all([database.$disconnect(), materializer.$disconnect()]);
+  }
+}
+
+export async function failBrowserCandidateFixture(databaseUrl: string) {
+  assertDisposableDatabase(databaseUrl);
+  const database = createDatabaseClient(databaseUrl, 3);
+  const materializerUrl = new URL(databaseUrl);
+  materializerUrl.searchParams.set(
+    "options",
+    "-c role=situation_studio_materializer",
+  );
+  const materializer = createDatabaseClient(materializerUrl.toString(), 3);
+  try {
+    const request = await database.publicationRequest.findFirstOrThrow({
+      where: { idempotencyKey: browserCandidateFixtureKey },
+      include: { databasePublication: true },
+    });
+    if (request.state !== "FAILED_PREVIEW")
+      await failDatabasePublicationBeforeConfirmation(
+        materializer,
+        request.id,
+        browserCandidateFailureReason,
+      );
+    const failed = await database.publicationRequest.findUniqueOrThrow({
+      where: { id: request.id },
+      include: {
+        databasePublication: true,
+        publicationTarget: true,
+      },
+    });
+    if (
+      failed.state !== "FAILED_PREVIEW" ||
+      failed.databasePublication?.state !== "FAILED_PREVIEW" ||
+      failed.databasePublication.terminalOutcome !==
+        "FAILED_BEFORE_CONFIRMATION" ||
+      failed.publicationTarget?.candidateSnapshotId ||
+      failed.publicationTarget?.candidatePublicationRequestId
+    )
+      throw new Error("Failed-preview browser fixture is inconsistent.");
+    return {
+      requestId: failed.id,
+      situationSlug: browserCandidateSituationSlug,
+      reason: browserCandidateFailureReason,
     };
   } finally {
     await Promise.all([database.$disconnect(), materializer.$disconnect()]);

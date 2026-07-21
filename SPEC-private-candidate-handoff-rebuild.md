@@ -128,6 +128,16 @@ private review.
       the E2E test and live verification do not click it.
 - [x] Authorization/network failure leaves the user in Studio with a retryable
       error and no blank or orphaned tab.
+- [x] Every persisted publication state has one canonical workspace
+      presentation; active, terminal, candidate, official, and recovery claims
+      cannot contradict one another across the header, summary, notice, or
+      lifecycle.
+- [x] A failed private preview renders only the unchanged official baseline and
+      recorded failure. It renders no preparing/progress/private-candidate
+      claim, and it offers exactly one valid recovery action at a time.
+- [x] Preparing a new exact approval bundle requires the same human to hold a
+      current, unexpired checkout with the exact draft and fencing token. A
+      checked-in workspace cannot show or execute that preparation action.
 - [x] Publication and rollback handoffs share the same tested handshake/navigation
       implementation.
 - [x] `pnpm verify`, the Testcontainers-backed Playwright suite, and the
@@ -149,6 +159,13 @@ private review.
   assertions without logging token values.
 - Query the disposable database to prove authorization, exchange, observation,
   confirmation, and official-pointer invariants.
+- Exhaustively map all persisted publication states, both publisher backends,
+  and both confirmation values through the pure presentation contract. Fail
+  closed for unknown or impossible state combinations.
+- After the successful private handoff case, use the real materializer service
+  to record a pre-confirmation failure, then prove in Chromium and PostgreSQL
+  that candidate custody is gone, official content is unchanged, terminal copy
+  is consistent, and recovery actions remain mutually exclusive.
 - Run formatting, lint, strict TypeScript, Prisma validation, unit/integration
   tests, secret scan, production build, and the browser matrix.
 - Inspect the git diff for unrelated changes and credential leakage.

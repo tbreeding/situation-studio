@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { Client } from "pg";
 import { startLeadershipContractServer } from "./support/leadership-contract-server";
-import { seedDatabaseCandidateFixture } from "./support/database-candidate-fixture";
+import {
+  failBrowserCandidateFixture,
+  seedDatabaseCandidateFixture,
+} from "./support/database-candidate-fixture";
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -175,6 +178,7 @@ async function main() {
       ...baseEnvironment,
       DATABASE_PUBLICATION_BOOTSTRAP_TARGET: "leadership-production",
     });
+    await run("pnpm", ["verify:failed-preview-recovery"], baseEnvironment);
     await run(
       "pnpm",
       ["tsx", "packages/testing/src/seed-browser-workspace.ts"],
@@ -310,6 +314,17 @@ async function main() {
         await run(
           "pnpm",
           ["exec", "playwright", "test", "--project=private-candidate-handoff"],
+          playwrightEnvironment,
+        );
+        await failBrowserCandidateFixture(databaseUrl);
+        await run(
+          "pnpm",
+          [
+            "exec",
+            "playwright",
+            "test",
+            "--project=database-publication-presentation",
+          ],
           playwrightEnvironment,
         );
       } catch (error) {

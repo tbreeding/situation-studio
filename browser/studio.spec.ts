@@ -829,6 +829,50 @@ test("a synthetic proposal remains unmistakably separate from the published base
     await expect(page.locator(".workspaceSummary")).toContainText(
       "Official baseline",
     );
+    await expect(
+      page.getByRole("button", {
+        name: "Prepare exact bundle for my approval",
+      }),
+    ).toHaveCount(0);
+    const priorCheckout = await database.query<{ id: string }>(
+      `UPDATE situation_checkouts
+       SET released_at = NOW(), release_reason = 'BROWSER_FIXTURE_HANDOFF'
+       WHERE situation_id = $1 AND released_at IS NULL
+       RETURNING id`,
+      [situationId],
+    );
+    expect(priorCheckout.rows).toHaveLength(1);
+    await database.query(
+      `UPDATE checkout_resources
+       SET released_at = NOW()
+       WHERE checkout_id = $1 AND released_at IS NULL`,
+      [priorCheckout.rows[0]?.id],
+    );
+    await page.reload();
+    const approvalCheckoutButton = page.getByRole("button", {
+      name: "Check out for editing",
+    });
+    await expect(approvalCheckoutButton).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Prepare exact bundle for my approval",
+      }),
+    ).toHaveCount(0);
+    const [approvalCheckoutResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response.url().endsWith("/checkout"),
+      ),
+      approvalCheckoutButton.click(),
+    ]);
+    expect(approvalCheckoutResponse.status()).toBe(200);
+    await expect(
+      page.getByRole("button", {
+        name: "Prepare exact bundle for my approval",
+      }),
+    ).toBeVisible();
+    await expect(approvalCheckoutButton).toHaveCount(0);
     const sessionCookie = (await page.context().cookies()).find(
       (cookie) => cookie.name === "situation_studio_dev",
     );
@@ -927,6 +971,18 @@ test("a synthetic proposal remains unmistakably separate from the published base
     await page.getByRole("checkbox", { name: "Needs attention" }).check();
     await expect(candidateCard).toBeVisible();
 
+    await page.goto(`/situations/${slug}`);
+    const [adminReleaseResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response.url().includes("/api/checkouts/") &&
+          response.url().endsWith("/release"),
+      ),
+      page.getByRole("button", { name: "Check in" }).click(),
+    ]);
+    expect(adminReleaseResponse.status()).toBe(200);
+
     await database.query(
       `UPDATE proposed_bundles
        SET state = 'STALE'
@@ -937,6 +993,10 @@ test("a synthetic proposal remains unmistakably separate from the published base
     await page.getByRole("button", { name: "Sign out" }).click();
     await login(page, "studio-editor");
     await page.goto(`/situations/${slug}`);
+    await Promise.all([
+      page.waitForEvent("framenavigated"),
+      page.getByRole("button", { name: "Check out for editing" }).click(),
+    ]);
     await expect(page.getByRole("button", { name: "Check in" })).toBeVisible();
     await page.getByRole("tab", { name: "Source MDX" }).click();
     const checkedOutSource = page.getByLabel("Situation MDX");

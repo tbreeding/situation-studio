@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { exactBundleBaseMatchesOfficialSnapshot } from "../src/server/workflows/review-provenance";
+import {
+  approvalPreparationPublicError,
+  exactBundleBaseMatchesOfficialSnapshot,
+} from "../src/server/workflows/review-provenance";
 
 describe("failed database preview recovery", () => {
   const official = [
@@ -17,6 +20,36 @@ describe("failed database preview recovery", () => {
             changeKind: "MODIFY",
           },
           { artifactId: "new", baseHash: null, changeKind: "ADD" },
+        ],
+        official,
+      ),
+    ).toBe(true);
+  });
+
+  test("allows a no-change dependency to rebind to its current official identity", () => {
+    expect(
+      exactBundleBaseMatchesOfficialSnapshot(
+        [
+          {
+            artifactId: "existing",
+            baseHash: "older-no-change-identity",
+            changeKind: "NO_CHANGE",
+          },
+        ],
+        official,
+      ),
+    ).toBe(true);
+  });
+
+  test("accepts an exact delete base", () => {
+    expect(
+      exactBundleBaseMatchesOfficialSnapshot(
+        [
+          {
+            artifactId: "existing",
+            baseHash: "base-existing",
+            changeKind: "DELETE",
+          },
         ],
         official,
       ),
@@ -44,9 +77,39 @@ describe("failed database preview recovery", () => {
         changeKind: "DELETE",
       },
     ],
+    [
+      "changed delete base",
+      {
+        artifactId: "existing",
+        baseHash: "older-base",
+        changeKind: "DELETE",
+      },
+    ],
+    [
+      "missing no-change dependency",
+      {
+        artifactId: "missing",
+        baseHash: "former-base",
+        changeKind: "NO_CHANGE",
+      },
+    ],
   ] as const)("rejects a %s", (_label, artifact) => {
     expect(exactBundleBaseMatchesOfficialSnapshot([artifact], official)).toBe(
       false,
     );
+  });
+
+  test.each([
+    [
+      "FAILED_PREVIEW_RECOVERY_OFFICIAL_BASE_CHANGED",
+      "Official content changed in an affected artifact",
+    ],
+    [
+      "FAILED_PREVIEW_RECOVERY_MATERIALIZATION_FAILED",
+      "no longer validates against the current official snapshot",
+    ],
+    ["SOURCE_MANIFEST_MISMATCH", "approval preparation preconditions failed"],
+  ])("returns a safe actionable error for %s", (reason, expected) => {
+    expect(approvalPreparationPublicError(reason)).toContain(expected);
   });
 });

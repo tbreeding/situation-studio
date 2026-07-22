@@ -10,6 +10,18 @@ import {
   sha256,
   type BundleManifest,
 } from "@situation-studio/domain";
+import {
+  applyArtifactOverlay,
+  buildCanonicalSnapshot,
+  canonicalArtifactBytes,
+  classifyArtifactPath,
+  logicalIdForArtifact,
+  mediaTypeForPath,
+  sha256 as snapshotSha256,
+  snapshotManifestSchema,
+  type ArtifactOverlay,
+  type SnapshotArtifact,
+} from "@situation-studio/content-contracts";
 import { inspectCandidateText } from "@situation-studio/validator";
 
 export type PreparedReviewProvenance = {
@@ -114,10 +126,108 @@ export function exactBundleBaseMatchesOfficialSnapshot(
   return artifacts.every((artifact) => {
     const official = officialByArtifactId.get(artifact.artifactId);
     if (artifact.changeKind === "ADD") return official === undefined;
+    if (artifact.changeKind === "NO_CHANGE") return official !== undefined;
     return Boolean(
       artifact.baseHash && official?.contentHash === artifact.baseHash,
     );
   });
+}
+
+export function approvalPreparationPublicError(reason: string): string {
+  if (reason === "FAILED_PREVIEW_RECOVERY_OFFICIAL_BASE_CHANGED")
+    return "Official content changed in an affected artifact after this bundle was reviewed. The preserved candidate cannot be recovered safely; run a new complete review from the current official snapshot.";
+  if (reason === "FAILED_PREVIEW_RECOVERY_MATERIALIZATION_FAILED")
+    return "The preserved candidate no longer validates against the current official snapshot. Run a new complete review from the current official snapshot.";
+  return "approval preparation preconditions failed";
+}
+
+type RecoveryOfficialSnapshot = {
+  manifest: string;
+  artifacts: readonly {
+    artifactId: string;
+    logicalId: string;
+    canonicalPath: string;
+    artifactType: string;
+    contentHash: string;
+    byteLength: number;
+    content: {
+      body: string;
+      encoding: "UTF8" | "BINARY";
+      binaryBody: Uint8Array | null;
+    };
+  }[];
+};
+
+function bytesForSnapshotContent(content: {
+  body: string;
+  encoding: "UTF8" | "BINARY";
+  binaryBody: Uint8Array | null;
+}): Uint8Array {
+  if (content.encoding === "BINARY") {
+    if (!content.binaryBody)
+      throw new Error("RECOVERY_OFFICIAL_BINARY_CONTENT_MISSING");
+    return content.binaryBody;
+  }
+  return new TextEncoder().encode(content.body);
+}
+
+async function validateRecoveryMaterialization(
+  officialSnapshot: RecoveryOfficialSnapshot,
+  bundleItems: readonly {
+    path: string;
+    changeKind: "ADD" | "MODIFY" | "DELETE" | "NO_CHANGE";
+    contentHash: string;
+    body: string;
+    artifact: { logicalId: string };
+  }[],
+): Promise<string> {
+  const baseManifest = snapshotManifestSchema.parse(
+    JSON.parse(officialSnapshot.manifest),
+  );
+  const bodies = new Map<string, Uint8Array>();
+  for (const member of officialSnapshot.artifacts)
+    bodies.set(member.contentHash, bytesForSnapshotContent(member.content));
+
+  const overlay: ArtifactOverlay[] = [];
+  for (const member of bundleItems) {
+    const logicalId = member.artifact.logicalId;
+    if (member.changeKind === "DELETE") {
+      overlay.push({ logicalId, changeKind: "DELETE" });
+      continue;
+    }
+    const canonical = canonicalArtifactBytes(
+      member.path,
+      new TextEncoder().encode(member.body),
+    );
+    const contentHash = snapshotSha256(canonical.bytes);
+    if (contentHash !== member.contentHash)
+      throw new Error("RECOVERY_BUNDLE_CONTENT_NOT_CANONICAL");
+    if (logicalIdForArtifact(member.path, canonical.bytes) !== logicalId)
+      throw new Error("RECOVERY_BUNDLE_LOGICAL_ID_CHANGED");
+    bodies.set(contentHash, canonical.bytes);
+    const artifact: SnapshotArtifact = {
+      logicalId,
+      type: classifyArtifactPath(member.path),
+      path: member.path,
+      contentHash,
+      byteLength: canonical.bytes.byteLength,
+      encoding: canonical.encoding,
+      mediaType: mediaTypeForPath(member.path),
+    };
+    overlay.push({ logicalId, changeKind: member.changeKind, artifact });
+  }
+  const artifacts = applyArtifactOverlay(baseManifest.artifacts, overlay);
+  const activeHashes = new Set(
+    artifacts.map((artifact) => artifact.contentHash),
+  );
+  for (const hash of bodies.keys())
+    if (!activeHashes.has(hash)) bodies.delete(hash);
+  const built = await buildCanonicalSnapshot(
+    baseManifest.source,
+    artifacts,
+    bodies,
+  );
+  return built.manifestHash;
 }
 
 function exactManifestMatchesBundleArtifacts(
@@ -289,6 +399,7 @@ export async function prepareBundleForHumanApproval(
                 baseContentSnapshotHash: string;
               }
             | undefined;
+          let recoveryOfficialSnapshot: RecoveryOfficialSnapshot | undefined;
           if (recoveringFailedPreview) {
             if (!input.recoveryTargetCode)
               throw new Error("DATABASE_RECOVERY_REQUIRED");
@@ -300,7 +411,13 @@ export async function prepareBundleForHumanApproval(
               throw new Error("FAILED_PREVIEW_RECOVERY_TARGET_NOT_FOUND");
             const target = await transaction.publicationTarget.findUnique({
               where: { id: lockedTargetId },
-              include: { officialSnapshot: true },
+              include: {
+                officialSnapshot: {
+                  include: {
+                    artifacts: { include: { content: true } },
+                  },
+                },
+              },
             });
             const failedRequest = latestPublicationRequest;
             const approval = source.approvals[0];
@@ -334,19 +451,7 @@ export async function prepareBundleForHumanApproval(
                   select: { id: true },
                 })
               : null;
-            const officialArtifacts = target?.officialSnapshot
-              ? await transaction.contentSnapshotArtifact.findMany({
-                  where: {
-                    snapshotId: target.officialSnapshot.id,
-                    artifactId: {
-                      in: source.artifacts.map(
-                        (artifact) => artifact.artifactId,
-                      ),
-                    },
-                  },
-                  select: { artifactId: true, contentHash: true },
-                })
-              : [];
+            const officialArtifacts = target?.officialSnapshot?.artifacts ?? [];
             if (
               !target?.officialSnapshot ||
               target.officialSnapshot.validationState !== "VALIDATED" ||
@@ -390,13 +495,17 @@ export async function prepareBundleForHumanApproval(
                 alreadyPrepared,
               ) ||
               checkout.mode !== "EDITING" ||
-              parsedSourceManifest.data.relationshipChanges.length !== 0 ||
+              parsedSourceManifest.data.relationshipChanges.length !== 0
+            )
+              throw new Error("FAILED_PREVIEW_RECOVERY_PRECONDITIONS_FAILED");
+            if (
               !exactBundleBaseMatchesOfficialSnapshot(
                 source.artifacts,
                 officialArtifacts,
               )
             )
-              throw new Error("FAILED_PREVIEW_RECOVERY_PRECONDITIONS_FAILED");
+              throw new Error("FAILED_PREVIEW_RECOVERY_OFFICIAL_BASE_CHANGED");
+            recoveryOfficialSnapshot = target.officialSnapshot;
             recovery = {
               requestId: failedRequest.id,
               targetId: target.id,
@@ -430,7 +539,23 @@ export async function prepareBundleForHumanApproval(
             _max: { revision: true },
           });
           const revision = (latest._max.revision ?? 0) + 1;
+          const recoveryOfficialByArtifactId = new Map(
+            recoveryOfficialSnapshot?.artifacts.map((artifact) => [
+              artifact.artifactId,
+              artifact,
+            ]) ?? [],
+          );
           const bundleItems = source.artifacts.map((artifact) => {
+            const reboundOfficial =
+              recovery && artifact.changeKind === "NO_CHANGE"
+                ? recoveryOfficialByArtifactId.get(artifact.artifactId)
+                : undefined;
+            if (
+              recovery &&
+              artifact.changeKind === "NO_CHANGE" &&
+              !reboundOfficial
+            )
+              throw new Error("FAILED_PREVIEW_RECOVERY_OFFICIAL_BASE_CHANGED");
             const shouldFinalize =
               !["NO_CHANGE", "DELETE"].includes(artifact.changeKind) &&
               requiresHumanReviewProvenance(artifact.path);
@@ -439,19 +564,21 @@ export async function prepareBundleForHumanApproval(
                   reviewer: input.repositoryReviewerId,
                   lastReviewed: reviewDate,
                 })
-              : artifact.content.body;
-            const candidateHash = sha256(body);
+              : (reboundOfficial?.content.body ?? artifact.content.body);
+            const baseHash = reboundOfficial?.contentHash ?? artifact.baseHash;
+            const candidateHash = reboundOfficial?.contentHash ?? sha256(body);
             const changeKind =
               artifact.changeKind === "ADD"
                 ? ("ADD" as const)
                 : artifact.changeKind === "DELETE"
                   ? ("DELETE" as const)
-                  : candidateHash === artifact.baseHash
+                  : candidateHash === baseHash
                     ? ("NO_CHANGE" as const)
                     : ("MODIFY" as const);
             return {
               ...artifact,
               body,
+              baseHash,
               candidateHash,
               contentHash: candidateHash,
               changeKind,
@@ -481,6 +608,18 @@ export async function prepareBundleForHumanApproval(
           });
           if (candidateFindings.length)
             throw new Error("CANDIDATE_SAFETY_FAILED");
+
+          const recoveryMaterializedSnapshotHash =
+            recovery && recoveryOfficialSnapshot
+              ? await validateRecoveryMaterialization(
+                  recoveryOfficialSnapshot,
+                  bundleItems,
+                ).catch(() => {
+                  throw new Error(
+                    "FAILED_PREVIEW_RECOVERY_MATERIALIZATION_FAILED",
+                  );
+                })
+              : undefined;
 
           const priorManifest = parsedSourceManifest.data as BundleManifest;
           const manifest: BundleManifest = {
@@ -512,7 +651,7 @@ export async function prepareBundleForHumanApproval(
               : {};
           const environmentHash = sha256(
             recovery
-              ? `human-review-provenance-v1:${source.canonicalHash}:${recovery.baseContentSnapshotId}`
+              ? `human-review-provenance-v1:${source.canonicalHash}:${recovery.baseContentSnapshotId}:${recoveryMaterializedSnapshotHash}`
               : `human-review-provenance-v1:${source.canonicalHash}`,
           );
           const child = await transaction.proposedBundle.create({
@@ -542,6 +681,8 @@ export async function prepareBundleForHumanApproval(
                         baseContentSnapshotId: recovery.baseContentSnapshotId,
                         baseContentSnapshotHash:
                           recovery.baseContentSnapshotHash,
+                        materializedSnapshotHash:
+                          recoveryMaterializedSnapshotHash,
                         recoveredAt: now.toISOString(),
                       },
                     }
@@ -606,7 +747,9 @@ export async function prepareBundleForHumanApproval(
             },
             {
               validator: "contradiction-audit",
-              summary: `Inherited contradiction evidence from parent bundle ${source.canonicalHash}; only reviewer provenance changed.`,
+              summary: recovery
+                ? `Inherited contradiction evidence from parent bundle ${source.canonicalHash}; changed candidate artifacts were preserved and no-change dependencies were rebound to the validated official snapshot.`
+                : `Inherited contradiction evidence from parent bundle ${source.canonicalHash}; only reviewer provenance changed.`,
             },
             {
               validator: "human-review-provenance",
@@ -616,7 +759,7 @@ export async function prepareBundleForHumanApproval(
               ? [
                   {
                     validator: "database-base-recovery",
-                    summary: `Recovered failed preview ${recovery.requestId} only after every affected artifact base matched official snapshot ${recovery.baseContentSnapshotHash}.`,
+                    summary: `Recovered failed preview ${recovery.requestId} only after every changed artifact base matched official snapshot ${recovery.baseContentSnapshotHash}, no-change dependencies were rebound to that snapshot, and exact materialization validated as ${recoveryMaterializedSnapshotHash}.`,
                   },
                 ]
               : []),

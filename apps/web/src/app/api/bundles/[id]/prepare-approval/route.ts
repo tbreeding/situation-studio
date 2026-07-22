@@ -4,7 +4,10 @@ import { audit } from "@/server/audit";
 import { authenticateMutation } from "@/server/auth/request";
 import { database } from "@/server/database";
 import { environment } from "@/server/environment";
-import { prepareBundleForHumanApproval } from "@/server/workflows/review-provenance";
+import {
+  approvalPreparationPublicError,
+  prepareBundleForHumanApproval,
+} from "@/server/workflows/review-provenance";
 
 const schema = z.object({
   checkoutId: z.string().uuid(),
@@ -90,7 +93,7 @@ export async function POST(
       reason,
     });
     return NextResponse.json(
-      { error: "approval preparation preconditions failed" },
+      { error: approvalPreparationPublicError(reason) },
       { status: 409 },
     );
   }

@@ -221,13 +221,15 @@ export function canPrepareDatabaseFailedPreviewRecovery(input: {
   publicationRequestState: string | null;
   ownsCheckout: boolean;
   canApprove: boolean;
+  officialBaseMatches: boolean;
 }) {
   return (
     input.publicationBackend === "database" &&
     ["APPROVED", "HUMAN_REVIEW"].includes(input.bundleState ?? "") &&
     input.publicationRequestState === "FAILED_PREVIEW" &&
     input.ownsCheckout &&
-    input.canApprove
+    input.canApprove &&
+    input.officialBaseMatches
   );
 }
 

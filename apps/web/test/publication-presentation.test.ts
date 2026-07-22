@@ -96,6 +96,7 @@ describe("publication presentation", () => {
       publicationRequestState: "FAILED_PREVIEW",
       ownsCheckout: true,
       canApprove: true,
+      officialBaseMatches: true,
     };
     expect(canPrepareDatabaseFailedPreviewRecovery(eligible)).toBe(true);
     expect(
@@ -126,6 +127,12 @@ describe("publication presentation", () => {
       canPrepareDatabaseFailedPreviewRecovery({
         ...eligible,
         canApprove: false,
+      }),
+    ).toBe(false);
+    expect(
+      canPrepareDatabaseFailedPreviewRecovery({
+        ...eligible,
+        officialBaseMatches: false,
       }),
     ).toBe(false);
   });

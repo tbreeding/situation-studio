@@ -36,6 +36,9 @@ type Fixture = {
   checkoutId: string | null;
   checkoutFencingToken: bigint | null;
   requestId: string;
+  noChangeArtifactId: string | null;
+  noChangeOfficialHash: string | null;
+  noChangeLegacyHash: string | null;
 };
 
 async function ensureAcceptanceTarget() {
@@ -77,6 +80,7 @@ async function ensureAcceptanceTarget() {
 async function seedFixture(input?: {
   mismatchedBase?: boolean;
   withCheckout?: boolean;
+  withNoChangeDrift?: boolean;
 }): Promise<Fixture> {
   const target = await database.publicationTarget.findUniqueOrThrow({
     where: { code: targetCode },
@@ -104,17 +108,32 @@ async function seedFixture(input?: {
       },
       include: { content: true },
     });
+  const noChangeOfficialArtifact = input?.withNoChangeDrift
+    ? await database.contentSnapshotArtifact.findFirstOrThrow({
+        where: {
+          snapshotId: target.officialSnapshot.id,
+          logicalId: "practice:feedback-fork",
+        },
+        include: { content: true },
+      })
+    : null;
   const now = new Date();
   const reviewDate = now.toISOString().slice(0, 10);
-  const reviewerId = `recovery-acceptance-${randomUUID()}`;
+  const reviewerId = "timothy-breeding";
   const candidateBody = `${finalizeHumanReviewProvenance(
     officialArtifact.content.body,
     { reviewer: reviewerId, lastReviewed: reviewDate },
-  )}\n\n## Recovery acceptance\n\nDescribe observable behavior and impact before assigning a label.`;
+  )}\n\n## Recovery acceptance\n\nDescribe observable behavior and impact before assigning a label.\n`;
   const candidateHash = sha256(candidateBody);
   const baseHash = input?.mismatchedBase
     ? sha256(`mismatched-base:${randomUUID()}`)
     : officialArtifact.contentHash;
+  const noChangeLegacyBody = noChangeOfficialArtifact
+    ? `${noChangeOfficialArtifact.content.body}\n`
+    : null;
+  const noChangeLegacyHash = noChangeLegacyBody
+    ? sha256(noChangeLegacyBody)
+    : null;
   const latestRevision =
     (
       await database.proposedBundle.aggregate({
@@ -143,6 +162,20 @@ async function seedFixture(input?: {
         changeKind: "MODIFY",
         noChangeRationale: null,
       },
+      ...(noChangeOfficialArtifact && noChangeLegacyHash
+        ? [
+            {
+              logicalId: noChangeOfficialArtifact.logicalId,
+              type: noChangeOfficialArtifact.artifactType,
+              path: noChangeOfficialArtifact.canonicalPath,
+              baseHash: noChangeLegacyHash,
+              candidateHash: noChangeLegacyHash,
+              changeKind: "NO_CHANGE" as const,
+              noChangeRationale:
+                "The dependency was unchanged in the reviewed candidate.",
+            },
+          ]
+        : []),
     ],
     relationshipChanges: [],
   };
@@ -151,15 +184,19 @@ async function seedFixture(input?: {
     revision: parentRevision,
   };
   const sourceHash = canonicalBundleHash(sourceManifest);
-  const user = await database.user.create({
-    data: {
-      username: `recovery-${randomUUID().slice(0, 12)}`,
-      displayName: "Failed Preview Recovery Acceptance",
-      repositoryReviewerId: reviewerId,
-      identityType: "HUMAN",
-      state: "ACTIVE",
-    },
-  });
+  const user =
+    (await database.user.findUnique({
+      where: { repositoryReviewerId: reviewerId },
+    })) ??
+    (await database.user.create({
+      data: {
+        username: `recovery-${randomUUID().slice(0, 12)}`,
+        displayName: "Failed Preview Recovery Acceptance",
+        repositoryReviewerId: reviewerId,
+        identityType: "HUMAN",
+        state: "ACTIVE",
+      },
+    }));
   const session = await database.session.create({
     data: {
       tokenHash: sha256(`recovery-token:${randomUUID()}`),
@@ -182,6 +219,16 @@ async function seedFixture(input?: {
         },
         update: {},
       });
+      if (noChangeLegacyBody && noChangeLegacyHash)
+        await transaction.contentBlob.upsert({
+          where: { hash: noChangeLegacyHash },
+          create: {
+            hash: noChangeLegacyHash,
+            body: noChangeLegacyBody,
+            byteLength: Buffer.byteLength(noChangeLegacyBody),
+          },
+          update: {},
+        });
       const draft = await transaction.draft.create({
         data: {
           situationId: situation.id,
@@ -239,6 +286,21 @@ async function seedFixture(input?: {
           changeKind: "MODIFY",
         },
       });
+      if (noChangeOfficialArtifact && noChangeLegacyHash)
+        await transaction.bundleArtifact.create({
+          data: {
+            bundleId: source.id,
+            artifactId: noChangeOfficialArtifact.artifactId,
+            path: noChangeOfficialArtifact.canonicalPath,
+            type: noChangeOfficialArtifact.artifactType,
+            baseHash: noChangeLegacyHash,
+            candidateHash: noChangeLegacyHash,
+            contentHash: noChangeLegacyHash,
+            changeKind: "NO_CHANGE",
+            noChangeRationale:
+              "The dependency was unchanged in the reviewed candidate.",
+          },
+        });
       const environmentHash = sha256(`recovery-acceptance:${sourceHash}`);
       for (const validator of [
         "required-role-completion",
@@ -317,6 +379,9 @@ async function seedFixture(input?: {
         checkoutId,
         checkoutFencingToken,
         requestId: request.id,
+        noChangeArtifactId: noChangeOfficialArtifact?.artifactId ?? null,
+        noChangeOfficialHash: noChangeOfficialArtifact?.contentHash ?? null,
+        noChangeLegacyHash,
       };
     },
     { isolationLevel: "Serializable" },
@@ -362,12 +427,23 @@ async function cleanupFixture(fixture: Fixture) {
   });
 }
 
-async function mustReject(operation: () => Promise<unknown>, label: string) {
+async function mustReject(
+  operation: () => Promise<unknown>,
+  label: string,
+  expectedReason?: string,
+) {
   let rejected = false;
   try {
     await operation();
-  } catch {
+  } catch (error) {
     rejected = true;
+    if (
+      expectedReason &&
+      (!(error instanceof Error) || error.message !== expectedReason)
+    )
+      throw new Error(
+        `${label} rejected with ${error instanceof Error ? error.message : "an unknown error"}; expected ${expectedReason}.`,
+      );
   }
   if (!rejected) throw new Error(`${label} unexpectedly succeeded.`);
 }
@@ -493,6 +569,82 @@ async function verifySuccessfulLegacyRecovery() {
   }
 }
 
+async function verifySuccessfulNoChangeIdentityRecovery() {
+  const fixture = await seedFixture({ withNoChangeDrift: true });
+  try {
+    if (
+      !fixture.noChangeArtifactId ||
+      !fixture.noChangeOfficialHash ||
+      !fixture.noChangeLegacyHash
+    )
+      throw new Error("No-change recovery fixture is incomplete.");
+    const result = await prepareBundleForHumanApproval(database, {
+      bundleId: fixture.sourceBundleId,
+      userId: fixture.userId,
+      repositoryReviewerId: fixture.reviewerId,
+      ...checkoutBinding(fixture),
+      recoveryTargetCode: targetCode,
+    });
+    const child = await database.proposedBundle.findUniqueOrThrow({
+      where: { id: result.bundle.id },
+      include: {
+        artifacts: { include: { content: true } },
+        validations: true,
+      },
+    });
+    const sourceNoChange = await database.bundleArtifact.findUniqueOrThrow({
+      where: {
+        bundleId_artifactId: {
+          bundleId: fixture.sourceBundleId,
+          artifactId: fixture.noChangeArtifactId,
+        },
+      },
+    });
+    const childNoChange = child.artifacts.find(
+      (artifact) => artifact.artifactId === fixture.noChangeArtifactId,
+    );
+    const officialNoChange =
+      await database.contentSnapshotArtifact.findFirstOrThrow({
+        where: {
+          snapshotId: child.baseContentSnapshotId ?? "",
+          artifactId: fixture.noChangeArtifactId,
+        },
+        include: { content: true },
+      });
+    const recoveryLedger = (
+      child.decisionLedger as {
+        databaseFailedPreviewRecovery?: {
+          materializedSnapshotHash?: string;
+        };
+      } | null
+    )?.databaseFailedPreviewRecovery;
+    const recoveryValidation = child.validations.find(
+      (validation) => validation.validator === "database-base-recovery",
+    );
+    if (
+      !result.recovered ||
+      !result.created ||
+      sourceNoChange.baseHash !== fixture.noChangeLegacyHash ||
+      sourceNoChange.candidateHash !== fixture.noChangeLegacyHash ||
+      !childNoChange ||
+      childNoChange.changeKind !== "NO_CHANGE" ||
+      childNoChange.baseHash !== fixture.noChangeOfficialHash ||
+      childNoChange.candidateHash !== fixture.noChangeOfficialHash ||
+      childNoChange.contentHash !== fixture.noChangeOfficialHash ||
+      childNoChange.content.body !== officialNoChange.content.body ||
+      !recoveryLedger?.materializedSnapshotHash?.match(/^[a-f0-9]{64}$/u) ||
+      recoveryValidation?.state !== "PASSED" ||
+      !recoveryValidation.summary?.includes(
+        recoveryLedger.materializedSnapshotHash,
+      )
+    )
+      throw new Error("No-change identity recovery invariants failed.");
+    return result.bundle.id;
+  } finally {
+    await cleanupFixture(fixture);
+  }
+}
+
 async function verifyDeterministicCommentFirst() {
   const fixture = await seedFixture();
   try {
@@ -601,6 +753,7 @@ async function verifyRejectedPreconditions() {
           recoveryTargetCode: targetCode,
         }),
       "Mismatched affected base",
+      "FAILED_PREVIEW_RECOVERY_OFFICIAL_BASE_CHANGED",
     );
   } finally {
     await cleanupFixture(mismatched);
@@ -668,6 +821,8 @@ async function verifyRejectedPreconditions() {
 try {
   await ensureAcceptanceTarget();
   const recoveredBundleId = await verifySuccessfulLegacyRecovery();
+  const noChangeReboundBundleId =
+    await verifySuccessfulNoChangeIdentityRecovery();
   const raceWinner = await verifyRecoveryCommentRace();
   await verifyDeterministicCommentFirst();
   await verifyRejectedPreconditions();
@@ -675,9 +830,12 @@ try {
     `${JSON.stringify({
       status: "passed",
       recoveredBundleId,
+      noChangeReboundBundleId,
       raceWinner,
       deterministicCommentFirst: true,
       preservedLegacyRequest: true,
+      noChangeOfficialIdentityRebound: true,
+      exactRecoveryMaterializationValidated: true,
       doubleRecoveryRejected: true,
       staleParentCommentRejected: true,
       mismatchedBaseRejected: true,

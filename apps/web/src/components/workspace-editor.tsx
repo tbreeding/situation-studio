@@ -21,6 +21,7 @@ type Props = {
   situationId: string;
   situationSlug: string;
   publicationBackend: "git" | "database";
+  failedPreviewRecoveryBlockedByOfficialBase: boolean;
   draftId: string | null;
   checkout: {
     id: string;
@@ -96,6 +97,7 @@ export function WorkspaceEditor(props: Props) {
     publicationRequestState: props.publicationRequest?.state ?? null,
     ownsCheckout,
     canApprove: props.permissions.includes("publication.approve"),
+    officialBaseMatches: !props.failedPreviewRecoveryBlockedByOfficialBase,
   });
   const canPrepareApproval = canPrepareHumanApproval({
     bundleState: props.bundle?.state ?? null,
@@ -1017,7 +1019,9 @@ export function WorkspaceEditor(props: Props) {
                 ? props.publicationBackend === "database"
                   ? canRecoverFailedPreview
                     ? "Private preview failed safely. Public content was unchanged and publisher custody was released. Prepare a fresh database review to continue."
-                    : "Private preview failed safely. Public content was unchanged and publisher custody was released."
+                    : props.failedPreviewRecoveryBlockedByOfficialBase
+                      ? "Private preview failed safely. Public content was unchanged and publisher custody was released. Official content changed in an affected artifact after this bundle was reviewed, so the preserved candidate cannot be recovered safely. Run a new complete review from the current official snapshot."
+                      : "Private preview failed safely. Public content was unchanged and publisher custody was released."
                   : "Candidate staging failed. The previous Leadership release was restored and your checkout has been returned."
                 : props.publicationRequest.state === "AUTO_ROLLED_BACK"
                   ? "Final publication did not verify. The previous Leadership release was restored safely."

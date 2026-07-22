@@ -6,6 +6,7 @@ import { WorkspaceEditor } from "@/components/workspace-editor";
 import { currentSession } from "@/server/auth/sessions";
 import { database } from "@/server/database";
 import {
+  exactBundleBaseMatchesOfficialSnapshot,
   exactArtifactsMatchReviewProvenance,
   exactArtifactsMatchStoredHashes,
   readPreparedReviewProvenance,
@@ -166,6 +167,29 @@ export default async function SituationWorkspace({
     ) ?? null;
   const bundle = draft?.bundles[0] ?? null;
   const publicationRequest = bundle?.publicationRequests[0] ?? null;
+  const recoveryOfficialArtifacts =
+    databaseBackend &&
+    bundle &&
+    publicationRequest?.state === "FAILED_PREVIEW" &&
+    databaseTarget?.officialSnapshotId
+      ? await database().contentSnapshotArtifact.findMany({
+          where: {
+            snapshotId: databaseTarget.officialSnapshotId,
+            artifactId: {
+              in: bundle.artifacts.map((artifact) => artifact.artifactId),
+            },
+          },
+          select: { artifactId: true, contentHash: true },
+        })
+      : [];
+  const failedPreviewRecoveryOfficialBaseMatches = Boolean(
+    bundle &&
+    databaseTarget?.officialSnapshotId &&
+    exactBundleBaseMatchesOfficialSnapshot(
+      bundle.artifacts,
+      recoveryOfficialArtifacts,
+    ),
+  );
   const publishedCommitSha =
     (databaseBackend
       ? databaseTarget?.officialSnapshot?.manifestHash
@@ -247,7 +271,18 @@ export default async function SituationWorkspace({
     publicationRequestState: publicationRequest?.state ?? null,
     ownsCheckout,
     canApprove: session.permissions.has("publication.approve"),
+    officialBaseMatches: failedPreviewRecoveryOfficialBaseMatches,
   });
+  const failedPreviewRecoveryBlockedByOfficialBase =
+    !failedPreviewRecoveryOfficialBaseMatches &&
+    canPrepareDatabaseFailedPreviewRecovery({
+      publicationBackend,
+      bundleState: bundle?.state ?? null,
+      publicationRequestState: publicationRequest?.state ?? null,
+      ownsCheckout,
+      canApprove: session.permissions.has("publication.approve"),
+      officialBaseMatches: true,
+    });
   const nextAction = publicationRequest
     ? isPrivateCandidateReviewPending(
         publicationBackend,
@@ -271,11 +306,13 @@ export default async function SituationWorkspace({
               ? bundle?.comments.some((comment) => comment.blocking)
                 ? "Resolve the blocking review feedback before preparing a fresh database-bound review."
                 : "Prepare a fresh database-bound review from the preserved candidate, then approve its exact bytes."
-              : !checkout &&
-                  session.permissions.has("draft.update") &&
-                  session.permissions.has("publication.approve")
-                ? "Check out this situation to prepare a fresh review against the current official snapshot."
-                : "The private preview failed safely. Inspect the recorded failure before retrying."
+              : failedPreviewRecoveryBlockedByOfficialBase
+                ? "Official content changed in an affected artifact after this bundle was reviewed. The preserved candidate cannot be recovered safely; run a new complete review from the current official snapshot."
+                : !checkout &&
+                    session.permissions.has("draft.update") &&
+                    session.permissions.has("publication.approve")
+                  ? "Check out this situation to prepare a fresh review against the current official snapshot."
+                  : "The private preview failed safely. Inspect the recorded failure before retrying."
             : "Candidate staging failed safely; inspect the recorded failure before retrying."
           : publicationRequest.state === "RECONCILIATION_REQUIRED"
             ? databaseBackend
@@ -464,6 +501,9 @@ export default async function SituationWorkspace({
             situationId={situation.id}
             situationSlug={situation.slug}
             publicationBackend={publicationBackend}
+            failedPreviewRecoveryBlockedByOfficialBase={
+              failedPreviewRecoveryBlockedByOfficialBase
+            }
             lifecycle={situation.lifecycle}
             draftId={draft?.id ?? null}
             checkout={

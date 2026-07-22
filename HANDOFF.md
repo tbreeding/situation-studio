@@ -1,6 +1,6 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-21, after the live publication-state consistency release
+Last updated: 2026-07-22, after the failed-preview recovery preflight release
 
 ## Purpose and authority
 
@@ -21,13 +21,14 @@ The original implementation specification is `/Users/timothybreeding/projects/le
 - Local repository: `/Users/timothybreeding/projects/situation-studio`.
 - Remote: `git@github.com:tbreeding/situation-studio.git`.
 - Branch: `main`.
-- Current deployed source commit: `23c4b5f` (`Enforce coherent publication workspace states`).
-- Current RP1 application release: `20260721T192033Z`; current `main` additionally
+- Current deployed source commit: `342fd7d` (`Fix failed-preview recovery preflight`).
+- Current RP1 application release: `20260722T193726Z`; current `main` additionally
   contains only this final release-state evidence update.
 - Production PostgreSQL is at all 18 forward migrations. Target generation 3
-  has one official snapshot and no active candidate or active publication.
+  has one official snapshot and no active candidate or active publication. Tim
+  retains one user editing checkout for `repeatedly-misses-commitments`.
 - The complete corrected gate passed formatting, lint, strict TypeScript,
-  Prisma validation, bootstrap guards, 842 tests, secret scan, and the
+  Prisma validation, bootstrap guards, 849 tests, secret scan, and the
   production web build.
 - The 38-case Chromium matrix passed 30 applicable cases with 8 intentional
   desktop-only mobile skips against a production build and a disposable clone
@@ -267,6 +268,21 @@ unstable restarts; no migration command targeted it.
 
 ## Completed evidence
 
+- Release `20260722T193726Z` at exact commit `342fd7d` fixes unsafe failed-preview
+  recovery presentation and preparation. Recovery may rebind an unchanged
+  `NO_CHANGE` artifact to its current official identity, but any changed base for
+  a `MODIFY`/`DELETE`, any `ADD` collision, or any non-exact prospective snapshot
+  still fails closed. The recovery path now dry-runs the complete overlay against
+  current official bytes before creating a child review. For
+  `repeatedly-misses-commitments`, the preserved bundle also contains a modified
+  artifact whose official base advanced, so the live page correctly suppresses
+  **Prepare fresh database review**, keeps the official baseline published, keeps
+  the proposal read-only and unpublished, and directs a new complete review from
+  the current official snapshot. The full gate passed 849 tests; the 38-case
+  Chromium matrix passed 30 applicable cases with 8 intentional mobile skips.
+  Post-cutover live/ready, PostgreSQL, all three Studio processes, the sole
+  Leadership process, both intended listeners, and the preserved user checkout
+  were verified without triggering any workflow mutation.
 - Release `20260721T192033Z` at exact commit `23c4b5f` replaced publication
   state inference with one exhaustive 21-state workspace presentation contract.
   The focused suite passes 258 cases; the complete repository gate passes 842

@@ -70,7 +70,7 @@ Final local evidence includes:
 
 - Studio formatting, lint, typecheck, strict secret scan, and optimized
   production build;
-- 110 unit tests and 12 cross-database integration scenarios;
+- 113 unit tests and 12 cross-database integration scenarios;
 - 9 publisher scenarios, including lifecycle, consecutive scoped releases,
   all-release history import, and injected crashes;
 - browser/accessibility: 9 passed, 6 intentionally skipped duplicates;
@@ -83,6 +83,9 @@ Final local evidence includes:
   [independent-review.md](independent-review.md).
 
 External pre-deployment inputs remain dedicated production CLI authentication
-and the Claude fallback smoke, off-host backup destination/retention, approved
-Studio hostname, and separate checkpoint-8 approval. Both coordinated release
-candidates are committed on clean local `main` branches and remain unpushed.
+and the Claude fallback smoke, approved Studio hostname, and separate
+checkpoint-8 approval. The user explicitly deferred backup configuration for
+the initial launch on 2026-07-24; readiness must report that deferral, and
+backup configuration becomes required again before any content publication.
+Both coordinated release candidates are committed on clean local `main`
+branches and remain unpushed.

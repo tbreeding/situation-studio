@@ -28,7 +28,7 @@ changes are at `/Users/timothybreeding/projects/leadership`. The coordinated
 Leadership candidate is commit
 `bb0ee441986e1923bce2d7793227f35d4f385923`.
 
-Both working trees are clean on local `main`. Situation Studio is four commits
+Both working trees are clean on local `main`. Situation Studio is five commits
 ahead of its remote; Leadership is one commit ahead. Existing Situation Studio
 deletions and prior user changes were preserved. Neither candidate has been
 pushed or deployed.
@@ -41,7 +41,7 @@ in both repositories.
 
 - Studio unit, integration, publisher lifecycle, crash recovery, type, and
   browser/accessibility suites pass.
-- The final gate passes formatting, lint, typecheck, 110 unit tests, 12
+- The final gate passes formatting, lint, typecheck, 113 unit tests, 12
   cross-database integration scenarios, a strict post-build secret scan, and
   an optimized production build.
 - The browser suite covers 1280×800, 1440×900, and 390×844; all 9 executed
@@ -82,9 +82,13 @@ situation. The prepared procedure is
 
 External inputs still required before that approval are:
 
-- an off-RP1 encrypted backup destination and retention choice;
 - mode-restricted per-process production environment files;
 - dedicated Codex and Claude subscription sign-in under the production review
   user, followed by the guarded CLI preflight;
 - the exact Studio HTTPS hostname registered in the TimsPrototypes access
   platform.
+
+The user explicitly deferred backup configuration for the initial launch on
+2026-07-24. Production readiness reports `backup.state = "deferred"` rather
+than fabricating a receipt. Backup configuration becomes required again before
+any content-publication approval.

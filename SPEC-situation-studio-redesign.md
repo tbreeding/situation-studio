@@ -765,6 +765,14 @@ production versions, releases, or audit history in this pass.
 
 ### 15. Back up and operate the independent history
 
+Initial-launch override, explicitly approved by the user on 2026-07-24:
+production backup configuration is deferred. Readiness must expose
+`backup.state = "deferred"` through the explicit
+`SITUATION_STUDIO_BACKUP_READINESS_MODE=deferred` setting; it must not create or
+claim a backup receipt. No production content publication is included in this
+launch. Backup configuration returns to a required gate before the first
+publication approval.
+
 Before production deployment, configure:
 
 - encrypted nightly `situation_studio` backups;

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { database } from "@/server/database";
-import { safeProcessState } from "@/server/health/process-status";
+import {
+  backupReadiness,
+  safeProcessState,
+} from "@/server/health/process-status";
 
 export const dynamic = "force-dynamic";
 
@@ -41,13 +44,16 @@ export async function GET() {
       };
     });
     const backupAge = ageSeconds(backup?.verifiedAt);
+    const backupStatus = backupReadiness({
+      mode: process.env.SITUATION_STUDIO_BACKUP_READINESS_MODE,
+      verifiedAtAgeSeconds: backupAge,
+    });
     const degraded =
       recoveryRequired > 0 ||
       cursorAge === null ||
       cursorAge > 120 ||
       processStatus.some((process) => process.state !== "fresh") ||
-      backupAge === null ||
-      backupAge > 26 * 60 * 60;
+      backupStatus.degraded;
     return NextResponse.json(
       {
         status: degraded ? "degraded" : "ready",
@@ -65,7 +71,7 @@ export async function GET() {
         processes: processStatus,
         publisher: { recoveryRequired },
         backup: {
-          state: backup ? "verified" : "not-yet-verified",
+          state: backupStatus.state,
           ageSeconds: backupAge,
           encrypted: backup?.encrypted ?? null,
           restoreDrill:

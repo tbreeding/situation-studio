@@ -21,6 +21,12 @@ SSH target and directory, the retention period enforced on that destination,
 and the qualified review-provider route. Do not substitute a guessed hostname,
 storage target, or model.
 
+Initial-launch exception: on 2026-07-24 the user explicitly deferred backup
+configuration. Set `SITUATION_STUDIO_BACKUP_READINESS_MODE=deferred` only for
+this launch. The readiness response must report `backup.state = "deferred"`;
+do not create a synthetic receipt. No content publication is authorized, and
+backup configuration becomes a hard gate again before the first publication.
+
 ## Read-only preflight
 
 Re-read repository cleanliness, official pointer identity, runtime health,
@@ -87,8 +93,8 @@ not replace the paths with literal credentials.
    approved commit, host, origin, and host header. This proves the service
    users, exact authenticated CLI versions, mode-restricted environment files,
    disk, memory, and process manager boundary without creating a release.
-4. Produce and restore-drill encrypted Leadership and Studio backups, including
-   the required checksum-verified off-RP1 copy.
+4. Record the explicit initial-launch backup deferral. Do not create a
+   synthetic receipt or represent that a production backup exists.
 5. Re-read and record the pre-migration official pointer, manifest, artifact
    bytes, API inventory, sitemap, feed, and baseline screenshots.
 6. Apply only the reviewed additive Leadership migration as its owner, deploy

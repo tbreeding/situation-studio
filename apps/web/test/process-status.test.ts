@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { safeProcessState } from "../src/server/health/process-status";
+import {
+  backupReadiness,
+  safeProcessState,
+} from "../src/server/health/process-status";
 
 describe("safe process health status", () => {
   it("reports missing or old heartbeats as stale", () => {
@@ -36,5 +39,46 @@ describe("safe process health status", () => {
         ageSeconds: 1,
       }),
     ).toBe("fresh");
+  });
+});
+
+describe("backup readiness", () => {
+  it("reports an explicit launch deferral without fabricating a receipt", () => {
+    expect(
+      backupReadiness({
+        mode: "deferred",
+        verifiedAtAgeSeconds: null,
+      }),
+    ).toEqual({ state: "deferred", degraded: false });
+  });
+
+  it("requires a recent verified backup by default", () => {
+    expect(
+      backupReadiness({
+        mode: undefined,
+        verifiedAtAgeSeconds: null,
+      }),
+    ).toEqual({ state: "not-yet-verified", degraded: true });
+    expect(
+      backupReadiness({
+        mode: "required",
+        verifiedAtAgeSeconds: 26 * 60 * 60 + 1,
+      }),
+    ).toEqual({ state: "stale", degraded: true });
+    expect(
+      backupReadiness({
+        mode: "required",
+        verifiedAtAgeSeconds: 60,
+      }),
+    ).toEqual({ state: "verified", degraded: false });
+  });
+
+  it("fails closed for an unknown mode", () => {
+    expect(
+      backupReadiness({
+        mode: "optional",
+        verifiedAtAgeSeconds: null,
+      }),
+    ).toEqual({ state: "not-yet-verified", degraded: true });
   });
 });

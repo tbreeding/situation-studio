@@ -5,9 +5,11 @@ An editor checks out one situation, works in durable drafts, optionally runs a
 22-stage agent review, previews and compares exact content, and submits one
 validated change. Leadership remains the sole public content authority.
 
-The redesign is implemented locally through checkpoint 7 of
+The redesign and guarded production release candidate are implemented through
+checkpoint 7 of
 [SPEC-situation-studio-redesign.md](SPEC-situation-studio-redesign.md).
-Production deployment and production content changes are not authorized.
+Checkpoint 8 production deployment still requires its exact approval packet;
+production content changes require a later, separately named approval.
 
 ## Runtime
 

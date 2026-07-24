@@ -1,10 +1,12 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ## Outcome
 
-The Situation Studio redesign is implemented locally through checkpoint 7.
+The Situation Studio redesign is implemented locally through checkpoint 7,
+and the guarded checkpoint-8 release candidate is committed and ready for its
+required exact production approval packet.
 The workbench now provides ordinary username/password authentication, durable
 exclusive checkouts, immutable drafts and history, section and raw-MDX editing,
 rendered preview and exact diff, optional durable agent review, selective
@@ -22,12 +24,13 @@ verification.
 
 Situation Studio is at
 `/Users/timothybreeding/projects/situation-studio`. The coordinated Leadership
-changes are at `/Users/timothybreeding/projects/leadership`, whose baseline
-commit remains `58e8634cb3901e55cf58bc17e9f3cac71d201f37`.
+changes are at `/Users/timothybreeding/projects/leadership`. The coordinated
+Leadership candidate is commit
+`bb0ee441986e1923bce2d7793227f35d4f385923`.
 
-Both working trees contain the intentional redesign changes and are not
-committed or staged. Existing Situation Studio deletions and prior user changes
-were preserved. Do not reset either tree.
+Both working trees are clean on local `main` and one commit ahead of their
+respective remotes. Existing Situation Studio deletions and prior user changes
+were preserved. Neither candidate has been pushed or deployed.
 
 The exact shared situation-contract archive has SHA-256
 `9cd3aeebb384edb2c1fb70647b55d0bbed147910216293fea2979d8eec7b17f4`
@@ -50,6 +53,13 @@ in both repositories.
   streamed restore drill recovered all 6 migrations, 15 situations, 15
   production versions, 16 content blobs, and 84 audit events without writing a
   plaintext dump.
+- A disposable PostgreSQL 16 rehearsal created the Studio owner and database,
+  applied all 6 Studio migrations, granted the 5 runtime roles, injected
+  generated passwords through the environment, and proved each restricted role
+  could log in with its intended access.
+- Leadership's complete production gate passed: database validation, lint,
+  typecheck, 38 unit tests, 13 integration tests, and 70 cross-browser
+  database/rendering checks with 18 intentional platform-scope skips.
 - The deterministic 22-stage provider route is qualified. A live service
   provider route was not invoked because no service credential was supplied;
   personal CLI credentials were deliberately not used.
@@ -73,4 +83,5 @@ External inputs still required before that approval are:
 - mode-restricted per-process production environment files;
 - a service-provider credential and selected review model for live
   qualification;
-- exact clean commits in both repositories.
+- the exact Studio HTTPS hostname registered in the TimsPrototypes access
+  platform.

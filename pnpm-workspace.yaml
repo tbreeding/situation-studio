@@ -5,13 +5,9 @@ packages:
 allowBuilds:
   "@prisma/engines": true
   argon2: true
-  cpu-features: false
+  cpu-features: true
   esbuild: true
   prisma: true
-  protobufjs: false
+  protobufjs: true
   sharp: true
-  ssh2: false
-  unrs-resolver: true
-
-minimumReleaseAgeExclude:
-  - "@openai/codex@0.144.6-darwin-arm64 || 0.144.6-darwin-x64 || 0.144.6-linux-arm64 || 0.144.6-linux-x64 || 0.144.6-win32-arm64 || 0.144.6-win32-x64 || 0.144.6"
+  ssh2: true

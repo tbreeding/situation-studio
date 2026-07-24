@@ -1,14 +1,16 @@
-import { createDatabaseClient } from "@situation-studio/db";
+import {
+  createDatabaseClient,
+  type DatabaseClient,
+} from "@situation-studio/db";
 import { environment } from "@/server/environment";
 
-const globalDatabase = globalThis as unknown as {
-  studioDatabase?: ReturnType<typeof createDatabaseClient>;
+const globalDatabase = globalThis as typeof globalThis & {
+  __situationStudioDatabase?: DatabaseClient;
 };
 
-export function database() {
-  globalDatabase.studioDatabase ??= createDatabaseClient(
-    environment().DATABASE_URL,
-    8,
+export function database(): DatabaseClient {
+  globalDatabase.__situationStudioDatabase ??= createDatabaseClient(
+    environment().STUDIO_DATABASE_URL,
   );
-  return globalDatabase.studioDatabase;
+  return globalDatabase.__situationStudioDatabase;
 }

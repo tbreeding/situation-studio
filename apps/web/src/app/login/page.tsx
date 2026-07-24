@@ -1,87 +1,91 @@
+import Link from "next/link";
 import { cookies } from "next/headers";
-import { LOGIN_CSRF_COOKIE } from "@/server/auth/sessions";
+import { redirect } from "next/navigation";
+import { safeReturnTo } from "@/server/auth/return-to";
+import { LOGIN_CSRF_COOKIE, currentSession } from "@/server/auth/sessions";
+
+export const dynamic = "force-dynamic";
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{
-    error?: string;
-    expired?: string;
-    activated?: string;
-  }>;
+  searchParams: Promise<{ error?: string; returnTo?: string }>;
 }) {
-  const params = await searchParams;
-  const csrf = (await cookies()).get(LOGIN_CSRF_COOKIE)?.value ?? "";
+  const existing = await currentSession();
+  const query = await searchParams;
+  const returnTo = safeReturnTo(query.returnTo);
+  if (existing) redirect(returnTo);
+  const csrfToken = (await cookies()).get(LOGIN_CSRF_COOKIE)?.value;
+  if (!csrfToken) {
+    const suffix =
+      returnTo !== "/" ? `?returnTo=${encodeURIComponent(returnTo)}` : "";
+    redirect(`/auth/login/begin${suffix}`);
+  }
+  const message =
+    query.error === "invalid"
+      ? "That username and password did not match."
+      : query.error === "blocked"
+        ? "Sign-in is temporarily paused. Try again in 15 minutes."
+        : query.error === "verification"
+          ? "The sign-in page expired. Please try again."
+          : null;
   return (
-    <main className="loginShell" id="main-content">
-      <section className="loginStory">
-        <div className="wordmark">
-          <span className="mark">S</span> Situation Studio
+    <main className="loginPage">
+      <section className="loginPanel" aria-labelledby="login-title">
+        <div className="brandMark" aria-hidden="true">
+          SS
         </div>
-        <div>
-          <p className="eyebrow">Private beta · two gates</p>
-          <h1>Make the rule teach the same thing everywhere.</h1>
-          <p>
-            Create, challenge, rehearse, and publish leadership guidance as one
-            coherent learning bundle—with human judgment at the center.
+        <p className="eyebrow">Situation Studio</p>
+        <h1 id="login-title">Sign in to edit with care.</h1>
+        <p className="loginIntro">
+          Check out one situation, shape the guidance, and make a deliberate
+          production change.
+        </p>
+        {message ? (
+          <p className="formError" role="alert">
+            {message}
           </p>
-        </div>
-        <p>
-          Do not enter personal data, credentials, health information, customer
-          secrets, or identifiable employee details.
+        ) : null}
+        <form className="loginForm" action="/auth/login" method="post">
+          <input type="hidden" name="csrf" value={csrfToken} />
+          <input type="hidden" name="returnTo" value={returnTo} />
+          <label>
+            <span>Username</span>
+            <input
+              name="username"
+              type="text"
+              autoComplete="username"
+              required
+              maxLength={64}
+            />
+          </label>
+          <label>
+            <span>Password</span>
+            <input
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              required
+              maxLength={1024}
+            />
+          </label>
+          <button className="primaryButton" type="submit">
+            Sign in
+          </button>
+        </form>
+        <p className="quietNote">
+          Accounts are created by an administrator.{" "}
+          <Link href="/health/live">System status</Link>
         </p>
       </section>
-      <section className="loginPanel" aria-labelledby="login-title">
-        <div className="loginCard">
-          <p className="eyebrow">Studio authentication</p>
-          <h2 id="login-title">Sign in</h2>
-          <p className="muted">
-            The TimsPrototypes access gate is separate from this Studio account.
-          </p>
-          {params.error && (
-            <p className="alert" role="alert">
-              The username or password was not accepted. Try again later if
-              attempts are limited.
-            </p>
-          )}
-          {params.expired && (
-            <p className="alert" role="alert">
-              Your session ended. Sign in again.
-            </p>
-          )}
-          {params.activated && (
-            <p className="success" role="status">
-              Account activated. Sign in with your new password.
-            </p>
-          )}
-          <form className="stack" action="/auth/login" method="post">
-            <input type="hidden" name="loginCsrf" value={csrf} />
-            <label className="field">
-              Username
-              <input
-                name="username"
-                autoComplete="username"
-                required
-                maxLength={64}
-              />
-            </label>
-            <label className="field">
-              Password
-              <input
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                minLength={12}
-                maxLength={1024}
-              />
-            </label>
-            <button className="button" type="submit">
-              Enter Situation Studio
-            </button>
-          </form>
-        </div>
-      </section>
+      <aside className="loginAside" aria-label="Studio principles">
+        <p>Fast enough for real editorial work.</p>
+        <ul>
+          <li>One editor per situation</li>
+          <li>Every production version retained</li>
+          <li>Agent review stays optional</li>
+        </ul>
+      </aside>
     </main>
   );
 }

@@ -1,1 +1,7 @@
-artifacts/database-publication/bootstrap/**
+.next/
+node_modules/
+packages/db/generated/
+packages/db/prisma/schema.prisma
+playwright-report/
+test-results/
+vendor/

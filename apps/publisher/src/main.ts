@@ -1,119 +1,70 @@
-import { setTimeout as delay } from "node:timers/promises";
-import path from "node:path";
 import { createDatabaseClient } from "@situation-studio/db";
-import { z } from "zod";
-import { RepositoryPublisher } from "./repository";
-import { nextPublicationRequest, processPublication } from "./service";
-import { nextRollbackRequest, processRollback } from "./rollback";
+import {
+  claimPublicationJob,
+  processPublicationJob,
+  runtimeIdentityFromHealth,
+} from "./index.js";
 
-const schema = z
-  .object({
-    DATABASE_URL: z.string().startsWith("postgresql://"),
-    PUBLISHER_RUNTIME_ENV: z.enum(["validation", "production"]),
-    PUBLISHER_PROFILE: z.enum(["leadership-validation", "protected-beta"]),
-    PUBLISHER_REMOTE_URL: z.string().min(1),
-    PUBLISHER_STATE_ROOT: z.string().min(1),
-    PUBLISHER_RELEASE_ROOT: z.string().min(1),
-    PUBLISHER_PREVIEW_LINK: z.string().min(1),
-    PUBLISHER_LIVE_LINK: z.string().min(1),
-    PUBLISHER_ACTIVATION_BINARY: z.string().startsWith("/"),
-    PUBLISHER_PREVIEW_PROCESS: z.string().min(1),
-    PUBLISHER_LIVE_PROCESS: z.string().min(1),
-    PUBLISHER_PREVIEW_HEALTH_URL: z.string().url(),
-    PUBLISHER_LIVE_HEALTH_URL: z.string().url(),
-    PUBLISHER_POLL_MS: z.coerce
-      .number()
-      .int()
-      .min(250)
-      .max(60_000)
-      .default(2000),
-    PUBLISHER_RUN_ONCE: z.enum(["0", "1"]).default("0"),
-  })
-  .superRefine((value, context) => {
-    if (
-      value.PUBLISHER_PROFILE === "leadership-validation" &&
-      value.PUBLISHER_RUNTIME_ENV !== "validation"
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["PUBLISHER_PROFILE"],
-        message: "The fixture publisher profile is validation-only.",
-      });
-    if (
-      value.PUBLISHER_PROFILE === "protected-beta" &&
-      value.PUBLISHER_RUNTIME_ENV !== "production"
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["PUBLISHER_PROFILE"],
-        message: "The protected beta profile requires production isolation.",
-      });
-  });
-
-const config = schema.parse(process.env);
-const database = createDatabaseClient(config.DATABASE_URL, 2);
-const stateRoot = path.resolve(config.PUBLISHER_STATE_ROOT);
-const publisher = new RepositoryPublisher({
-  remoteUrl: config.PUBLISHER_REMOTE_URL,
-  cachePath: path.join(stateRoot, "repository.git"),
-  workRoot: path.join(stateRoot, "worktrees"),
-  releaseRoot: path.resolve(config.PUBLISHER_RELEASE_ROOT),
-  previewLink: path.resolve(config.PUBLISHER_PREVIEW_LINK),
-  liveLink: path.resolve(config.PUBLISHER_LIVE_LINK),
-  activationBinary: path.resolve(config.PUBLISHER_ACTIVATION_BINARY),
-  previewProcessName: config.PUBLISHER_PREVIEW_PROCESS,
-  liveProcessName: config.PUBLISHER_LIVE_PROCESS,
-  previewHealthUrl: config.PUBLISHER_PREVIEW_HEALTH_URL,
-  liveHealthUrl: config.PUBLISHER_LIVE_HEALTH_URL,
-  validationCommands: [
-    { binary: "pnpm", args: ["install", "--frozen-lockfile"] },
-    { binary: "pnpm", args: ["lint"] },
-    { binary: "pnpm", args: ["typecheck"] },
-    { binary: "pnpm", args: ["content:validate"] },
-    { binary: "pnpm", args: ["test"] },
-    { binary: "pnpm", args: ["build"] },
-  ],
-  validationEnvironment: {
-    NEXT_PUBLIC_SITE_URL:
-      config.PUBLISHER_PROFILE === "protected-beta"
-        ? "https://leadership.timsprototypes.com"
-        : "http://127.0.0.1:3305",
-  },
-});
-
-let stopping = false;
-process.on("SIGTERM", () => {
-  stopping = true;
-});
-process.on("SIGINT", () => {
-  stopping = true;
-});
-
-try {
-  do {
-    const requestId = await nextPublicationRequest(database);
-    if (requestId)
-      await processPublication(database, publisher, requestId).catch(
-        (error) => {
-          process.stderr.write(
-            `Publication ${requestId} failed: ${error instanceof Error ? error.message : "unknown"}\n`,
-          );
-        },
-      );
-    else {
-      const rollbackId = await nextRollbackRequest(database);
-      if (rollbackId)
-        await processRollback(database, publisher, rollbackId).catch(
-          (error) => {
-            process.stderr.write(
-              `Rollback ${rollbackId} failed: ${error instanceof Error ? error.message : "unknown"}\n`,
-            );
-          },
-        );
-      else if (config.PUBLISHER_RUN_ONCE === "0")
-        await delay(config.PUBLISHER_POLL_MS);
-    }
-  } while (!stopping && config.PUBLISHER_RUN_ONCE === "0");
-} finally {
-  await database.$disconnect();
+function requiredEnvironment(name: string) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required.`);
+  return value;
 }
+
+const studioDatabaseUrl = requiredEnvironment("STUDIO_PUBLISHER_DATABASE_URL");
+const leadershipPublisherUrl = requiredEnvironment(
+  "LEADERSHIP_STUDIO_PUBLISHER_DATABASE_URL",
+);
+const leadershipHealthUrl = requiredEnvironment(
+  "LEADERSHIP_CONTENT_HEALTH_URL",
+);
+
+const studio = createDatabaseClient(studioDatabaseUrl, 4);
+
+async function heartbeat(status: string) {
+  const recoveryRequired = await studio.publicationJob.count({
+    where: { state: "RECOVERY_REQUIRED" },
+  });
+  await studio.processHeartbeat.upsert({
+    where: { id: "publisher" },
+    create: {
+      id: "publisher",
+      status,
+      details: { recoveryRequired, runtimeHealthConfigured: true },
+      lastSeenAt: new Date(),
+    },
+    update: {
+      status,
+      details: { recoveryRequired, runtimeHealthConfigured: true },
+      lastSeenAt: new Date(),
+    },
+  });
+}
+
+async function run() {
+  for (;;) {
+    await heartbeat("CHECKING_QUEUE");
+    const claim = await claimPublicationJob(studio);
+    if (!claim) {
+      await heartbeat("IDLE");
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      continue;
+    }
+    await heartbeat("WORKING");
+    await processPublicationJob(
+      {
+        studio,
+        leadershipPublisherUrl,
+        runtimeIdentity: () => runtimeIdentityFromHealth(leadershipHealthUrl),
+      },
+      claim.id,
+      claim.claimToken,
+    );
+    await heartbeat("IDLE");
+  }
+}
+
+void run().finally(async () => {
+  await heartbeat("STOPPING").catch(() => undefined);
+  await studio.$disconnect();
+});

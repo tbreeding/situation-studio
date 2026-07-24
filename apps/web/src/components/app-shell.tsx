@@ -1,39 +1,65 @@
 import Link from "next/link";
-import { PrimaryNavigation } from "@/components/primary-navigation";
 
 export function AppShell({
   user,
   csrfToken,
-  canAccessAdministration,
+  active,
   children,
 }: {
-  user: { displayName: string };
+  user: { displayName: string; isAdmin: boolean };
   csrfToken: string;
-  canAccessAdministration?: boolean;
+  active: "situations" | "operations";
   children: React.ReactNode;
 }) {
   return (
-    <>
-      <header className="appHeader">
-        <Link className="wordmark" href="/">
-          <span className="mark">S</span> Situation Studio
+    <div className="appFrame">
+      <header className="topBar">
+        <Link className="brand" href="/">
+          <span className="brandMark" aria-hidden="true">
+            SS
+          </span>
+          <span>
+            <strong>Situation Studio</strong>
+            <small>Leadership editorial workbench</small>
+          </span>
         </Link>
-        <PrimaryNavigation
-          canAccessAdministration={canAccessAdministration ?? false}
-        />
-        <div className="account">
-          <span>{user.displayName}</span>
+        <nav aria-label="Primary navigation">
+          <Link
+            href="/"
+            className={active === "situations" ? "active" : undefined}
+            aria-current={active === "situations" ? "page" : undefined}
+          >
+            Situations
+          </Link>
+          {user.isAdmin ? (
+            <Link
+              href="/operations"
+              className={active === "operations" ? "active" : undefined}
+              aria-current={active === "operations" ? "page" : undefined}
+            >
+              Operations
+            </Link>
+          ) : null}
+        </nav>
+        <div className="accountMenu">
+          <span className="avatar" aria-hidden="true">
+            {user.displayName
+              .split(/\s+/u)
+              .map((word) => word[0])
+              .join("")
+              .slice(0, 2)
+              .toUpperCase()}
+          </span>
+          <span className="accountName">{user.displayName}</span>
           <form action="/auth/logout" method="post">
-            <input type="hidden" name="csrfToken" value={csrfToken} />
+            <input type="hidden" name="csrf" value={csrfToken} />
             <button className="textButton" type="submit">
               Sign out
             </button>
           </form>
         </div>
       </header>
-      <main className="appMain" id="main-content">
-        {children}
-      </main>
-    </>
+      {children}
+    </div>
   );
 }

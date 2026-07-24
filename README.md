@@ -1,54 +1,63 @@
 # Situation Studio
 
-Situation Studio is the private administration application for creating, reviewing, and publishing coherent Leadership Field Guide learning bundles.
+Situation Studio is a private editorial workbench for Leadership situations.
+An editor checks out one situation, works in durable drafts, optionally runs a
+22-stage agent review, previews and compares exact content, and submits one
+validated change. Leadership remains the sole public content authority.
 
-The application deliberately keeps two authorities separate:
+The redesign is implemented locally through checkpoint 7 of
+[SPEC-situation-studio-redesign.md](SPEC-situation-studio-redesign.md).
+Production deployment and production content changes are not authorized.
 
-- PostgreSQL owns identities, sessions, checkouts, drafts, AI jobs, review history, approvals, and publication records.
-- the Leadership Git repository owns the exact published artifact tree and deployable commit history.
+## Runtime
 
-The current implementation is a pnpm workspace with visible privilege boundaries under `apps/` and pure domain contracts under `packages/`. The protected production deployment runs the real Codex-first review worker with a separate service/API credential and least-privilege database identity. The trusted repository publisher uses a separate database identity and repository-scoped Git key, activates the exact candidate through the single fixed Leadership PM2 process, and verifies that origin before advancing the publication saga.
+The pnpm workspace contains three separately credentialed processes:
 
-## Current production status
+- `apps/web` — authentication, inventory, checkouts, editing, preview, history,
+  proposals, and administration;
+- `apps/review-worker` — one globally serialized durable review DAG;
+- `apps/publisher` — complete Leadership release assembly, promotion,
+  verification, and automatic restoration.
 
-The protected application is live at `https://situation-studio.timsprototypes.com` through the TimsPrototypes outer gate. RP1 serves it from `192.168.1.120:3015` as PM2 processes `situation-studio-web`, `situation-studio-worker`, and `situation-studio-publisher`. PostgreSQL has seven migrations applied, the 15-situation/37-artifact legacy baseline is loaded, and the first administrator is active.
+Studio uses its own PostgreSQL 16 database named `situation_studio`. The
+separate `leadership_field_guide` database is read through a SELECT-only role;
+only the publisher receives restricted release functions.
 
-OpenAI service-API execution is enabled. A live review of `repeatedly-misses-deadlines` completed 22/22 roles with `gpt-5.6-sol`, zero fallbacks, one proposal bundle, and 3/3 validations. The exact revision-2 bundle was human-approved, staged, and published as commit `b6e40575eb823dc32c62644775895ad84a80d2d1` on `https://leadership.timsprototypes.com`; protected Git `main`, the verified Leadership release, and the reconciled Studio publication record all identify that exact commit. Fake-provider and fake-publication behavior remain prohibited in production.
+## Local setup
 
-Human review now displays immutable bundle artifacts instead of mutable draft bytes. Preparing approval creates a new canonical child bundle, writes the mapped human reviewer and current review date into changed public MDX, preserves open comments, and reruns deterministic exact-byte validation. Approval, staging, and the publisher reject bundles without this provenance. The production proposal completed the guarded final confirmation and is now the official published baseline.
-
-The publication workspace now distinguishes the official protected-Git baseline from the candidate currently displayed on Leadership. The final action opens a before/after confirmation dialog, requires the reviewer to acknowledge inspecting the staged candidate, and then automatically reports confirmation, protected-main advancement, Leadership verification, Studio reconciliation, and publisher-custody release.
-
-When the 15-minute recent-authentication window expires, sensitive workspace actions now open an in-context password confirmation and automatically resume the exact pending action after success. The confirmation endpoint keeps the existing session and CSRF boundary, throttles failures, and writes audited success or denial events. The rejected pre-fix production preparation attempt created no child bundle or other workflow mutation.
-
-The published/proposal byte comparison is a true aligned line diff. Removed lines are red, added lines are green, blank counterparts keep later lines aligned, exact line numbers remain visible, and scrolling either pane synchronizes both vertical and horizontal positions.
-
-## Codex-first workflow
-
-Situation Studio now selects OpenAI/Codex first for every review role using `gpt-5.6-sol`; Claude Opus is fallback-only. Production uses the OpenAI Responses API with `store: false` and requires a dedicated `OPENAI_API_KEY`. Personal Codex or Claude CLI authentication is accepted only when the worker is explicitly in isolated `validation` mode and is rejected in production mode.
-
-The full local workflow is implemented: checkout and visible Check in, unsaved-change cancellation, saved revision preservation, 22-role review, active-job cancellation, deterministic candidate edits, connected-surface validation, immutable approval, trusted build, staging on the single Leadership candidate runtime, final human confirmation, atomic Git finalization, reconciliation, and forward-history rollback.
-
-On 2026-07-18 the full publication/rollback flow completed against a disposable PostgreSQL database and bare Git remote. All 22 selected runs used `gpt-5.6-sol`, all review gates passed, publication reconciled commit `01babf29268317b3ca9bbddfd61c6dbe264912fc`, and rollback reconciled commit `e4057416e2627b0d02dc459f25daa66c6248cb10`. The rollback tree exactly matched baseline tree `340bef0d08dfababca804e3a811eb7918bb99959`. Production now independently proves checkout, review, proposal validation, approval, publisher custody, exact Git commit/build, candidate activation, recent-password final confirmation, protected-main advancement, Leadership verification, Studio reconciliation, and custody release. Production rollback remains deliberately unexercised.
-
-## Desktop operations experience
-
-The approved desktop UI/UX pass is deployed and verified at 1280×800 and 1440×900. It adds capability-aware/current navigation, searchable attention-first inventory controls, a four-section immutable creation brief, rendered guidance with exact expandable MDX source, a plain-language candidate lifecycle, navigable situation dependencies, validated archive confirmation, and action-oriented Jobs and Capacity states.
-
-The desktop pass did not change protected Leadership `main` or the workflow/RBAC invariants. The later explicitly authorized production publication advanced protected Git `main` to the already-verified candidate and reconciled the published record without changing the active Leadership release.
-
-## Local verification
+Use Node.js 24 and pnpm. Copy [.env.example](.env.example) into a local,
+uncommitted environment file and supply disposable database URLs and secrets.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm db:generate
-pnpm baseline:generate
+pnpm db:migrate:deploy
+pnpm db:seed
+pnpm dev
+```
+
+Bootstrap production-shaped history only against a disposable Leadership
+clone and its reader role:
+
+```sh
+pnpm bootstrap:leadership
+```
+
+## Verification
+
+```sh
 pnpm verify
+pnpm test:integration
+STUDIO_BROWSER_DATABASE_URL=... \
+STUDIO_BROWSER_ADMIN_PASSWORD=... \
 pnpm test:browser
 ```
 
-The 36-case browser matrix runs desktop Chromium at 1280×800 and 1440×900 plus the existing mobile regression cases. In the latest production-runtime run, 28 applicable cases passed and 8 desktop-only cases were intentionally skipped on mobile. Desktop coverage includes containment, role-aware navigation, inventory behavior, client-side creation validation with no invalid mutation, all 15 read-only published artifacts, rendered/source switching, keyboard-safe Source expansion, real dependency navigation, visible Check in with cancel/discard behavior, an aligned highlighted proposal diff with bidirectional linked scrolling, a disposable proposal sentinel that cannot be mistaken for published guidance, archive cancellation, console checks, and critical/serious accessibility scans.
+`pnpm verify` generates Prisma, checks formatting and types, runs unit and
+security tests, and builds the production web bundle. Integration and browser
+tests require disposable PostgreSQL databases and are intentionally separate.
 
-See `HANDOFF.md` for the exact continuation state. Read `docs/architecture.md`, `docs/data-model.md`, `docs/publication-saga.md`, `docs/operations.md`, and `docs/rp1-assessment.md` before changing production behavior.
-
-`deploy.sh` provides the RP1 versioned-release path. It requires explicit approval for the exact pushed `main` commit, a clean worktree, a healthy host preflight, and a size-capped archive made only from committed Git source. It then verifies locally, builds an immutable release, applies migrations and explicit web/service grants, imports the baseline idempotently, cuts over the Studio `current` symlink, restarts the web, worker, publisher, and single Leadership process, and health-checks both origins. Credentials and Git authority are provisioned separately from immutable releases; gateway routes remain owner-UI operations.
+Architecture, checkpoint evidence, and the production approval boundary are
+documented in [docs/architecture.md](docs/architecture.md),
+[docs/checkpoints](docs/checkpoints), and
+[docs/runbooks/production-migration.md](docs/runbooks/production-migration.md).

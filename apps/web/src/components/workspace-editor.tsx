@@ -1,1452 +1,1479 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
-import { PublicationConfirmationDialog } from "@/components/publication-confirmation-dialog";
-import { PublicationLiveProgress } from "@/components/publication-live-progress";
-import { ReauthenticationDialog } from "@/components/reauthentication-dialog";
-import { PrivateCandidateHandoffButton } from "@/components/private-candidate-handoff-button";
+import Link from "next/link";
 import { RenderedGuidance } from "@/components/rendered-guidance";
 import { SynchronizedDiff } from "@/components/synchronized-diff";
-import {
-  canPrepareDatabaseFailedPreviewRecovery,
-  canPrepareHumanApproval,
-  isAwaitingHumanConfirmation,
-  isPrivateCandidateReviewPending,
-  reconciliationDisagreement,
-} from "@/lib/publication-presentation";
-import { reconcileDisplayedArtifactBody } from "@/lib/workspace-editor-state";
 
-type Props = {
-  situationId: string;
-  situationSlug: string;
-  publicationBackend: "git" | "database";
-  failedPreviewRecoveryBlockedByOfficialBase: boolean;
-  draftId: string | null;
-  checkout: {
-    id: string;
-    fencingToken: string;
-    holderUserId: string | null;
-    custody: string;
-  } | null;
-  userId: string;
-  artifact: { id: string; body: string } | null;
-  displayedArtifactState: "PUBLISHED" | "DRAFT" | "PROPOSAL";
-  publishedBody: string | null;
-  publishedCommitSha: string | null;
-  revision: number | null;
-  csrfToken: string;
-  bundle: {
-    id: string;
-    state: string;
-    canonicalHash: string;
-    repositoryReviewerId: string | null;
-    provenanceReady: boolean;
-    preparedReviewDate: string | null;
-    artifacts: {
-      id: string;
-      logicalId: string;
-      path: string;
-      changeKind: string;
-      candidateHash: string;
-      body: string;
-    }[];
-    comments: { id: string; body: string; blocking: boolean }[];
-  } | null;
-  approvalId: string | null;
-  publicationRequest: {
-    id: string;
-    state: string;
-    currentStep: string;
-    previewCommitSha: string | null;
-    finalConfirmed: boolean;
-    reconciliationReason: string | null;
-  } | null;
-  reconciliation: {
-    officialSnapshotHash: string | null;
-    observedSnapshotHash: string | null;
-    candidateSnapshotHash: string | null;
-  } | null;
-  permissions: string[];
-  lifecycle: string;
-  rollbackTarget: { id: string; commitSha: string } | null;
-  rollbackRequest: {
-    id: string;
-    state: string;
-    currentStep: string;
-    candidateIdentity: string | null;
-  } | null;
+type Metadata = {
+  slug: string;
+  title: string;
+  description: string;
+  stakes: string;
+  primarySkill: string;
+  preparationTime: "5 minutes" | "15 minutes" | "30 minutes";
+  emotionalLoad: "low" | "medium" | "high";
+  pattern: "first-occurrence" | "emerging-pattern" | "repeated-pattern";
+  scope: "individual" | "pair" | "team";
+  tags: string[];
+  audience: Array<"manager" | "technical-lead">;
+  support: Array<"hr" | "legal" | "safety" | "security" | "senior-leader">;
+  published: string;
+  lastReviewed: string;
+  author: string;
+  reviewer: string;
+  socialHook: string;
+  campaignCluster: string;
 };
 
-export function WorkspaceEditor(props: Props) {
-  const router = useRouter();
-  const ownsCheckout =
-    props.checkout?.holderUserId === props.userId &&
-    props.checkout.custody === "USER";
-  const canEdit = Boolean(
-    ownsCheckout &&
-    props.permissions.includes("draft.update") &&
-    props.draftId &&
-    props.artifact &&
-    props.revision !== null &&
-    props.displayedArtifactState === "DRAFT",
-  );
-  const canRecoverFailedPreview = canPrepareDatabaseFailedPreviewRecovery({
-    publicationBackend: props.publicationBackend,
-    bundleState: props.bundle?.state ?? null,
-    publicationRequestState: props.publicationRequest?.state ?? null,
-    ownsCheckout,
-    canApprove: props.permissions.includes("publication.approve"),
-    officialBaseMatches: !props.failedPreviewRecoveryBlockedByOfficialBase,
-  });
-  const canPrepareApproval = canPrepareHumanApproval({
-    bundleState: props.bundle?.state ?? null,
-    publicationRequestState: props.publicationRequest?.state ?? null,
-    ownsCheckout,
-    canApprove: props.permissions.includes("publication.approve"),
-  });
-  const displayedArtifactBody = props.artifact?.body ?? "";
-  const [body, setBody] = useState(displayedArtifactBody);
-  const previousArtifactBodyRef = useRef(displayedArtifactBody);
-  const [checkInPending, setCheckInPending] = useState(false);
-  const [preparationPending, setPreparationPending] = useState(false);
-  const [publicationConfirmationOpen, setPublicationConfirmationOpen] =
-    useState(false);
-  const [publicationSubmitting, setPublicationSubmitting] = useState(false);
-  const [
-    publicationConfirmationSubmitted,
-    setPublicationConfirmationSubmitted,
-  ] = useState(false);
-  const [publishedCandidateCommit, setPublishedCandidateCommit] = useState<
-    string | null
-  >(null);
-  const [reauthenticationRequest, setReauthenticationRequest] = useState<{
-    actionLabel: string;
-    retry: () => Promise<void>;
-  } | null>(null);
-  const hasUnsavedChanges = body !== displayedArtifactBody;
-  const [status, setStatus] = useState(
-    canEdit
-      ? `Draft revision ${props.revision} · ready to edit`
-      : props.displayedArtifactState === "PUBLISHED"
-        ? "Published baseline · read-only"
-        : `${props.displayedArtifactState === "PROPOSAL" ? "Proposal" : "Draft"} candidate revision ${props.revision} · read-only · not published`,
-  );
-  const [view, setView] = useState<"guidance" | "source">("guidance");
-  const [sourceExpanded, setSourceExpanded] = useState(false);
-  const expandSourceButtonRef = useRef<HTMLButtonElement>(null);
-  const closeSourceButtonRef = useRef<HTMLButtonElement>(null);
-  const sourcePanelRef = useRef<HTMLDivElement>(null);
-  const [archiveReason, setArchiveReason] = useState("");
-  const [lifecycleAttempted, setLifecycleAttempted] = useState(false);
-  const [commentBody, setCommentBody] = useState("");
-  const [blockingComment, setBlockingComment] = useState(true);
-  const awaitingHumanConfirmation = Boolean(
-    props.publicationRequest &&
-    isAwaitingHumanConfirmation(
-      props.publicationRequest.state,
-      props.publicationRequest.finalConfirmed,
-    ),
-  );
-  const privateCandidateReviewPending = Boolean(
-    props.publicationRequest &&
-    isPrivateCandidateReviewPending(
-      props.publicationBackend,
-      props.publicationRequest.state,
-    ),
-  );
-  const publicationProgressVisible = Boolean(
-    props.publicationRequest &&
-    [
-      "AWAITING_CONFIRMATION",
-      "OFFICIAL_POINTER_COMMITTED",
-      "RESTORING_PREVIOUS",
-      "CUTOVER",
-      "LIVE_VERIFIED",
-      "RECONCILED",
-    ].includes(props.publicationRequest.state) &&
-    (publicationConfirmationSubmitted ||
-      props.publicationRequest.finalConfirmed ||
-      props.publicationRequest.state !== "AWAITING_CONFIRMATION"),
-  );
-  const publicationSucceeded =
-    publicationConfirmationSubmitted && !props.publicationRequest;
-  const lifecycleReasonError =
-    lifecycleAttempted && archiveReason.trim().length < 8
-      ? "Enter a specific reason of at least 8 characters."
-      : "";
-  const closeExpandedSource = useCallback(() => {
-    setSourceExpanded(false);
-    window.requestAnimationFrame(() => expandSourceButtonRef.current?.focus());
-  }, []);
+type Bundle = {
+  schemaVersion: "situation-bundle-v1";
+  contractVersion: string;
+  validationPolicyVersion: string;
+  situationId: string;
+  visibility: "PUBLIC" | "RETIRED" | "UNPUBLISHED";
+  metadata: Metadata;
+  bodyHash: string;
+  artifacts: unknown[];
+  relationships: Array<{
+    kind: string;
+    logicalId: string;
+    position: number;
+    contentHash: string;
+    visibility: string;
+  }>;
+  promotion: Record<string, unknown>;
+  contextHashes: string[];
+};
 
-  useEffect(() => {
-    const previousArtifactBody = previousArtifactBodyRef.current;
-    previousArtifactBodyRef.current = displayedArtifactBody;
-    setBody((currentBody) =>
-      reconcileDisplayedArtifactBody({
-        currentBody,
-        previousArtifactBody,
-        nextArtifactBody: displayedArtifactBody,
-      }),
+type HistoryItem = {
+  id: string;
+  bundleHash: string;
+  productionAt: string;
+  sourceKind: string;
+  releaseId: string;
+  manifestHash: string;
+  changeSummary: string;
+  editorNote: string | null;
+  body: string;
+};
+
+type Review = {
+  id: string;
+  state: string;
+  queuedAt: string;
+  steps: Array<{ ordinal: number; roleCode: string; state: string }>;
+  proposal: null | {
+    id: string;
+    summary: string;
+    changes: Array<{
+      id: string;
+      targetKind: string;
+      targetKey: string;
+      rationale: string;
+      state: string;
+    }>;
+  };
+};
+
+type Publication = {
+  state: string;
+};
+
+type ContextItem = {
+  logicalId: string;
+  kind: string;
+  visibility: string;
+  contentHash: string;
+  sharingCount: number;
+  hasVariant: boolean;
+};
+
+async function sha256(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function canonicalText(value: string) {
+  return `${value.replace(/\r\n?/gu, "\n").replace(/\n+$/u, "")}\n`;
+}
+
+function serializeSections(names: string[], sections: Record<string, string>) {
+  return canonicalText(
+    names
+      .map((name) => `## ${name}\n\n${(sections[name] ?? "").trim()}`)
+      .join("\n\n"),
+  );
+}
+
+function parseSections(names: string[], body: string) {
+  const normalized = canonicalText(body);
+  const matches = [...normalized.matchAll(/^##[ \t]+(.+?)[ \t]*$/gmu)];
+  const parsed: Record<string, string> = {};
+  matches.forEach((match, index) => {
+    const name = match[1]?.trim() ?? "";
+    const start = (match.index ?? 0) + match[0].length;
+    const end = matches[index + 1]?.index ?? normalized.length;
+    parsed[name] = normalized.slice(start, end).trim();
+  });
+  if (names.some((name) => !(name in parsed)))
+    throw new Error(
+      "Raw MDX is missing one or more required section headings.",
     );
-  }, [displayedArtifactBody]);
+  return Object.fromEntries(names.map((name) => [name, parsed[name] ?? ""]));
+}
 
-  async function requestReauthentication(
-    response: Response,
-    actionLabel: string,
-    retry: () => Promise<void>,
-  ): Promise<boolean> {
-    if (response.status !== 403) return false;
-    const result = (await response
-      .clone()
-      .json()
-      .catch(() => null)) as { error?: string } | null;
-    if (result?.error !== "recent reauthentication required") return false;
-    setStatus("Confirm your password to continue this sensitive action.");
-    setReauthenticationRequest({ actionLabel, retry });
-    return true;
+function shortHash(value: string | null) {
+  return value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "Not published";
+}
+
+export function WorkspaceEditor({
+  situation,
+  initialBundle,
+  initialSections,
+  initialBody,
+  productionBody,
+  sectionNames,
+  checkout,
+  currentUserId,
+  csrfToken,
+  review,
+  publication,
+  history,
+  context,
+}: {
+  situation: {
+    id: string;
+    slug: string;
+    title: string;
+    visibility: string;
+    productionBundleHash: string | null;
+  };
+  initialBundle: Bundle;
+  initialSections: Record<string, string>;
+  initialBody: string;
+  productionBody: string;
+  sectionNames: string[];
+  checkout: null | {
+    id: string;
+    fence: string;
+    holderId: string;
+    holderName: string;
+  };
+  currentUserId: string;
+  csrfToken: string;
+  review: Review | null;
+  publication: Publication | null;
+  history: HistoryItem[];
+  context: ContextItem[];
+}) {
+  const router = useRouter();
+  const mine = checkout?.holderId === currentUserId;
+  const reviewLocked =
+    review?.state === "QUEUED" || review?.state === "RUNNING";
+  const publicationLocked = Boolean(
+    publication &&
+    ["REQUESTED", "ASSEMBLING", "PROMOTING", "VERIFYING"].includes(
+      publication.state,
+    ),
+  );
+  const workspaceLocked = reviewLocked || publicationLocked;
+  const editable = Boolean(mine && !workspaceLocked);
+  const [tab, setTab] = useState<"edit" | "review" | "history" | "context">(
+    "edit",
+  );
+  const [bundle, setBundle] = useState(initialBundle);
+  const [sections, setSections] = useState(initialSections);
+  const [rawBody, setRawBody] = useState(initialBody);
+  const [rawMode, setRawMode] = useState(false);
+  const [saveState, setSaveState] = useState<
+    "saved" | "dirty" | "saving" | "error"
+  >("saved");
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [confirmSubmit, setConfirmSubmit] = useState(false);
+  const [comparedHistoryId, setComparedHistoryId] = useState<string | null>(
+    null,
+  );
+  const dirtyVersion = useRef(0);
+  const savedVersion = useRef(0);
+  const submitButton = useRef<HTMLButtonElement>(null);
+  const submitDialog = useRef<HTMLDivElement>(null);
+
+  const body = useMemo(
+    () =>
+      rawMode
+        ? canonicalText(rawBody)
+        : serializeSections(sectionNames, sections),
+    [rawBody, rawMode, sectionNames, sections],
+  );
+
+  function markDirty() {
+    dirtyVersion.current += 1;
+    setSaveState("dirty");
   }
 
-  useEffect(() => {
-    if (!ownsCheckout || !props.checkout) return;
-    const timer = window.setInterval(async () => {
-      const response = await fetch(
-        `/api/checkouts/${props.checkout?.id}/heartbeat`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-csrf-token": props.csrfToken,
-          },
-          body: JSON.stringify({ fencingToken: props.checkout?.fencingToken }),
+  const save = useCallback(
+    async (namedCheckpoint = "Autosave") => {
+      if (
+        !checkout ||
+        !editable ||
+        savedVersion.current === dirtyVersion.current
+      )
+        return true;
+      const version = dirtyVersion.current;
+      setSaveState("saving");
+      const bodyHash = await sha256(body);
+      const nextBundle = { ...bundle, bodyHash };
+      const response = await fetch(`/api/checkouts/${checkout.id}/save`, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken,
         },
-      );
-      if (!response.ok)
-        setStatus(
-          "Checkout expired or transferred — reload to continue read-only",
-        );
-    }, 60_000);
-    return () => window.clearInterval(timer);
-  }, [ownsCheckout, props.checkout, props.csrfToken]);
+        body: JSON.stringify({
+          fence: checkout.fence,
+          bundle: nextBundle,
+          body,
+          namedCheckpoint,
+        }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setSaveState("error");
+        setMessage(payload.error ?? "The draft could not be saved.");
+        return false;
+      }
+      savedVersion.current = version;
+      setBundle(nextBundle);
+      setSaveState(version === dirtyVersion.current ? "saved" : "dirty");
+      return true;
+    },
+    [body, bundle, checkout, csrfToken, editable],
+  );
 
   useEffect(() => {
-    if (!sourceExpanded) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    closeSourceButtonRef.current?.focus();
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeExpandedSource();
+    if (saveState !== "dirty" || !editable) return;
+    const timer = window.setTimeout(() => void save(), 900);
+    return () => window.clearTimeout(timer);
+  }, [editable, save, saveState]);
+
+  useEffect(() => {
+    if (!confirmSubmit) return;
+    const root = submitDialog.current?.closest("main");
+    const background = root
+      ? [...root.children].filter(
+          (element): element is HTMLElement =>
+            element instanceof HTMLElement &&
+            !element.contains(submitDialog.current),
+        )
+      : [];
+    for (const element of background) element.inert = true;
+    submitDialog.current
+      ?.querySelector<HTMLButtonElement>("button:not([disabled])")
+      ?.focus();
+    return () => {
+      for (const element of background) element.inert = false;
+    };
+  }, [confirmSubmit]);
+
+  function closeSubmitDialog() {
+    setConfirmSubmit(false);
+    requestAnimationFrame(() => submitButton.current?.focus());
+  }
+
+  function handleSubmitDialogKeyDown(
+    event: React.KeyboardEvent<HTMLDivElement>,
+  ) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeSubmitDialog();
+      return;
+    }
+    if (event.key !== "Tab" || !submitDialog.current) return;
+    const controls = [
+      ...submitDialog.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ];
+    const first = controls[0];
+    const last = controls.at(-1);
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  async function mutate(
+    url: string,
+    payload: Record<string, unknown> = {},
+    options: { saveFirst?: boolean; redirectHome?: boolean } = {},
+  ) {
+    setMessage(null);
+    if (options.saveFirst && !(await save("Action checkpoint"))) return;
+    startTransition(async () => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken,
+        },
+        body: JSON.stringify(payload),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setMessage(result.error ?? "The action could not be completed.");
         return;
       }
-      if (event.key !== "Tab") return;
-      const focusable = Array.from(
-        sourcePanelRef.current?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
-        ) ?? [],
-      );
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable.at(-1);
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [closeExpandedSource, sourceExpanded]);
-
-  useEffect(() => {
-    if (
-      !props.rollbackRequest ||
-      [
-        "AWAITING_CONFIRMATION",
-        "FAILED_PREVIEW",
-        "AUTO_ROLLED_BACK",
-        "RECONCILIATION_REQUIRED",
-        "RECONCILED",
-      ].includes(props.rollbackRequest.state)
-    )
-      return;
-    const timer = window.setInterval(() => router.refresh(), 2_500);
-    return () => window.clearInterval(timer);
-  }, [props.rollbackRequest, router]);
-
-  async function checkout() {
-    setStatus("Acquiring exclusive checkout…");
-    const response = await fetch(
-      `/api/situations/${props.situationId}/checkout`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-csrf-token": props.csrfToken,
-        },
-        body: JSON.stringify({ mode: "EDITING" }),
-      },
-    );
-    if (response.ok) location.reload();
-    else
-      setStatus(
-        response.status === 423
-          ? "Another user owns this checkout."
-          : "Checkout failed.",
-      );
-  }
-
-  async function save() {
-    if (
-      !props.draftId ||
-      !props.checkout ||
-      !props.artifact ||
-      props.revision === null
-    )
-      return;
-    setStatus("Saving revision…");
-    const response = await fetch(`/api/drafts/${props.draftId}`, {
-      method: "PATCH",
-      headers: {
-        "content-type": "application/json",
-        "x-csrf-token": props.csrfToken,
-        "if-match": `"draft-${props.draftId}-${props.revision}"`,
-      },
-      body: JSON.stringify({
-        checkoutId: props.checkout.id,
-        fencingToken: props.checkout.fencingToken,
-        clientMutationId: crypto.randomUUID(),
-        artifactId: props.artifact.id,
-        body,
-      }),
+      if (options.redirectHome) router.push("/");
+      router.refresh();
     });
-    if (response.ok) {
-      const result = (await response.json()) as { revision: number };
-      setStatus(`Saved immutable revision ${result.revision}`);
-      location.reload();
-    } else
-      setStatus(
-        response.status === 409
-          ? "A newer revision exists. Reload before saving."
-          : response.status === 423
-            ? "Checkout expired or transferred."
-            : "Save failed.",
-      );
   }
 
-  async function checkIn() {
-    if (!ownsCheckout || !props.checkout) return;
-    if (
-      hasUnsavedChanges &&
-      !window.confirm(
-        "Check in and discard your unsaved source changes? Saved revisions will remain available.",
-      )
-    ) {
-      setStatus("Check-in cancelled · your checkout remains active");
-      return;
-    }
-
-    setCheckInPending(true);
-    setStatus("Checking in and releasing the exclusive checkout…");
-    const response = await fetch(
-      `/api/checkouts/${props.checkout.id}/release`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-csrf-token": props.csrfToken,
-        },
-        body: JSON.stringify({ fencingToken: props.checkout.fencingToken }),
-      },
-    );
-    if (response.ok) location.reload();
-    else {
-      setCheckInPending(false);
-      setStatus(
-        response.status === 423
-          ? "Checkout expired or transferred · reload to see the current owner"
-          : "Check-in failed · your checkout remains active",
-      );
-    }
+  function updateMetadata<K extends keyof Metadata>(
+    key: K,
+    value: Metadata[K],
+  ) {
+    setBundle((current) => ({
+      ...current,
+      metadata: { ...current.metadata, [key]: value },
+    }));
+    markDirty();
   }
 
-  async function review() {
-    if (!props.draftId || !props.checkout) return;
-    setStatus("Creating durable complete-review job…");
-    const response = await fetch("/api/jobs", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-csrf-token": props.csrfToken,
-        "idempotency-key": crypto.randomUUID(),
-      },
-      body: JSON.stringify({
-        situationId: props.situationId,
-        draftId: props.draftId,
-        checkoutId: props.checkout.id,
-        fencingToken: props.checkout.fencingToken,
-      }),
-    });
-    if (response.ok) location.reload();
-    else
-      setStatus(
-        "Review could not start. Check provider mode and checkout state.",
-      );
-  }
-
-  async function approve() {
-    if (!props.bundle) return;
-    setStatus("Approving exact validated bundle…");
-    const response = await fetch(`/api/bundles/${props.bundle.id}/approve`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-csrf-token": props.csrfToken,
-      },
-      body: "{}",
-    });
-    if (
-      await requestReauthentication(
-        response,
-        "approve this exact bundle",
-        approve,
-      )
-    )
-      return;
-    if (response.ok) location.reload();
-    else
-      setStatus(
-        "Approval was blocked by permissions, reauthentication, comments, validation, or staleness.",
-      );
-  }
-
-  async function prepareApproval() {
-    if (!props.bundle || !ownsCheckout || !props.checkout) {
-      setStatus(
-        "Check out this situation before preparing a new exact review bundle.",
-      );
-      return;
-    }
-    setPreparationPending(true);
-    setStatus(
-      canRecoverFailedPreview
-        ? "Creating a fresh database-bound review from the preserved candidate…"
-        : "Writing your reviewer identity into a new exact bundle…",
-    );
-    const response = await fetch(
-      `/api/bundles/${props.bundle.id}/prepare-approval`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-csrf-token": props.csrfToken,
-        },
-        body: JSON.stringify({
-          checkoutId: props.checkout.id,
-          fencingToken: props.checkout.fencingToken,
-        }),
-      },
-    );
-    if (
-      await requestReauthentication(
-        response,
-        canRecoverFailedPreview
-          ? "prepare a fresh database-bound review"
-          : "prepare this exact bundle for approval",
-        prepareApproval,
-      )
-    ) {
-      setPreparationPending(false);
-      return;
-    }
-    if (response.ok) location.reload();
-    else {
-      const result = (await response.json()) as { error?: string };
-      setPreparationPending(false);
-      setStatus(
-        result.error ??
-          "Approval preparation was blocked by identity, validation, or staleness.",
-      );
-    }
-  }
-
-  async function stage() {
-    if (!props.bundle || !props.approvalId) return;
-    setStatus("Staging the exact approved bundle…");
-    const response = await fetch("/api/publications", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-csrf-token": props.csrfToken,
-        "idempotency-key": crypto.randomUUID(),
-      },
-      body: JSON.stringify({
-        bundleId: props.bundle.id,
-        approvalId: props.approvalId,
-        target: "protected-beta",
-      }),
-    });
-    if (
-      await requestReauthentication(response, "stage this exact bundle", stage)
-    )
-      return;
-    if (response.ok) location.reload();
-    else {
-      const result = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setStatus(
-        result?.error === "another checkout owns this situation"
-          ? "Staging is blocked because another checkout owns this situation. Reload to see the current owner."
-          : result?.error === "another publication is already being staged"
-            ? "Staging is temporarily blocked while another approved bundle uses the Leadership candidate environment."
-            : result?.error === "publication preconditions failed"
-              ? "Staging is blocked because this approval, validation, or exact bundle is no longer current."
-              : (result?.error ??
-                "Staging failed before publisher custody began."),
-      );
-    }
-  }
-
-  async function confirmPublication() {
-    if (!props.publicationRequest) return;
-    setPublicationSubmitting(true);
-    setPublishedCandidateCommit(props.publicationRequest.previewCommitSha);
-    setStatus("Recording final confirmation for the exact staged candidate…");
-    let response: Response;
-    try {
-      response = await fetch(
-        `/api/publications/${props.publicationRequest.id}/confirm`,
-        {
+  function acceptAllProposalChanges() {
+    if (!checkout || !review?.proposal) return;
+    setMessage(null);
+    startTransition(async () => {
+      for (const change of review.proposal?.changes ?? []) {
+        if (
+          change.state !== "PENDING" ||
+          !["SECTION", "SCOPED_VARIANT"].includes(change.targetKind)
+        )
+          continue;
+        const response = await fetch(`/api/proposal-changes/${change.id}`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "x-csrf-token": props.csrfToken,
+            "x-csrf-token": csrfToken,
           },
-          body: "{}",
-        },
-      );
-    } catch {
-      setPublicationSubmitting(false);
-      setPublicationConfirmationOpen(false);
-      setStatus(
-        "Publication confirmation could not connect. No confirmation was recorded.",
-      );
-      return;
-    }
-    if (
-      await requestReauthentication(
-        response,
-        "publish this reviewed bundle",
-        confirmPublication,
-      )
-    ) {
-      setPublicationConfirmationOpen(false);
-      setPublicationSubmitting(false);
-      return;
-    }
-    if (response.ok) {
-      setPublicationConfirmationOpen(false);
-      setPublicationSubmitting(false);
-      setPublicationConfirmationSubmitted(true);
-      setStatus(
-        "Confirmation recorded. The trusted publisher is advancing the official baseline…",
-      );
+          body: JSON.stringify({
+            checkoutId: checkout.id,
+            fence: checkout.fence,
+            decision: "ACCEPT",
+          }),
+        });
+        if (!response.ok) {
+          const payload = (await response.json()) as { error?: string };
+          setMessage(
+            payload.error ?? "A proposal change could not be applied.",
+          );
+          router.refresh();
+          return;
+        }
+      }
       router.refresh();
-    } else {
-      const result = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setPublicationSubmitting(false);
-      setPublicationConfirmationOpen(false);
-      setStatus(
-        result?.error === "confirmation preconditions failed"
-          ? "Publication state changed before confirmation. Reload before continuing."
-          : (result?.error ??
-              "Final publication confirmation failed before any change was recorded."),
-      );
-    }
+    });
   }
 
-  async function confirmRollback() {
-    if (!props.rollbackRequest) return;
-    setStatus("Recording confirmation for the exact rollback snapshot…");
-    const response = await fetch(
-      `/api/rollbacks/${props.rollbackRequest.id}/confirm`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-csrf-token": props.csrfToken,
-        },
-        body: "{}",
-      },
-    );
-    if (
-      await requestReauthentication(
-        response,
-        "confirm this exact rollback snapshot",
-        confirmRollback,
-      )
-    )
-      return;
-    if (response.ok) {
-      setStatus(
-        "Rollback confirmation recorded. The publisher is selecting and verifying the exact prior snapshot.",
-      );
-      router.refresh();
-    } else
-      setStatus(
-        "Rollback confirmation failed before the official snapshot changed.",
-      );
+  function selectTab(next: typeof tab) {
+    setTab(next);
   }
 
-  const publicationPending =
-    props.publicationRequest &&
-    ![
-      "AWAITING_CONFIRMATION",
-      "FAILED_PREVIEW",
-      "AUTO_ROLLED_BACK",
-      "RECONCILIATION_REQUIRED",
-      "RECONCILED",
-    ].includes(props.publicationRequest.state);
-
-  async function changeLifecycle(
-    action: "ARCHIVE" | "RESTORE",
-    alreadyConfirmed = false,
+  function handleTabKeyDown(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    current: typeof tab,
   ) {
-    setLifecycleAttempted(true);
-    const reason = archiveReason.trim();
-    if (reason.length < 8) {
-      setStatus("A specific lifecycle reason is required before this action.");
-      return;
-    }
-    const confirmed =
-      alreadyConfirmed ||
-      window.confirm(
-        action === "ARCHIVE"
-          ? "Archive this situation? It will leave the active inventory until restored."
-          : "Restore this situation to its previous lifecycle state?",
-      );
-    if (!confirmed) {
-      setStatus("Lifecycle change cancelled. No request was sent.");
-      return;
-    }
-    setStatus(`${action === "ARCHIVE" ? "Archiving" : "Restoring"} situation…`);
-    const response = await fetch(
-      `/api/situations/${props.situationId}/lifecycle`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-csrf-token": props.csrfToken,
-        },
-        body: JSON.stringify({
-          action,
-          reason,
-        }),
-      },
+    const tabs = ["edit", "review", "history", "context"] as const;
+    const index = tabs.indexOf(current);
+    const next =
+      event.key === "Home"
+        ? tabs[0]
+        : event.key === "End"
+          ? tabs.at(-1)
+          : event.key === "ArrowRight"
+            ? tabs[(index + 1) % tabs.length]
+            : event.key === "ArrowLeft"
+              ? tabs[(index - 1 + tabs.length) % tabs.length]
+              : undefined;
+    if (!next) return;
+    event.preventDefault();
+    setTab(next);
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLButtonElement>(`#tab-${next}`)?.focus(),
     );
-    if (
-      await requestReauthentication(
-        response,
-        `${action === "ARCHIVE" ? "archive" : "restore"} this situation`,
-        () => changeLifecycle(action, true),
-      )
-    )
-      return;
-    if (response.ok) location.reload();
-    else
-      setStatus(
-        "Lifecycle change was blocked by permissions, reauthentication, an active checkout, or a missing reason.",
-      );
   }
 
-  async function rollback() {
-    if (!props.rollbackTarget) return;
-    setStatus("Rolling back to the selected verified publication…");
-    const response = await fetch(
-      `/api/publications/${props.rollbackTarget.id}/rollback`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-csrf-token": props.csrfToken,
-          "idempotency-key": crypto.randomUUID(),
-        },
-        body: JSON.stringify({
-          reason:
-            "Operator rollback from the Situation Studio history control.",
-        }),
-      },
-    );
-    if (
-      await requestReauthentication(
-        response,
-        "roll back to this prior release",
-        rollback,
-      )
-    )
-      return;
-    if (response.ok) location.reload();
-    else
-      setStatus(
-        "Rollback was blocked by permissions, reauthentication, or the publisher boundary.",
-      );
-  }
-
-  async function addComment() {
-    if (!props.bundle || !commentBody.trim()) return;
-    setStatus("Adding review comment…");
-    const response = await fetch(`/api/bundles/${props.bundle.id}/comments`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-csrf-token": props.csrfToken,
-      },
-      body: JSON.stringify({ body: commentBody, blocking: blockingComment }),
-    });
-    if (response.ok) location.reload();
-    else setStatus("Comment could not be added.");
-  }
-
-  async function resolveComment(commentId: string) {
-    setStatus("Resolving review comment…");
-    const response = await fetch(`/api/comments/${commentId}/resolve`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-csrf-token": props.csrfToken,
-      },
-      body: JSON.stringify({
-        resolution: "Resolved during exact-bundle review.",
-      }),
-    });
-    if (response.ok) location.reload();
-    else setStatus("Comment could not be resolved.");
-  }
+  const changedSections = sectionNames.filter((name) => {
+    const marker = `## ${name}`;
+    const current = body.split(marker)[1]?.split(/^## /mu)[0]?.trim() ?? "";
+    const production =
+      productionBody.split(marker)[1]?.split(/^## /mu)[0]?.trim() ?? "";
+    return current !== production;
+  });
 
   return (
-    <section className="panel editorPanel">
-      <div className="panelHeader">
-        <h2>
-          {props.displayedArtifactState === "PUBLISHED"
-            ? "Guidance"
-            : props.displayedArtifactState === "PROPOSAL"
-              ? "Proposal candidate"
-              : "Draft candidate"}
-        </h2>
-      </div>
-      <div className="panelBody">
-        {publicationSucceeded && (
-          <section
-            className="publicationDecisionCard success"
-            aria-labelledby="publication-success-title"
-            role="status"
-          >
-            <div>
-              <p className="eyebrow">Publication complete</p>
-              <h3 id="publication-success-title">Published successfully</h3>
-              <p>
-                Candidate{" "}
-                <code>
-                  {publishedCandidateCommit?.slice(0, 8) ?? "verified"}
-                </code>{" "}
-                is now the official baseline. Leadership has been verified and
-                publisher custody has been released.
-              </p>
-            </div>
-          </section>
-        )}
-
-        {props.publicationRequest &&
-          (awaitingHumanConfirmation || privateCandidateReviewPending) && (
-            <section
-              className="publicationDecisionCard ready"
-              aria-labelledby="publication-decision-title"
-            >
-              <div className="publicationDecisionCopy">
-                <p className="eyebrow">
-                  {privateCandidateReviewPending
-                    ? "Private candidate ready"
-                    : "Ready for final publication"}
-                </p>
-                <h3 id="publication-decision-title">
-                  {privateCandidateReviewPending
-                    ? "Review the private Leadership candidate"
-                    : `Leadership is displaying the ${props.publicationBackend === "database" ? "private" : "staged"} candidate`}
-                </h3>
-                <p>
-                  {privateCandidateReviewPending
-                    ? "Open the exact candidate in Leadership. A healthy observation will unlock final confirmation; the official database pointer has not moved."
-                    : `It is reviewed and verified, but it is not yet the official published baseline. ${props.publicationBackend === "database" ? "The official database pointer has not moved." : "Protected Git main has not moved."}`}
-                </p>
-              </div>
-              <div
-                className="publicationVersionChange compact"
-                aria-label="Current baseline and private candidate"
+    <main className="workspacePage">
+      <header className="workspaceHeader">
+        <div className="workspaceTitle">
+          <Link className="backLink" href="/">
+            ← All situations
+          </Link>
+          <p className="eyebrow">Situation workspace</p>
+          <h1>{bundle.metadata.title}</h1>
+          <div className="workspaceMeta">
+            <span>{situation.slug}</span>
+            <span className={`statusPill ${mine ? "status-checked" : ""}`}>
+              <i aria-hidden="true" />
+              {checkout
+                ? mine
+                  ? "Checked out to you"
+                  : `Checked out by ${checkout.holderName}`
+                : situation.visibility === "RETIRED"
+                  ? "Retired"
+                  : "Available"}
+            </span>
+            {reviewLocked ? (
+              <span className="activityLabel">
+                Review {review?.state.toLowerCase()}
+              </span>
+            ) : null}
+            {publicationLocked ? (
+              <span className="activityLabel">Publishing</span>
+            ) : null}
+          </div>
+        </div>
+        <div className="workspaceActions">
+          {message ? (
+            <span className="actionError" role="alert">
+              {message}
+            </span>
+          ) : null}
+          {mine && checkout ? (
+            <>
+              <span className={`saveState save-${saveState}`} role="status">
+                <i aria-hidden="true" />
+                {saveState === "saving"
+                  ? "Saving…"
+                  : saveState === "dirty"
+                    ? "Unsaved changes"
+                    : saveState === "error"
+                      ? "Save failed"
+                      : "All changes saved"}
+              </span>
+              <button
+                className="secondaryButton"
+                type="button"
+                disabled={pending || workspaceLocked}
+                onClick={() =>
+                  void mutate(
+                    `/api/checkouts/${checkout.id}/check-in`,
+                    { fence: checkout.fence },
+                    { saveFirst: true, redirectHome: true },
+                  )
+                }
               >
+                Check in
+              </button>
+              {reviewLocked && review ? (
+                <button
+                  className="secondaryButton"
+                  type="button"
+                  disabled={pending}
+                  onClick={() =>
+                    void mutate(`/api/reviews/${review.id}/cancel`)
+                  }
+                >
+                  Cancel review
+                </button>
+              ) : review?.state === "FAILED" ? (
+                <button
+                  className="secondaryButton"
+                  type="button"
+                  disabled={pending || publicationLocked}
+                  onClick={() => void mutate(`/api/reviews/${review.id}/retry`)}
+                >
+                  Retry review
+                </button>
+              ) : (
+                <button
+                  className="secondaryButton"
+                  type="button"
+                  disabled={pending || publicationLocked}
+                  onClick={() =>
+                    void mutate(
+                      `/api/checkouts/${checkout.id}/review`,
+                      { fence: checkout.fence },
+                      { saveFirst: true },
+                    )
+                  }
+                >
+                  Run agent review
+                </button>
+              )}
+              {situation.productionBundleHash &&
+              bundle.visibility !== "RETIRED" &&
+              !workspaceLocked ? (
+                <button
+                  className="textButton dangerText"
+                  type="button"
+                  disabled={pending}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Create a retirement draft? Production will not change until you submit it.",
+                      )
+                    )
+                      void mutate(
+                        `/api/checkouts/${checkout.id}/retire`,
+                        { fence: checkout.fence },
+                        { saveFirst: true },
+                      );
+                  }}
+                >
+                  Retire
+                </button>
+              ) : null}
+              {situation.visibility === "RETIRED" &&
+              bundle.visibility === "RETIRED" &&
+              !workspaceLocked ? (
+                <button
+                  className="secondaryButton"
+                  type="button"
+                  disabled={pending}
+                  onClick={() => {
+                    setBundle((current) => ({
+                      ...current,
+                      visibility: "PUBLIC",
+                    }));
+                    markDirty();
+                  }}
+                >
+                  Restore to public
+                </button>
+              ) : null}
+              {situation.productionBundleHash && !workspaceLocked ? (
+                <button
+                  className="textButton"
+                  type="button"
+                  disabled={pending}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Archive this draft and start again from exact current production?",
+                      )
+                    )
+                      void mutate(`/api/checkouts/${checkout.id}/start-over`, {
+                        fence: checkout.fence,
+                      });
+                  }}
+                >
+                  Start over
+                </button>
+              ) : null}
+              <button
+                ref={submitButton}
+                className="primaryButton"
+                type="button"
+                disabled={pending || workspaceLocked || saveState === "error"}
+                onClick={() => setConfirmSubmit(true)}
+              >
+                Submit to production
+              </button>
+            </>
+          ) : checkout ? (
+            <span className="ownerNotice">
+              Only {checkout.holderName} can change this situation.
+            </span>
+          ) : (
+            <button
+              className="primaryButton"
+              type="button"
+              disabled={pending}
+              onClick={() =>
+                void mutate(`/api/situations/${situation.id}/checkout`)
+              }
+            >
+              Check out
+            </button>
+          )}
+        </div>
+      </header>
+
+      <nav
+        className="workspaceTabs"
+        aria-label="Situation workspace"
+        role="tablist"
+      >
+        {(
+          [
+            ["edit", "Edit"],
+            ["review", "Review"],
+            ["history", `History ${history.length}`],
+            ["context", `Context ${context.length}`],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            id={`tab-${value}`}
+            type="button"
+            role="tab"
+            aria-selected={tab === value}
+            aria-controls={`panel-${value}`}
+            tabIndex={tab === value ? 0 : -1}
+            className={tab === value ? "active" : undefined}
+            onClick={() => selectTab(value)}
+            onKeyDown={(event) => handleTabKeyDown(event, value)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {tab === "edit" ? (
+        <section
+          id="panel-edit"
+          className="workspacePanel editPanel"
+          role="tabpanel"
+          aria-labelledby="tab-edit"
+          tabIndex={-1}
+        >
+          {!mine ? (
+            <div className="readOnlyBanner">
+              <strong>Inspection mode.</strong>{" "}
+              {checkout
+                ? `${checkout.holderName} owns the durable checkout.`
+                : "Check out this situation to edit it."}
+            </div>
+          ) : publicationLocked ? (
+            <div className="readOnlyBanner">
+              <strong>Publication in progress.</strong> This workspace remains
+              read-only until Leadership verification completes.
+            </div>
+          ) : reviewLocked ? (
+            <div className="readOnlyBanner">
+              <strong>Draft pinned for review.</strong> Editing returns when the
+              job finishes or is cancelled.
+            </div>
+          ) : null}
+          <div className="editColumn">
+            <section className="editorCard metadataCard">
+              <header>
                 <div>
-                  <span>Official baseline</span>
-                  <strong>
-                    {props.publishedCommitSha?.slice(0, 8) ?? "Unavailable"}
-                  </strong>
-                  <small>
-                    {props.publicationBackend === "database"
-                      ? "Database official snapshot"
-                      : "Protected Git main"}
-                  </small>
+                  <p className="cardEyebrow">Structured metadata</p>
+                  <h2>Editorial framing</h2>
                 </div>
-                <span aria-hidden="true">→</span>
-                <div>
-                  <span>
-                    {props.publicationBackend === "database"
-                      ? "Private candidate"
-                      : "Staged candidate"}
-                  </span>
-                  <strong>
-                    {props.publicationRequest.previewCommitSha?.slice(0, 8) ??
-                      "Preparing"}
-                  </strong>
-                  <small>
-                    {privateCandidateReviewPending
-                      ? "Ready for private Leadership review"
-                      : "Currently displayed on Leadership"}
-                  </small>
-                </div>
-              </div>
-              <div className="publicationDecisionFooter">
-                <p className="publicationCustodyNote">
-                  <strong>Publisher custody:</strong> holding the exact reviewed
-                  bytes during this decision.
-                </p>
-                <div className="publicationDecisionActions">
-                  {props.publicationBackend === "database" &&
-                  props.permissions.includes("publication.publish") ? (
-                    <PrivateCandidateHandoffButton
-                      actionLabel="open this private candidate"
-                      className="button secondary"
-                      csrfToken={props.csrfToken}
-                      requestId={props.publicationRequest.id}
-                      requestKind="publication"
-                      situationSlug={props.situationSlug}
-                      onReauthenticationRequired={setReauthenticationRequest}
-                      onStatus={setStatus}
-                    >
-                      Review private candidate
-                    </PrivateCandidateHandoffButton>
-                  ) : props.publicationBackend === "git" ? (
-                    <a
-                      className="button secondary"
-                      href="https://leadership.timsprototypes.com"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Review candidate ↗
-                    </a>
-                  ) : null}
-                  {awaitingHumanConfirmation &&
-                    props.permissions.includes("publication.publish") && (
-                      <button
-                        className="button warn"
-                        disabled={!props.publicationRequest.previewCommitSha}
-                        type="button"
-                        onClick={() => setPublicationConfirmationOpen(true)}
-                      >
-                        Confirm and publish{" "}
-                        {props.publicationRequest.previewCommitSha?.slice(
-                          0,
-                          8,
-                        ) ?? "candidate"}
-                      </button>
-                    )}
-                </div>
+                <span>Required</span>
+              </header>
+              <div className="fieldGrid">
+                <label className="fieldWide">
+                  <span>Title</span>
+                  <input
+                    value={bundle.metadata.title}
+                    disabled={!editable}
+                    onBlur={() => void save()}
+                    onChange={(event) =>
+                      updateMetadata("title", event.target.value)
+                    }
+                  />
+                </label>
+                <label className="fieldWide">
+                  <span>Description</span>
+                  <textarea
+                    rows={2}
+                    value={bundle.metadata.description}
+                    disabled={!editable}
+                    onBlur={() => void save()}
+                    onChange={(event) =>
+                      updateMetadata("description", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Primary skill</span>
+                  <select
+                    value={bundle.metadata.primarySkill}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      updateMetadata("primarySkill", event.target.value)
+                    }
+                  >
+                    {[
+                      "one-on-ones",
+                      "feedback",
+                      "coaching",
+                      "delegation",
+                      "team-dynamics",
+                      "transition-to-manager",
+                    ].map((value) => (
+                      <option key={value}>{value}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Emotional load</span>
+                  <select
+                    value={bundle.metadata.emotionalLoad}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      updateMetadata(
+                        "emotionalLoad",
+                        event.target.value as Metadata["emotionalLoad"],
+                      )
+                    }
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Pattern</span>
+                  <select
+                    value={bundle.metadata.pattern}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      updateMetadata(
+                        "pattern",
+                        event.target.value as Metadata["pattern"],
+                      )
+                    }
+                  >
+                    <option value="first-occurrence">First occurrence</option>
+                    <option value="emerging-pattern">Emerging pattern</option>
+                    <option value="repeated-pattern">Repeated pattern</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Preparation</span>
+                  <select
+                    value={bundle.metadata.preparationTime}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      updateMetadata(
+                        "preparationTime",
+                        event.target.value as Metadata["preparationTime"],
+                      )
+                    }
+                  >
+                    <option>5 minutes</option>
+                    <option>15 minutes</option>
+                    <option>30 minutes</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Scope</span>
+                  <select
+                    value={bundle.metadata.scope}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      updateMetadata(
+                        "scope",
+                        event.target.value as Metadata["scope"],
+                      )
+                    }
+                  >
+                    <option value="individual">Individual</option>
+                    <option value="pair">Pair</option>
+                    <option value="team">Team</option>
+                  </select>
+                </label>
+                <label className="fieldWide">
+                  <span>Tags (comma separated)</span>
+                  <input
+                    value={bundle.metadata.tags.join(", ")}
+                    disabled={!editable}
+                    onBlur={() => void save()}
+                    onChange={(event) =>
+                      updateMetadata(
+                        "tags",
+                        event.target.value
+                          .split(",")
+                          .map((value) => value.trim())
+                          .filter(Boolean),
+                      )
+                    }
+                  />
+                </label>
+                <fieldset
+                  className="choiceField fieldWide"
+                  disabled={!editable}
+                >
+                  <legend>Audience</legend>
+                  {(["manager", "technical-lead"] as const).map((value) => (
+                    <label key={value}>
+                      <input
+                        type="checkbox"
+                        checked={bundle.metadata.audience.includes(value)}
+                        onChange={(event) =>
+                          updateMetadata(
+                            "audience",
+                            event.target.checked
+                              ? [...bundle.metadata.audience, value]
+                              : bundle.metadata.audience.filter(
+                                  (item) => item !== value,
+                                ),
+                          )
+                        }
+                      />
+                      <span>{value.replaceAll("-", " ")}</span>
+                    </label>
+                  ))}
+                </fieldset>
+                <fieldset
+                  className="choiceField fieldWide"
+                  disabled={!editable}
+                >
+                  <legend>Support</legend>
+                  {(
+                    [
+                      "hr",
+                      "legal",
+                      "safety",
+                      "security",
+                      "senior-leader",
+                    ] as const
+                  ).map((value) => (
+                    <label key={value}>
+                      <input
+                        type="checkbox"
+                        checked={bundle.metadata.support.includes(value)}
+                        onChange={(event) =>
+                          updateMetadata(
+                            "support",
+                            event.target.checked
+                              ? [...bundle.metadata.support, value]
+                              : bundle.metadata.support.filter(
+                                  (item) => item !== value,
+                                ),
+                          )
+                        }
+                      />
+                      <span>{value.replaceAll("-", " ")}</span>
+                    </label>
+                  ))}
+                </fieldset>
+                <label className="fieldWide">
+                  <span>Stakes</span>
+                  <textarea
+                    rows={3}
+                    value={bundle.metadata.stakes}
+                    disabled={!editable}
+                    onBlur={() => void save()}
+                    onChange={(event) =>
+                      updateMetadata("stakes", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Published</span>
+                  <input
+                    type="date"
+                    value={bundle.metadata.published}
+                    disabled={!editable}
+                    onBlur={() => void save()}
+                    onChange={(event) =>
+                      updateMetadata("published", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Last reviewed</span>
+                  <input
+                    type="date"
+                    value={bundle.metadata.lastReviewed}
+                    disabled={!editable}
+                    onBlur={() => void save()}
+                    onChange={(event) =>
+                      updateMetadata("lastReviewed", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Author ID</span>
+                  <input
+                    value={bundle.metadata.author}
+                    disabled={!editable}
+                    onBlur={() => void save()}
+                    onChange={(event) =>
+                      updateMetadata("author", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Reviewer ID</span>
+                  <input
+                    value={bundle.metadata.reviewer}
+                    disabled={!editable}
+                    onBlur={() => void save()}
+                    onChange={(event) =>
+                      updateMetadata("reviewer", event.target.value)
+                    }
+                  />
+                </label>
+                <label className="fieldWide">
+                  <span>Social hook</span>
+                  <textarea
+                    rows={2}
+                    value={bundle.metadata.socialHook}
+                    disabled={!editable}
+                    onBlur={() => void save()}
+                    onChange={(event) =>
+                      updateMetadata("socialHook", event.target.value)
+                    }
+                  />
+                </label>
+                <label className="fieldWide">
+                  <span>Campaign cluster</span>
+                  <input
+                    value={bundle.metadata.campaignCluster}
+                    disabled={!editable}
+                    onBlur={() => void save()}
+                    onChange={(event) =>
+                      updateMetadata("campaignCluster", event.target.value)
+                    }
+                  />
+                </label>
               </div>
             </section>
-          )}
 
-        {props.publicationRequest && publicationProgressVisible && (
-          <PublicationLiveProgress
-            confirmationSubmitted={publicationConfirmationSubmitted}
-            publicationBackend={props.publicationBackend}
-            publishedBaseline={props.publishedCommitSha}
-            request={props.publicationRequest}
-          />
-        )}
-
-        <div className="saveBar primaryActionBar">
-          <span role="status" aria-live="polite">
-            {publicationSucceeded
-              ? `Published successfully${publishedCandidateCommit ? ` · official baseline ${publishedCandidateCommit.slice(0, 8)}` : ""}`
-              : status}
-          </span>
-          <div className="workspaceActions">
-            {!props.checkout &&
-              props.permissions.includes("draft.update") &&
-              props.lifecycle !== "ARCHIVED" && (
-                <button className="button" type="button" onClick={checkout}>
-                  Check out for editing
-                </button>
-              )}
-            {canEdit && (
-              <button
-                className="button"
-                type="button"
-                onClick={save}
-                disabled={checkInPending}
-              >
-                Save revision
-              </button>
-            )}
-            {ownsCheckout && (
-              <button
-                className="button secondary"
-                type="button"
-                onClick={checkIn}
-                disabled={checkInPending}
-                title="Release the checkout while preserving saved draft revisions"
-              >
-                {checkInPending ? "Checking in…" : "Check in"}
-              </button>
-            )}
-            {ownsCheckout &&
-              props.permissions.includes("ai.run") &&
-              !props.bundle && (
-                <button
-                  className="button secondary"
-                  type="button"
-                  onClick={review}
-                  disabled={checkInPending}
-                >
-                  Run complete review
-                </button>
-              )}
-            {props.bundle?.state === "HUMAN_REVIEW" &&
-              !canRecoverFailedPreview &&
-              props.permissions.includes("publication.approve") &&
-              (props.bundle.provenanceReady ? (
-                <button
-                  className="button"
-                  type="button"
-                  onClick={approve}
-                  disabled={props.bundle.comments.some(
-                    (comment) => comment.blocking,
-                  )}
-                  title={
-                    props.bundle.comments.some((comment) => comment.blocking)
-                      ? "Resolve blocking comments before approval"
-                      : "Approve this exact validated bundle"
-                  }
-                >
-                  Approve exact bundle
-                </button>
-              ) : canPrepareApproval ? (
-                <button
-                  className="button"
-                  type="button"
-                  onClick={prepareApproval}
-                  disabled={
-                    preparationPending || !props.bundle.repositoryReviewerId
-                  }
-                  title={
-                    props.bundle.repositoryReviewerId
-                      ? "Create a new immutable bundle with your repository reviewer identity and rerun exact-byte validation"
-                      : "An administrator must map this account to a repository reviewer identity"
-                  }
-                >
-                  {preparationPending
-                    ? "Preparing exact bundle…"
-                    : props.bundle.repositoryReviewerId
-                      ? "Prepare exact bundle for my approval"
-                      : "Reviewer identity required"}
-                </button>
-              ) : null)}
-            {props.bundle?.state === "APPROVED" &&
-              props.permissions.includes("publication.publish") &&
-              !props.publicationRequest && (
-                <button className="button warn" type="button" onClick={stage}>
-                  {props.publicationBackend === "database"
-                    ? "Prepare private preview"
-                    : "Stage approved bundle"}
-                </button>
-              )}
-            {canRecoverFailedPreview && (
-              <button
-                className="button warn"
-                type="button"
-                onClick={prepareApproval}
-                disabled={
-                  preparationPending ||
-                  !props.bundle?.repositoryReviewerId ||
-                  (props.bundle?.comments.some((comment) => comment.blocking) ??
-                    true)
-                }
-                title={
-                  props.bundle?.comments.some((comment) => comment.blocking)
-                    ? "Resolve blocking comments before preparing the fresh database review"
-                    : "Preserve the failed request as history and create a new immutable review bound to the current official database snapshot"
-                }
-              >
-                {preparationPending
-                  ? "Preparing fresh review…"
-                  : "Prepare fresh database review"}
-              </button>
-            )}
-            {publicationPending && (
-              <button
-                className="button secondary"
-                type="button"
-                onClick={() => location.reload()}
-              >
-                Refresh publication status
-              </button>
-            )}
-          </div>
-        </div>
-
-        {props.publicationRequest &&
-          !awaitingHumanConfirmation &&
-          !publicationProgressVisible && (
-            <p className="artifactStateNotice candidate" role="status">
-              {props.publicationRequest.state === "FAILED_PREVIEW"
-                ? props.publicationBackend === "database"
-                  ? canRecoverFailedPreview
-                    ? "Private preview failed safely. Public content was unchanged and publisher custody was released. Prepare a fresh database review to continue."
-                    : props.failedPreviewRecoveryBlockedByOfficialBase
-                      ? "Private preview failed safely. Public content was unchanged and publisher custody was released. Official content changed in an affected artifact after this bundle was reviewed, so the preserved candidate cannot be recovered safely. Run a new complete review from the current official snapshot."
-                      : "Private preview failed safely. Public content was unchanged and publisher custody was released."
-                  : "Candidate staging failed. The previous Leadership release was restored and your checkout has been returned."
-                : props.publicationRequest.state === "AUTO_ROLLED_BACK"
-                  ? "Final publication did not verify. The previous Leadership release was restored safely."
-                  : props.publicationRequest.state === "RECONCILIATION_REQUIRED"
-                    ? props.publicationBackend === "database"
-                      ? reconciliationDisagreement({
-                          kind: "publication",
-                          officialSnapshotHash:
-                            props.reconciliation?.officialSnapshotHash ?? null,
-                          observedSnapshotHash:
-                            props.reconciliation?.observedSnapshotHash ?? null,
-                          candidateSnapshotHash:
-                            props.reconciliation?.candidateSnapshotHash ?? null,
-                        })
-                      : "Cutover needs reconciliation. Further publication is blocked until Git, the live marker, and Studio agree."
-                    : props.publicationRequest.state === "RECONCILED"
-                      ? "Publication reconciled against the live release marker."
-                      : `Preparing the ${props.publicationBackend === "database" ? "private" : "staged"} candidate: ${props.publicationRequest.state.toLowerCase().replaceAll("_", " ")}.`}{" "}
-              {props.publicationRequest.state === "FAILED_PREVIEW" &&
-                props.publicationRequest.reconciliationReason && (
-                  <>
-                    <strong>Recorded reason:</strong>{" "}
-                    {props.publicationRequest.reconciliationReason}{" "}
-                  </>
-                )}
-              {props.publicationRequest.previewCommitSha && (
-                <>
-                  {props.publicationRequest.state === "FAILED_PREVIEW"
-                    ? "Failed candidate"
-                    : "Candidate"}{" "}
-                  {props.publicationBackend === "database"
-                    ? "snapshot"
-                    : "commit"}{" "}
-                  <code>
-                    {props.publicationRequest.previewCommitSha.slice(0, 12)}
-                  </code>
-                  .
-                </>
-              )}
-            </p>
-          )}
-        {props.rollbackRequest && (
-          <div className="artifactStateNotice candidate" role="status">
-            <p>
-              {props.rollbackRequest.state === "RECONCILED"
-                ? "Rollback reconciled. The selected prior snapshot is live as a new audited database publication."
-                : props.rollbackRequest.state === "FAILED_PREVIEW"
-                  ? "Rollback preview failed. The current official snapshot was unchanged."
-                  : props.rollbackRequest.state === "AUTO_ROLLED_BACK"
-                    ? "Rollback verification failed. The pre-rollback official snapshot was restored and verified."
-                    : props.rollbackRequest.state === "RECONCILIATION_REQUIRED"
-                      ? reconciliationDisagreement({
-                          kind: "rollback",
-                          officialSnapshotHash:
-                            props.reconciliation?.officialSnapshotHash ?? null,
-                          observedSnapshotHash:
-                            props.reconciliation?.observedSnapshotHash ?? null,
-                          candidateSnapshotHash:
-                            props.rollbackRequest.candidateIdentity,
-                        })
-                      : `Rollback in progress: ${props.rollbackRequest.currentStep.toLowerCase().replaceAll("_", " ")}.`}
-            </p>
-            {props.publicationBackend === "database" &&
-              [
-                "CANDIDATE_AVAILABLE",
-                "CANDIDATE_VERIFIED",
-                "AWAITING_CONFIRMATION",
-              ].includes(props.rollbackRequest.state) && (
-                <div className="workspaceActions">
-                  <PrivateCandidateHandoffButton
-                    actionLabel="open this private rollback candidate"
-                    className="button secondary"
-                    csrfToken={props.csrfToken}
-                    requestId={props.rollbackRequest.id}
-                    requestKind="rollback"
-                    situationSlug={props.situationSlug}
-                    onReauthenticationRequired={setReauthenticationRequest}
-                    onStatus={setStatus}
-                  >
-                    Review rollback candidate
-                  </PrivateCandidateHandoffButton>
-                  {props.rollbackRequest.state === "AWAITING_CONFIRMATION" && (
-                    <button
-                      className="button warn"
-                      type="button"
-                      onClick={confirmRollback}
-                    >
-                      Confirm rollback{" "}
-                      {props.rollbackRequest.candidateIdentity?.slice(0, 8)}
-                    </button>
-                  )}
-                </div>
-              )}
-          </div>
-        )}
-
-        <p
-          className={`artifactStateNotice ${
-            props.displayedArtifactState === "PUBLISHED"
-              ? "published"
-              : "candidate"
-          }`}
-        >
-          {props.displayedArtifactState === "PUBLISHED"
-            ? "Published guidance · this rendered view and Source MDX are the live baseline."
-            : props.displayedArtifactState === "PROPOSAL"
-              ? `Exact proposal bundle ${props.bundle?.canonicalHash.slice(0, 12) ?? "unavailable"} · revision ${props.revision} · not published.${props.bundle?.provenanceReady ? ` Reviewer ${props.bundle.repositoryReviewerId} · review date ${props.bundle.preparedReviewDate}.` : " Reviewer provenance must be finalized before approval."} The published baseline remains separate below.`
-              : `Draft candidate revision ${props.revision} · not published. The published baseline remains separate below.`}
-        </p>
-
-        <div className="viewToolbar">
-          <div aria-label="Guidance view" className="viewTabs" role="tablist">
-            <button
-              aria-controls="guidance-view"
-              aria-selected={view === "guidance"}
-              className={view === "guidance" ? "active" : undefined}
-              id="guidance-tab"
-              role="tab"
-              type="button"
-              onClick={() => setView("guidance")}
-            >
-              Rendered guidance
-            </button>
-            <button
-              aria-controls="source-view"
-              aria-selected={view === "source"}
-              className={view === "source" ? "active" : undefined}
-              id="source-tab"
-              role="tab"
-              type="button"
-              onClick={() => setView("source")}
-            >
-              Source MDX
-            </button>
-          </div>
-          {view === "source" && !sourceExpanded && (
-            <button
-              ref={expandSourceButtonRef}
-              className="button secondary compactButton"
-              type="button"
-              onClick={() => setSourceExpanded(true)}
-            >
-              Expand source
-            </button>
-          )}
-        </div>
-
-        {view === "guidance" ? (
-          <div
-            aria-labelledby="guidance-tab"
-            id="guidance-view"
-            role="tabpanel"
-            tabIndex={0}
-          >
-            <RenderedGuidance body={body} />
-          </div>
-        ) : (
-          <div
-            ref={sourcePanelRef}
-            aria-label={sourceExpanded ? "Expanded Source MDX" : undefined}
-            aria-labelledby={sourceExpanded ? undefined : "source-tab"}
-            aria-modal={sourceExpanded || undefined}
-            className={`sourcePanel ${sourceExpanded ? "expanded" : ""}`}
-            id="source-view"
-            role={sourceExpanded ? "dialog" : "tabpanel"}
-          >
-            {sourceExpanded && (
-              <header className="expandedSourceHeader">
+            <section className="editorCard sectionCard">
+              <header>
                 <div>
-                  <p className="eyebrow">Exact artifact bytes</p>
-                  <h2>Source MDX</h2>
+                  <p className="cardEyebrow">Guidance</p>
+                  <h2>{rawMode ? "Raw MDX" : "Required sections"}</h2>
                 </div>
                 <button
-                  ref={closeSourceButtonRef}
-                  className="button secondary"
+                  className="textButton"
                   type="button"
-                  onClick={closeExpandedSource}
+                  disabled={!editable}
+                  onClick={() => {
+                    if (!rawMode) {
+                      setRawBody(body);
+                      setRawMode(true);
+                      return;
+                    }
+                    try {
+                      setSections(parseSections(sectionNames, rawBody));
+                      setRawMode(false);
+                      setMessage(null);
+                    } catch (error) {
+                      setMessage(
+                        error instanceof Error
+                          ? error.message
+                          : "Raw MDX could not be parsed.",
+                      );
+                    }
+                  }}
                 >
-                  Close expanded source
+                  {rawMode ? "Use section editor" : "Advanced: edit raw MDX"}
                 </button>
               </header>
-            )}
-            <label className="field" htmlFor="situation-source">
-              <span className="srOnly">Situation MDX</span>
-              <textarea
-                className="sourceTextarea"
-                id="situation-source"
-                value={body}
-                onChange={(event) => {
-                  const nextBody = event.target.value;
-                  setBody(nextBody);
-                  setStatus(
-                    nextBody === (props.artifact?.body ?? "")
-                      ? `Draft revision ${props.revision} · ready to edit`
-                      : "Unsaved draft changes · save them or check in to discard them",
-                  );
-                }}
-                readOnly={!canEdit}
-              />
-            </label>
+              {rawMode ? (
+                <label className="rawEditor">
+                  <span className="srOnly">Situation MDX</span>
+                  <textarea
+                    spellCheck
+                    value={rawBody}
+                    disabled={!editable}
+                    onBlur={() => void save()}
+                    onChange={(event) => {
+                      setRawBody(event.target.value);
+                      markDirty();
+                    }}
+                  />
+                </label>
+              ) : (
+                <div className="sectionEditors">
+                  {sectionNames.map((name, index) => (
+                    <details key={name} open={index < 3}>
+                      <summary>
+                        <span>{String(index + 1).padStart(2, "0")}</span>
+                        <strong>{name}</strong>
+                        <small>
+                          {(sections[name] ?? "").length} characters
+                        </small>
+                      </summary>
+                      <label>
+                        <span className="srOnly">{name}</span>
+                        <textarea
+                          rows={7}
+                          value={sections[name] ?? ""}
+                          disabled={!editable}
+                          onBlur={() => void save()}
+                          onChange={(event) => {
+                            setSections((current) => ({
+                              ...current,
+                              [name]: event.target.value,
+                            }));
+                            markDirty();
+                          }}
+                        />
+                      </label>
+                    </details>
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
-        )}
-        {props.publishedBody !== null && props.publishedBody !== body && (
-          <details className="diffPanel">
-            <summary>
-              Compare published and {props.displayedArtifactState.toLowerCase()}{" "}
-              bytes
-            </summary>
-            <SynchronizedDiff
-              candidate={body}
-              candidateLabel={
-                props.displayedArtifactState === "PROPOSAL"
-                  ? "Exact proposal"
-                  : "Draft revision"
-              }
-              published={props.publishedBody}
-            />
-          </details>
-        )}
-        {props.bundle && (
-          <details className="panel exactBundlePanel">
-            <summary>
-              <span className="exactBundleSummaryCopy">
-                <strong>Inspect every exact bundle artifact</strong>
-                <small>
-                  {props.bundle.artifacts.length} immutable candidate
-                  {props.bundle.artifacts.length === 1 ? "" : "s"} bound to the
-                  displayed bundle hash
-                </small>
-              </span>
-              <span className="badge exactBundleSummaryBadge">
-                {
-                  props.bundle.artifacts.filter(
-                    (artifact) => artifact.changeKind !== "NO_CHANGE",
-                  ).length
-                }{" "}
-                changed
-              </span>
-            </summary>
-            <div className="panelBody exactBundleArtifacts">
-              {props.bundle.artifacts.map((artifact) => (
-                <details key={artifact.id}>
-                  <summary>
-                    <span>
-                      <strong>{artifact.path}</strong>
-                      <small>
-                        {artifact.logicalId} ·{" "}
-                        {artifact.changeKind.toLowerCase()}
-                      </small>
-                    </span>
-                    <code>{artifact.candidateHash.slice(0, 12)}…</code>
-                  </summary>
-                  <pre>{artifact.body}</pre>
-                </details>
-              ))}
-            </div>
-          </details>
-        )}
-        {props.bundle && props.permissions.includes("proposal.review") && (
-          <section className="commentPanel">
-            <h3>Bundle review comments</h3>
-            {props.bundle.comments.length ? (
-              <ul className="timeline">
-                {props.bundle.comments.map((comment) => (
-                  <li key={comment.id}>
-                    <div>
-                      <strong>{comment.blocking ? "Blocking" : "Note"}</strong>
-                      <br />
-                      {comment.body}
-                    </div>
-                    <button
-                      className="button secondary"
-                      type="button"
-                      onClick={() => resolveComment(comment.id)}
-                    >
-                      Resolve
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="muted">No open comments.</p>
-            )}
-            <div className="commentComposer">
-              <label className="field">
-                New comment
-                <textarea
-                  value={commentBody}
-                  onChange={(event) => setCommentBody(event.target.value)}
-                />
-              </label>
-              <label className="confirmation">
-                <input
-                  type="checkbox"
-                  checked={blockingComment}
-                  onChange={(event) => setBlockingComment(event.target.checked)}
-                />
-                <span>Block approval until this comment is resolved.</span>
-              </label>
-              <div className="commentActions">
-                <button
-                  className="button secondary"
-                  type="button"
-                  onClick={addComment}
-                >
-                  Add review comment
-                </button>
+          <aside className="previewColumn">
+            <header>
+              <div>
+                <p className="cardEyebrow">Draft preview</p>
+                <h2>Leadership rendering</h2>
               </div>
+              <span>Studio bytes</span>
+            </header>
+            <div className="previewFrame">
+              <p className="previewEyebrow">{bundle.metadata.primarySkill}</p>
+              <h1>{bundle.metadata.title}</h1>
+              <p className="previewDescription">
+                {bundle.metadata.description}
+              </p>
+              <RenderedGuidance body={body} />
             </div>
-          </section>
-        )}
-        {props.permissions.includes("situation.archive") && !props.checkout && (
-          <section className="dangerArea" aria-labelledby="lifecycle-heading">
+          </aside>
+        </section>
+      ) : null}
+
+      {tab === "review" ? (
+        <section
+          id="panel-review"
+          className="workspacePanel reviewPanel"
+          role="tabpanel"
+          aria-labelledby="tab-review"
+          tabIndex={-1}
+        >
+          <div className="reviewSummary">
             <div>
-              <p className="eyebrow">Separated destructive action</p>
-              <h3 id="lifecycle-heading">
-                {props.lifecycle === "ARCHIVED"
-                  ? "Restore situation"
-                  : "Archive situation"}
-              </h3>
+              <p className="cardEyebrow">Exact comparison</p>
+              <h2>{changedSections.length} changed sections</h2>
               <p>
-                {props.lifecycle === "ARCHIVED"
-                  ? "Restoration returns this situation to its previous lifecycle state and records the reason."
-                  : "Archiving removes this situation from active use without deleting its published history."}
+                Production and draft are rendered from their retained source
+                bytes. The source diff below is exact.
               </p>
             </div>
-            <label className="field" htmlFor="lifecycle-reason">
-              Required reason
-              <span className="fieldHelp" id="lifecycle-reason-help">
-                Enter at least 8 characters. You will confirm before any request
-                is sent.
-              </span>
-              <input
-                id="lifecycle-reason"
-                value={archiveReason}
-                onChange={(event) => {
-                  setArchiveReason(event.target.value);
-                  if (lifecycleAttempted) setLifecycleAttempted(true);
-                }}
-                onBlur={() => setLifecycleAttempted(true)}
-                placeholder={
-                  props.lifecycle === "ARCHIVED"
-                    ? "Reason for restoration"
-                    : "Required reason for archive"
-                }
-                required
-                minLength={8}
-                maxLength={500}
-                aria-describedby={`lifecycle-reason-help${lifecycleReasonError ? " lifecycle-reason-error" : ""}`}
-                aria-invalid={lifecycleReasonError ? true : undefined}
-              />
-              {lifecycleReasonError && (
-                <span className="fieldError" id="lifecycle-reason-error">
-                  {lifecycleReasonError}
+            {review ? (
+              <div className="reviewJobCard">
+                <span
+                  className={`jobState state-${review.state.toLowerCase()}`}
+                >
+                  {review.state}
                 </span>
-              )}
-            </label>
-            <button
-              className={
-                props.lifecycle === "ARCHIVED"
-                  ? "button secondary"
-                  : "button warn"
-              }
-              type="button"
-              disabled={archiveReason.trim().length < 8}
-              onClick={() =>
-                changeLifecycle(
-                  props.lifecycle === "ARCHIVED" ? "RESTORE" : "ARCHIVE",
-                )
-              }
-            >
-              {props.lifecycle === "ARCHIVED"
-                ? "Restore situation"
-                : "Archive situation"}
-            </button>
-          </section>
-        )}
-        {props.rollbackTarget &&
-          props.permissions.includes("publication.publish") &&
-          !props.checkout && (
-            <div className="lifecycleBar">
-              <span>
-                Prior verified publication{" "}
-                <code>{props.rollbackTarget.commitSha.slice(0, 8)}</code>
-              </span>
-              <button className="button warn" type="button" onClick={rollback}>
-                Rollback to prior release
+                <strong>22-stage agent review</strong>
+                <span>
+                  {
+                    review.steps.filter((step) => step.state === "SUCCEEDED")
+                      .length
+                  }{" "}
+                  of 22 stages complete
+                </span>
+                <div className="stageRail" aria-hidden="true">
+                  {review.steps.map((step) => (
+                    <i
+                      key={step.ordinal}
+                      className={step.state.toLowerCase()}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="reviewJobCard quiet">
+                <strong>No agent proposal attached</strong>
+                <span>Manual editing and publication remain available.</span>
+              </div>
+            )}
+          </div>
+          <div className="renderCompare">
+            <article tabIndex={0} aria-label="Scrollable current production">
+              <header>
+                <span>Current production</span>
+                <code>{shortHash(situation.productionBundleHash)}</code>
+              </header>
+              <RenderedGuidance body={productionBody} compact />
+            </article>
+            <article tabIndex={0} aria-label="Scrollable saved draft">
+              <header>
+                <span>Saved draft</span>
+                <code>Working copy</code>
+              </header>
+              <RenderedGuidance body={body} compact />
+            </article>
+          </div>
+          <details className="diffDisclosure" open>
+            <summary>Exact source diff</summary>
+            <SynchronizedDiff production={productionBody} draft={body} />
+          </details>
+          {review?.proposal ? (
+            <section className="proposalCard">
+              <header>
+                <div>
+                  <p className="cardEyebrow">Agent proposal</p>
+                  <h2>{review.proposal.summary}</h2>
+                </div>
+                <button
+                  className="secondaryButton"
+                  type="button"
+                  disabled={!checkout || pending || publicationLocked}
+                  onClick={acceptAllProposalChanges}
+                >
+                  Accept all
+                </button>
+              </header>
+              <div className="proposalChanges">
+                {review.proposal.changes.map((change) => (
+                  <article key={change.id}>
+                    <div>
+                      <span>{change.targetKind.replaceAll("_", " ")}</span>
+                      <strong>{change.targetKey}</strong>
+                      <p>{change.rationale}</p>
+                    </div>
+                    <div className="proposalActions">
+                      <button
+                        className="textButton"
+                        type="button"
+                        disabled={
+                          !checkout ||
+                          publicationLocked ||
+                          change.state !== "PENDING"
+                        }
+                        onClick={() =>
+                          checkout
+                            ? void mutate(
+                                `/api/proposal-changes/${change.id}`,
+                                {
+                                  checkoutId: checkout.id,
+                                  fence: checkout.fence,
+                                  decision: "REJECT",
+                                },
+                              )
+                            : undefined
+                        }
+                      >
+                        Reject
+                      </button>
+                      <button
+                        className="secondaryButton"
+                        type="button"
+                        disabled={
+                          !checkout ||
+                          publicationLocked ||
+                          change.state !== "PENDING" ||
+                          !["SECTION", "SCOPED_VARIANT"].includes(
+                            change.targetKind,
+                          )
+                        }
+                        onClick={() =>
+                          checkout
+                            ? void mutate(
+                                `/api/proposal-changes/${change.id}`,
+                                {
+                                  checkoutId: checkout.id,
+                                  fence: checkout.fence,
+                                  decision: "ACCEPT",
+                                },
+                              )
+                            : undefined
+                        }
+                      >
+                        Accept change
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </section>
+      ) : null}
+
+      {tab === "history" ? (
+        <section
+          id="panel-history"
+          className="workspacePanel historyPanel"
+          role="tabpanel"
+          aria-labelledby="tab-history"
+          tabIndex={-1}
+        >
+          <header className="panelIntro">
+            <div>
+              <p className="cardEyebrow">Forward-only history</p>
+              <h2>Every distinct production version</h2>
+              <p>
+                A restoration starts a reviewable draft. It never rewinds
+                unrelated Leadership content.
+              </p>
+            </div>
+          </header>
+          <div className="historyTimeline">
+            {history.map((item, index) => (
+              <article key={item.id}>
+                <div className="timelineRail">
+                  <i aria-hidden="true" />
+                  {index < history.length - 1 ? (
+                    <span aria-hidden="true" />
+                  ) : null}
+                </div>
+                <div className="historyContent">
+                  <header>
+                    <div>
+                      <span className="historyVersion">
+                        Version {history.length - index}
+                      </span>
+                      <strong>{item.changeSummary}</strong>
+                    </div>
+                    <time dateTime={item.productionAt}>
+                      {new Date(item.productionAt).toLocaleString()}
+                    </time>
+                  </header>
+                  <dl>
+                    <div>
+                      <dt>Source</dt>
+                      <dd>{item.sourceKind.replaceAll("_", " ")}</dd>
+                    </div>
+                    <div>
+                      <dt>Bundle</dt>
+                      <dd>
+                        <code>{shortHash(item.bundleHash)}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Leadership release</dt>
+                      <dd>
+                        <code>{item.releaseId.slice(0, 8)}…</code>
+                      </dd>
+                    </div>
+                  </dl>
+                  {item.editorNote ? <p>{item.editorNote}</p> : null}
+                  <div className="historyActions">
+                    <button
+                      className="textButton"
+                      type="button"
+                      aria-expanded={comparedHistoryId === item.id}
+                      onClick={() =>
+                        setComparedHistoryId((current) =>
+                          current === item.id ? null : item.id,
+                        )
+                      }
+                    >
+                      {comparedHistoryId === item.id
+                        ? "Close comparison"
+                        : "Compare with current"}
+                    </button>
+                    <button
+                      className="secondaryButton"
+                      type="button"
+                      disabled={!mine || workspaceLocked}
+                      onClick={() =>
+                        void mutate(
+                          `/api/history/${item.id}/restore`,
+                          checkout
+                            ? { checkoutId: checkout.id, fence: checkout.fence }
+                            : {},
+                        )
+                      }
+                    >
+                      Start restoration draft
+                    </button>
+                  </div>
+                  {comparedHistoryId === item.id ? (
+                    <div className="historyComparison">
+                      <article
+                        tabIndex={0}
+                        aria-label="Selected history version"
+                      >
+                        <strong>Selected version</strong>
+                        <RenderedGuidance body={item.body} compact />
+                      </article>
+                      <article
+                        tabIndex={0}
+                        aria-label="Current production version"
+                      >
+                        <strong>Current production</strong>
+                        <RenderedGuidance body={productionBody} compact />
+                      </article>
+                    </div>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+            {!history.length ? (
+              <div className="emptyState">
+                <strong>No production versions yet.</strong>
+                <span>
+                  The first successful submission becomes version one.
+                </span>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {tab === "context" ? (
+        <section
+          id="panel-context"
+          className="workspacePanel contextPanel"
+          role="tabpanel"
+          aria-labelledby="tab-context"
+          tabIndex={-1}
+        >
+          <header className="panelIntro">
+            <div>
+              <p className="cardEyebrow">Review evidence</p>
+              <h2>Connected learning surfaces</h2>
+              <p>
+                Shared originals stay read-only. Editing one here creates a
+                situation-owned variant.
+              </p>
+            </div>
+          </header>
+          <div className="contextGrid">
+            {context.map((item) => (
+              <article key={item.logicalId}>
+                <header>
+                  <span className="artifactKind">
+                    {item.kind.replaceAll("_", " ")}
+                  </span>
+                  {item.hasVariant ? (
+                    <span className="variantBadge">Scoped variant</span>
+                  ) : (
+                    <span className="sharedBadge">Shared original</span>
+                  )}
+                </header>
+                <h3>{item.logicalId}</h3>
+                <dl>
+                  <div>
+                    <dt>Sharing</dt>
+                    <dd>{item.sharingCount} situations</dd>
+                  </div>
+                  <div>
+                    <dt>Current hash</dt>
+                    <dd>
+                      <code>{shortHash(item.contentHash)}</code>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Visibility</dt>
+                    <dd>{item.visibility.replaceAll("_", " ")}</dd>
+                  </div>
+                </dl>
+                <button
+                  className="secondaryButton"
+                  type="button"
+                  disabled={!editable}
+                  onClick={() => {
+                    if (!checkout) return;
+                    const changedBody = window.prompt(
+                      `Create a situation-scoped ${item.kind.toLowerCase()} variant. Enter the complete replacement content:`,
+                    );
+                    if (changedBody)
+                      void mutate(`/api/checkouts/${checkout.id}/variants`, {
+                        fence: checkout.fence,
+                        originalLogicalId: item.logicalId,
+                        originalContentHash: item.contentHash,
+                        kind: item.kind,
+                        changedBody,
+                      });
+                  }}
+                >
+                  {item.hasVariant ? "Edit this variant" : "Create scoped edit"}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {confirmSubmit && checkout ? (
+        <div className="dialogBackdrop" role="presentation">
+          <div
+            ref={submitDialog}
+            className="confirmationDialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="submit-title"
+            tabIndex={-1}
+            onKeyDown={handleSubmitDialogKeyDown}
+          >
+            <p className="cardEyebrow">One production confirmation</p>
+            <h2 id="submit-title">Submit this situation to Leadership?</h2>
+            <p>
+              Studio will validate the exact saved bundle, carry unrelated
+              production content forward, and verify the running Leadership
+              release before reporting success.
+            </p>
+            <dl>
+              <div>
+                <dt>Situation</dt>
+                <dd>{bundle.metadata.title}</dd>
+              </div>
+              <div>
+                <dt>Current production</dt>
+                <dd>
+                  <code>{shortHash(situation.productionBundleHash)}</code>
+                </dd>
+              </div>
+              <div>
+                <dt>Changed sections</dt>
+                <dd>
+                  {changedSections.join(", ") || "Metadata or relationships"}
+                </dd>
+              </div>
+              <div>
+                <dt>Provenance</dt>
+                <dd>{review?.proposal ? "Agent-assisted" : "Manual"}</dd>
+              </div>
+              <div>
+                <dt>Validation</dt>
+                <dd className="validationPass">
+                  Ready for exact-hash validation
+                </dd>
+              </div>
+            </dl>
+            <div className="dialogActions">
+              <button
+                className="secondaryButton"
+                type="button"
+                onClick={closeSubmitDialog}
+              >
+                Keep editing
+              </button>
+              <button
+                className="primaryButton"
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  setConfirmSubmit(false);
+                  void mutate(
+                    `/api/checkouts/${checkout.id}/publish`,
+                    {
+                      fence: checkout.fence,
+                    },
+                    { saveFirst: true },
+                  );
+                }}
+              >
+                Confirm submission
               </button>
             </div>
-          )}
-      </div>
-      {publicationConfirmationOpen &&
-        props.publicationRequest?.previewCommitSha &&
-        props.publishedCommitSha && (
-          <PublicationConfirmationDialog
-            baselineCommitSha={props.publishedCommitSha}
-            candidateCommitSha={props.publicationRequest.previewCommitSha}
-            publicationBackend={props.publicationBackend}
-            submitting={publicationSubmitting}
-            onCancel={() => {
-              if (publicationSubmitting) return;
-              setPublicationConfirmationOpen(false);
-              setStatus(
-                "Publication confirmation cancelled. No change was made.",
-              );
-            }}
-            onConfirm={confirmPublication}
-          />
-        )}
-      {reauthenticationRequest && (
-        <ReauthenticationDialog
-          actionLabel={reauthenticationRequest.actionLabel}
-          csrfToken={props.csrfToken}
-          onCancel={() => {
-            setPreparationPending(false);
-            setReauthenticationRequest(null);
-            setStatus("Sensitive action cancelled. No change was made.");
-          }}
-          onReauthenticated={async () => {
-            const request = reauthenticationRequest;
-            setReauthenticationRequest(null);
-            await request.retry();
-          }}
-        />
-      )}
-    </section>
+          </div>
+        </div>
+      ) : null}
+    </main>
   );
 }

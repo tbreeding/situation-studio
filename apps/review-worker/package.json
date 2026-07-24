@@ -1,0 +1,21 @@
+{
+  "name": "@situation-studio/review-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@situation-studio/ai-adapters": "workspace:*",
+    "@situation-studio/db": "workspace:*",
+    "@situation-studio/domain": "workspace:*",
+    "tsx": "4.21.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "5.9.3"
+  }
+}

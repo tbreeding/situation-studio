@@ -1,101 +1,74 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authenticateMutation } from "@/server/auth/request";
 import { database } from "@/server/database";
-import { opaqueToken, sha256 } from "@/server/auth/crypto";
-import { audit } from "@/server/audit";
-import { environment } from "@/server/environment";
+import { hasRole, requireMutationSession } from "@/server/auth/request";
+import { canonicalUsername } from "@/server/auth/throttle";
+import { hashPassword } from "@/server/auth/password";
 
-const schema = z.object({
-  username: z.string().regex(/^[a-z0-9][a-z0-9._-]{2,63}$/u),
-  displayName: z.string().trim().min(2).max(120),
-  repositoryReviewerId: z
-    .string()
-    .trim()
-    .regex(/^[a-z0-9][a-z0-9-]{1,99}$/u)
-    .nullable()
-    .optional(),
-  roles: z
-    .array(z.enum(["ADMINISTRATOR", "EDITOR", "REVIEWER", "PUBLISHER"]))
-    .max(4),
+const createSchema = z.object({
+  username: z.string().min(2).max(64),
+  displayName: z.string().min(2).max(120),
+  password: z.string().min(12).max(1024),
+  admin: z.boolean(),
 });
 
-export async function POST(request: NextRequest) {
-  const auth = await authenticateMutation(request, "user.manage");
-  if (!auth.ok)
-    return NextResponse.json({ error: "denied" }, { status: auth.status });
-  if (
-    !auth.session.reauthenticatedAt ||
-    auth.session.reauthenticatedAt.getTime() < Date.now() - 15 * 60 * 1000
-  )
+export async function POST(request: Request) {
+  const auth = await requireMutationSession(request);
+  if ("error" in auth)
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (!hasRole(auth.session, "ADMIN"))
     return NextResponse.json(
-      { error: "recent reauthentication required" },
+      { error: "Administrator access required." },
       { status: 403 },
     );
-  const parsed = schema.safeParse(await request.json());
-  if (!parsed.success)
-    return NextResponse.json(
-      { error: "invalid account request" },
-      { status: 400 },
-    );
-  const token = opaqueToken();
-  const result = await database().$transaction(
-    async (transaction) => {
-      const user = await transaction.user.create({
+  try {
+    const input = createSchema.parse(await request.json());
+    const passwordHash = await hashPassword(input.password);
+    const user = await database().$transaction(async (transaction) => {
+      const created = await transaction.user.create({
         data: {
-          username: parsed.data.username,
-          displayName: parsed.data.displayName,
-          repositoryReviewerId: parsed.data.repositoryReviewerId ?? null,
-          state: "PENDING_ACTIVATION",
-          identityType: "HUMAN",
-        },
-      });
-      for (const code of parsed.data.roles) {
-        const role = await transaction.role.findUniqueOrThrow({
-          where: { code },
-        });
-        await transaction.userRoleAssignment.create({
-          data: {
-            userId: user.id,
-            roleId: role.id,
-            grantedById: auth.session.userId,
+          username: canonicalUsername(input.username),
+          displayName: input.displayName.trim(),
+          passwordHash,
+          roles: {
+            create: [
+              { role: "EDITOR" },
+              ...(input.admin ? [{ role: "ADMIN" as const }] : []),
+            ],
           },
-        });
-      }
-      await transaction.activationToken.create({
-        data: {
-          userId: user.id,
-          tokenHash: sha256(token),
-          kind: "ACTIVATION",
-          createdById: auth.session.userId,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         },
       });
-      return user;
-    },
-    { isolationLevel: "Serializable" },
-  );
-  await audit({
-    actorId: auth.session.userId,
-    permissions: [...auth.session.permissions],
-    action: "user.invite",
-    targetType: "user",
-    targetId: result.id,
-    outcome: "SUCCEEDED",
-    after: {
-      username: result.username,
-      roles: parsed.data.roles,
-      repositoryReviewerId: result.repositoryReviewerId,
-    },
-  });
-  return NextResponse.json(
-    {
-      userId: result.id,
-      activationUrl: new URL(
-        `/activate/${token}`,
-        environment().SITUATION_STUDIO_ORIGIN,
-      ).toString(),
-    },
-    { status: 201 },
-  );
+      await transaction.auditEvent.create({
+        data: {
+          actorId: auth.session.userId,
+          action: "USER_CREATED",
+          subjectType: "USER",
+          subjectId: created.id,
+          payload: { username: created.username, admin: input.admin },
+        },
+      });
+      return created;
+    });
+    return NextResponse.json({ id: user.id }, { status: 201 });
+  } catch (error) {
+    if (error instanceof z.ZodError)
+      return NextResponse.json(
+        {
+          error:
+            "Enter a valid username, display name, and 12+ character password.",
+        },
+        { status: 422 },
+      );
+    if (
+      typeof error === "object" &&
+      error &&
+      "code" in error &&
+      error.code === "P2002"
+    )
+      return NextResponse.json(
+        { error: "That username already exists." },
+        { status: 409 },
+      );
+    throw error;
+  }
 }

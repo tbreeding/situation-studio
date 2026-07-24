@@ -1,58 +1,96 @@
-# Architecture and trust boundaries
+# Situation Studio architecture
 
-## Source-of-truth decision
+Situation Studio is a three-process editorial workbench backed by an
+independent PostgreSQL database named `situation_studio`. The separate
+`leadership_field_guide` database remains the only public content authority.
 
-Situation Studio uses hybrid authority. PostgreSQL owns mutable workflow, identity, durable jobs, review, and audit history. The protected Leadership Git repository owns every byte consumed by a public build. The live release marker identifies what users are receiving. A disagreement among PostgreSQL, protected `main`, and the live marker blocks publication and creates a reconciliation incident.
-
-The public Leadership runtime remains independent of the Studio database.
-
-`leadership.timsprototypes.com` is intentionally the only Leadership runtime in this prototype environment. Staging moves that candidate runtime to the exact approved release while protected Git `main` remains unchanged. Final publication advances `main` to the already-staged commit and reconciles the record; it does not create or deploy a second running version.
-
-## Service split
-
-```text
-Browser
-  -> TimsPrototypes gate
-  -> apps/web (session, CSRF, RBAC, JSON/UI)
-       -> PostgreSQL with web role
-       -> durable queues only
-
-PostgreSQL queue
-  -> apps/worker (conversation and review DAG)
-       -> provider API adapters in evidence-only sandboxes
-
-Approved immutable bundle
-  -> apps/validator (clean disposable Leadership worktree; no deploy authority)
-  -> apps/publisher (Git candidate branch, single candidate runtime, publication reconciliation; no AI/auth credential)
+```mermaid
+flowchart LR
+  Browser["Authenticated editor"] --> Web["Studio web"]
+  Web --> Studio[("situation_studio")]
+  Review["Review worker"] --> Studio
+  Review --> Providers["Service model APIs"]
+  Publisher["Publisher"] --> Studio
+  Observer["SELECT-only observer"] --> Leadership[("leadership_field_guide")]
+  Publisher --> Leadership
+  Leadership --> Runtime["Leadership runtime"]
 ```
 
-`packages/domain` has no Next.js, database, provider, Git, or deployment dependency. `packages/db` contains the reviewed schema and client only. Browser requests can select stable action identifiers; they cannot supply shell commands, provider models, paths, Git refs, or deployment targets.
+## Authority and credentials
 
-## Credential matrix
+| Process            | Studio authority                                    | Leadership authority                                             | Other secrets           |
+| ------------------ | --------------------------------------------------- | ---------------------------------------------------------------- | ----------------------- |
+| Web                | accounts, sessions, drafts, checkouts, user actions | none                                                             | session, CSRF, throttle |
+| Review worker      | review queue, runs, evidence, proposals             | none                                                             | service-provider keys   |
+| Publisher          | publication jobs, receipts, production history      | SELECT plus restricted append/validate/promote/restore functions | Leadership health URL   |
+| Observer/bootstrap | imported observations and history                   | SELECT only                                                      | none                    |
 
-| Service    |           Web DB |         AI DB | Publisher DB | passwords/sessions | provider secret |   Git push | release cutover |
-| ---------- | ---------------: | ------------: | -----------: | -----------------: | --------------: | ---------: | --------------: |
-| web        |              yes |            no |           no |                yes |              no |         no |              no |
-| worker     |               no |           yes |           no |                 no |             yes |         no |              no |
-| validator  | read-only bundle |            no |           no |                 no |              no | fetch only |              no |
-| publisher  |               no |            no |          yes |                 no |              no |     scoped |          scoped |
-| operations |    metadata only | metadata only |    reconcile |                 no |              no |      fetch |              no |
-| migrator   |      schema only |   schema only |  schema only |      no body reads |              no |         no |              no |
+Production startup uses a clean environment for each process and sources one
+mode-0400/0600 file. Provider keys cannot reach the publisher, and Leadership
+publisher credentials cannot reach the web or review worker.
 
-Secrets live outside release directories in systemd credentials or mode-0600 files. No `NEXT_PUBLIC_*`, command argument, audit payload, structured log, or generated artifact may contain one.
+## Data and lifecycle
 
-## Provider policy decision
+Content bodies are canonicalized and addressed by SHA-256. Draft revisions,
+review evidence, production occurrences, publication events, verification
+receipts, and audit events are append-only. Production occurrences may refer to
+the same content hash—such as a restoration—but are unique per Leadership
+release observation, preserving forward history and provenance while content
+blobs remain deduplicated.
 
-The consumer CLI design from the input spec is disabled for external beta use. Current OpenAI consumer guidance treats an account as individual and current Terms prohibit programmatic extraction from individual services; Anthropic's published surface guidance directs automated pipelines and production applications to the API. The production boundary therefore requires OpenAI Responses API and Anthropic API/service credentials. Local/RP1 CLI adapters may be qualification fixtures only and cannot be enabled for invited users.
+Only one active checkout can exist per situation. Every mutation supplies the
+checkout ID and monotonically increasing fence. Checkouts never time out.
+Force-check-in releases ownership, records the resulting draft hash, cancels
+review work, and makes late results fail their fence.
 
-The model policy remains `gpt-5.6-sol` and the current Opus family, with resolved model IDs, policy version, reasoning effort, usage, and fallback persisted for every run.
+The visible status is derived from facts (`Available`, `Draft saved`, `Checked
+out by …`, or `Retired`) plus temporary activity. There is no editorial state
+machine, approval queue, staging site, or candidate runtime.
 
-## Security invariants
+## Review
 
-- AI identities cannot hold `publication.approve` or `publication.publish`.
-- all content/workflow mutations require checkout ID and current fencing token.
-- shared resource sets acquire atomically in sorted order or not at all.
-- approved bundles are immutable and content addressed.
-- provider subprocesses receive only an evidence packet and schema; they receive no live repository, database, provider-management, Git, or deployment capability.
-- the publisher accepts only a non-invalidated human approval over the exact bundle/base/validation hashes.
-- draft MDX is parsed to an inert allowlisted representation and never executed.
+The review worker claims one global job with `FOR UPDATE SKIP LOCKED` and
+persists all 22 stages: graph mapping, seven critics, seven rebuttals,
+adjudication, teaching design, consolidated proposal, validation, and summary.
+Every run records requested and resolved provider/model/effort, evidence and
+output hashes, strict structured output, usage, and failure classification.
+Proposals never alter a draft until the editor accepts a change.
+
+## Publication and recovery
+
+The publisher:
+
+1. pins the saved revision and compares its base bundle with the current
+   Leadership target;
+2. rebases automatically when only unrelated content changed;
+3. persists a complete canonical candidate snapshot in Studio;
+4. inserts, validates, and promotes one complete immutable Leadership release
+   inside an expected-generation transaction;
+5. verifies the database and running Leadership application report the exact
+   release ID and manifest hash;
+6. records the Studio production occurrence and receipt, then checks in.
+
+Retries reconcile by Studio publication ID, Leadership release ID, manifest
+hash, and pointer generation. If runtime verification fails after promotion,
+the publisher restores and verifies the prior full release. Failed restoration
+sets the global `RECOVERY_REQUIRED` fence.
+
+Creation changes `UNPUBLISHED` drafts to a canonical public production bundle.
+Retirement retains content but marks the release-scoped typed situation
+`RETIRED`, removes promotion output, and relies on Leadership’s public
+visibility filters. Restoration copies one historical situation bundle into a
+new draft but publishes it over the newest complete release, leaving unrelated
+content unchanged.
+
+## Operations
+
+Encrypted backups use custom-format `pg_dump`, GPG recipient encryption,
+SHA-256 receipts, mode-0600 storage, and a disposable-database restore drill.
+Health surfaces expose liveness, database readiness, queue state, process
+heartbeats, backup age, and recovery fencing without exposing secrets or
+internal publication steps to editors.
+
+The schema and transition detail is in
+[checkpoint 1](checkpoints/01-contract-and-data-model.md). Production remains
+behind the separate approval procedure in
+[the migration runbook](runbooks/production-migration.md).

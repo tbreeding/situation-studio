@@ -1,68 +1,37 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { z } from "zod";
-import { authenticateMutation } from "@/server/auth/request";
+import { NextResponse } from "next/server";
+import { requireMutationSession, hasRole } from "@/server/auth/request";
+import {
+  WorkflowError,
+  checkoutSituation,
+} from "@/server/workflows/situations";
 import { database } from "@/server/database";
-import { acquireCheckout } from "@/server/workflows/checkouts";
-import { audit } from "@/server/audit";
-
-const schema = z.object({
-  mode: z.enum([
-    "EDITING",
-    "HUMAN_REVIEW",
-    "APPROVED",
-    "ARCHIVING",
-    "RESTORING",
-  ]),
-});
 
 export async function POST(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await authenticateMutation(request, "draft.update");
-  if (!auth.ok)
-    return NextResponse.json({ error: "denied" }, { status: auth.status });
-  const { id } = await params;
-  const parsed = schema.safeParse(await request.json());
-  if (!parsed.success)
-    return NextResponse.json({ error: "invalid request" }, { status: 400 });
-  const result = await acquireCheckout(database(), {
-    situationId: id,
-    userId: auth.session.userId,
-    mode: parsed.data.mode,
-  });
-  if (!result.ok) {
-    await audit({
-      actorId: auth.session.userId,
-      permissions: [...auth.session.permissions],
-      action: "checkout.acquire",
-      targetType: "situation",
-      targetId: id,
-      outcome: "DENIED",
-      reason: "ALREADY_HELD",
-    });
+  const auth = await requireMutationSession(request);
+  if ("error" in auth)
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (!hasRole(auth.session, "EDITOR"))
     return NextResponse.json(
-      {
-        error: "locked",
-        holder: result.checkout.holder?.displayName,
-        mode: result.checkout.mode,
-        renewedAt: result.checkout.renewedAt,
-      },
-      { status: 423 },
+      { error: "Editor access required." },
+      { status: 403 },
     );
+  try {
+    const { id } = await params;
+    await checkoutSituation({ situationId: id, actorId: auth.session.userId });
+    const situation = await database().situation.findUniqueOrThrow({
+      where: { id },
+      select: { slug: true },
+    });
+    return NextResponse.json({ slug: situation.slug });
+  } catch (error) {
+    if (error instanceof WorkflowError)
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.status },
+      );
+    throw error;
   }
-  await audit({
-    actorId: auth.session.userId,
-    permissions: [...auth.session.permissions],
-    action: "checkout.acquire",
-    targetType: "situation",
-    targetId: id,
-    targetVersion: result.checkout.fencingToken.toString(),
-    outcome: "SUCCEEDED",
-  });
-  return NextResponse.json({
-    checkoutId: result.checkout.id,
-    fencingToken: result.checkout.fencingToken.toString(),
-    draftId: result.draft.id,
-  });
 }

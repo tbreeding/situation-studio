@@ -1,67 +1,51 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authenticateMutation } from "@/server/auth/request";
 import { database } from "@/server/database";
-import { audit } from "@/server/audit";
+import { hasRole, requireMutationSession } from "@/server/auth/request";
 
-const schema = z.object({ state: z.enum(["ACTIVE", "DEACTIVATED"]) });
+const stateSchema = z.object({ active: z.boolean() });
 
-export async function POST(
-  request: NextRequest,
+export async function PATCH(
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await authenticateMutation(request, "user.manage");
-  if (!auth.ok)
-    return NextResponse.json({ error: "denied" }, { status: auth.status });
-  if (
-    !auth.session.reauthenticatedAt ||
-    auth.session.reauthenticatedAt.getTime() < Date.now() - 15 * 60 * 1000
-  )
+  const auth = await requireMutationSession(request);
+  if ("error" in auth)
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (!hasRole(auth.session, "ADMIN"))
     return NextResponse.json(
-      { error: "recent reauthentication required" },
+      { error: "Administrator access required." },
       { status: 403 },
     );
-  const parsed = schema.safeParse(await request.json());
-  if (!parsed.success)
-    return NextResponse.json(
-      { error: "invalid state request" },
-      { status: 400 },
-    );
+  const input = stateSchema.parse(await request.json());
   const { id } = await params;
-  if (id === auth.session.userId)
+  if (id === auth.session.userId && !input.active)
     return NextResponse.json(
-      { error: "self state changes are not allowed" },
+      { error: "You cannot deactivate your own active account." },
       { status: 409 },
     );
-  const before = await database().user.findUnique({ where: { id } });
-  if (!before)
-    return NextResponse.json({ error: "not found" }, { status: 404 });
-  const now = new Date();
   await database().$transaction(async (transaction) => {
     await transaction.user.update({
       where: { id },
       data: {
-        state: parsed.data.state,
-        deactivatedAt: parsed.data.state === "DEACTIVATED" ? now : null,
-        deactivatedById:
-          parsed.data.state === "DEACTIVATED" ? auth.session.userId : null,
+        state: input.active ? "ACTIVE" : "DEACTIVATED",
+        deactivatedAt: input.active ? null : new Date(),
       },
     });
-    if (parsed.data.state === "DEACTIVATED")
+    if (!input.active)
       await transaction.session.updateMany({
         where: { userId: id, revokedAt: null },
-        data: { revokedAt: now, revokedReason: "USER_DEACTIVATED" },
+        data: { revokedAt: new Date(), revokedReason: "USER_DEACTIVATED" },
       });
+    await transaction.auditEvent.create({
+      data: {
+        actorId: auth.session.userId,
+        action: input.active ? "USER_REACTIVATED" : "USER_DEACTIVATED",
+        subjectType: "USER",
+        subjectId: id,
+        payload: {},
+      },
+    });
   });
-  await audit({
-    actorId: auth.session.userId,
-    permissions: [...auth.session.permissions],
-    action: `user.${parsed.data.state === "ACTIVE" ? "reactivate" : "deactivate"}`,
-    targetType: "user",
-    targetId: id,
-    outcome: "SUCCEEDED",
-    before: { state: before.state },
-    after: { state: parsed.data.state },
-  });
-  return NextResponse.json({ state: parsed.data.state });
+  return NextResponse.json({ status: input.active ? "ACTIVE" : "DEACTIVATED" });
 }

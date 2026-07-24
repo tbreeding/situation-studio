@@ -1,17 +1,83 @@
 import { NextResponse } from "next/server";
 import { database } from "@/server/database";
+
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
-    await database().$queryRaw`
-      SELECT count(*)::int AS applied_migrations
-      FROM "_prisma_migrations"
-      WHERE finished_at IS NOT NULL
-    `;
-    return NextResponse.json({ status: "ready", database: "ok" });
+    await database().$queryRaw`SELECT 1`;
+    const [cursor, heartbeats, backup, recoveryRequired] = await Promise.all([
+      database().leadershipSyncCursor.findUnique({
+        where: { id: "official" },
+      }),
+      database().processHeartbeat.findMany({
+        orderBy: { id: "asc" },
+      }),
+      database().backupReceipt.findFirst({
+        where: { state: "VERIFIED" },
+        orderBy: { verifiedAt: "desc" },
+      }),
+      database().publicationJob.count({
+        where: { state: "RECOVERY_REQUIRED" },
+      }),
+    ]);
+    const now = Date.now();
+    const ageSeconds = (value: Date | null | undefined) =>
+      value ? Math.max(0, Math.floor((now - value.getTime()) / 1_000)) : null;
+    const cursorAge = ageSeconds(cursor?.lastSuccessfulAt);
+    const requiredProcesses = ["review-worker", "publisher"];
+    const processStatus = requiredProcesses.map((id) => {
+      const heartbeat = heartbeats.find((item) => item.id === id);
+      const age = ageSeconds(heartbeat?.lastSeenAt);
+      return {
+        id,
+        state: !heartbeat || age === null || age > 60 ? "stale" : "fresh",
+        ageSeconds: age,
+      };
+    });
+    const backupAge = ageSeconds(backup?.verifiedAt);
+    const degraded =
+      recoveryRequired > 0 ||
+      cursorAge === null ||
+      cursorAge > 120 ||
+      processStatus.some((process) => process.state === "stale") ||
+      backupAge === null ||
+      backupAge > 26 * 60 * 60;
+    return NextResponse.json(
+      {
+        status: degraded ? "degraded" : "ready",
+        database: "reachable",
+        leadershipObservation: {
+          releaseId: cursor?.lastReleaseId ?? null,
+          manifestHash: cursor?.lastManifestHash ?? null,
+          generation: cursor?.lastPointerGeneration?.toString() ?? null,
+          ageSeconds: cursorAge,
+          state:
+            cursorAge !== null && cursorAge <= 120 && !cursor?.lastErrorCode
+              ? "fresh"
+              : "stale",
+        },
+        processes: processStatus,
+        publisher: { recoveryRequired },
+        backup: {
+          state: backup ? "verified" : "not-yet-verified",
+          ageSeconds: backupAge,
+          encrypted: backup?.encrypted ?? null,
+          restoreDrill:
+            backup?.restoreDrillResult === "PASSED"
+              ? "passed"
+              : "not-yet-passed",
+        },
+      },
+      {
+        status: degraded ? 503 : 200,
+        headers: { "Cache-Control": "no-store" },
+      },
+    );
   } catch {
     return NextResponse.json(
-      { status: "not-ready", database: "unavailable" },
-      { status: 503 },
+      { status: "not-ready", database: "unreachable" },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

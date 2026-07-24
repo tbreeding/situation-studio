@@ -4,17 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "bootstrap": "tsx src/bootstrap-leadership.ts",
+    "secret-scan": "tsx src/secret-scan.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@situation-studio/content-contracts": "workspace:*",
     "@situation-studio/db": "workspace:*",
-    "@situation-studio/domain": "workspace:*",
-    "gray-matter": "4.0.3",
-    "yaml": "2.9.0"
+    "@situation-studio/leadership-bridge": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
+    "tsx": "4.21.0",
     "typescript": "5.9.3"
   }
 }

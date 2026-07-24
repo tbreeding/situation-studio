@@ -2,56 +2,34 @@ import { z } from "zod";
 
 const schema = z
   .object({
-    DATABASE_URL: z.string().startsWith("postgresql://"),
-    SITUATION_STUDIO_ORIGIN: z.string().url(),
-    SITUATION_STUDIO_HOST: z.string().min(1),
+    NODE_ENV: z
+      .enum(["development", "test", "production"])
+      .default("development"),
+    STUDIO_DATABASE_URL: z.url(),
     SESSION_SECRET: z.string().min(32),
     CSRF_SECRET: z.string().min(32),
     THROTTLE_SECRET: z.string().min(32),
-    LEADERSHIP_REPO_PATH: z
-      .string()
-      .min(1)
-      .default("/home/admin/projects/leadership/current"),
-    PROVIDER_EXECUTION_MODE: z
-      .enum(["disabled", "fake", "api"])
-      .default("disabled"),
-    PUBLICATION_BACKEND: z.enum(["git", "database"]).default("git"),
-    LEADERSHIP_CANDIDATE_AUDIENCE: z
-      .string()
-      .url()
-      .default("https://leadership.timsprototypes.com"),
-    LEADERSHIP_CANDIDATE_ORIGIN: z
-      .string()
-      .url()
-      .default("https://leadership.timsprototypes.com"),
-    LEADERSHIP_CANDIDATE_EXCHANGE_SECRET: z.string().min(32).optional(),
-    LEADERSHIP_ATTESTATION_SECRET: z.string().min(32).optional(),
-    LEADERSHIP_ATTESTATION_KEY_ID: z
-      .string()
-      .min(1)
-      .max(100)
-      .default("leadership-hmac-v1"),
+    SITUATION_STUDIO_ORIGIN: z.url(),
+    LEADERSHIP_STUDIO_READER_DATABASE_URL: z.url().optional(),
   })
   .superRefine((value, context) => {
     if (
-      value.PUBLICATION_BACKEND === "database" &&
-      !value.LEADERSHIP_ATTESTATION_SECRET
+      value.NODE_ENV === "production" &&
+      !value.SITUATION_STUDIO_ORIGIN.startsWith("https://")
     )
       context.addIssue({
         code: "custom",
-        path: ["LEADERSHIP_ATTESTATION_SECRET"],
-        message:
-          "Leadership attestation secret is required for database publication.",
+        path: ["SITUATION_STUDIO_ORIGIN"],
+        message: "Production requires an HTTPS Situation Studio origin.",
       });
     if (
-      value.PUBLICATION_BACKEND === "database" &&
-      !value.LEADERSHIP_CANDIDATE_EXCHANGE_SECRET
+      value.NODE_ENV === "production" &&
+      !value.LEADERSHIP_STUDIO_READER_DATABASE_URL
     )
       context.addIssue({
         code: "custom",
-        path: ["LEADERSHIP_CANDIDATE_EXCHANGE_SECRET"],
-        message:
-          "Leadership candidate exchange secret is required for database publication.",
+        path: ["LEADERSHIP_STUDIO_READER_DATABASE_URL"],
+        message: "Production requires the Leadership read-only connection.",
       });
   });
 
@@ -62,6 +40,6 @@ export function environment() {
   return cached;
 }
 
-export function isSecureOrigin() {
-  return new URL(environment().SITUATION_STUDIO_ORIGIN).protocol === "https:";
+export function isSecureOrigin(): boolean {
+  return environment().SITUATION_STUDIO_ORIGIN.startsWith("https://");
 }

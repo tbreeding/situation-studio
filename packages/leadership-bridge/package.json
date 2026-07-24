@@ -1,0 +1,22 @@
+{
+  "name": "@situation-studio/leadership-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@situation-studio/db": "workspace:*",
+    "@situation-studio/domain": "workspace:*",
+    "pg": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "@types/pg": "8.20.0",
+    "typescript": "5.9.3"
+  }
+}

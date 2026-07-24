@@ -1,821 +1,145 @@
-import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
+import {
+  parseSituationSections,
+  requiredSituationSections,
+  situationBundleSchema,
+} from "@situation-studio/domain";
 import { AppShell } from "@/components/app-shell";
-import { ReviewProgress } from "@/components/review-progress";
 import { WorkspaceEditor } from "@/components/workspace-editor";
-import { currentSession } from "@/server/auth/sessions";
-import { database } from "@/server/database";
+import { requireSession } from "@/server/auth/request";
 import {
-  exactBundleBaseMatchesOfficialSnapshot,
-  exactArtifactsMatchReviewProvenance,
-  exactArtifactsMatchStoredHashes,
-  readPreparedReviewProvenance,
-} from "@/server/workflows/review-provenance";
-import {
-  canPrepareDatabaseFailedPreviewRecovery,
-  isPrivateCandidateReviewPending,
-  publicationDecisionLabel,
-  publicationWorkspacePresentation,
-} from "@/lib/publication-presentation";
-import { reviewJobSnapshotById } from "@/server/review-progress";
-import { environment } from "@/server/environment";
+  newSituationTemplate,
+  workspaceForSlug,
+} from "@/server/workflows/situations";
+import { reconcileLeadershipRelease } from "@/server/leadership-sync";
 
-export default async function SituationWorkspace({
+export const dynamic = "force-dynamic";
+
+export default async function SituationPage({
   params,
 }: {
   params: Promise<{ slug: string }>;
 }) {
-  const session = await currentSession();
-  if (!session) redirect("/login?expired=1");
-  const publicationBackend = environment().PUBLICATION_BACKEND;
-  const databaseBackend = publicationBackend === "database";
   const { slug } = await params;
-  const situation = await database().situation.findUnique({
-    where: { slug },
-    include: {
-      checkouts: {
-        where: { releasedAt: null },
-        include: { holder: true, resources: true },
-        take: 1,
-      },
-      drafts: {
-        where: { active: true },
-        take: 1,
-        include: {
-          revisions: {
-            orderBy: { revision: "desc" },
-            take: 1,
-            include: {
-              artifacts: { include: { artifact: true, content: true } },
-            },
-          },
-          bundles: {
-            where: { state: { notIn: ["STALE", "PUBLISHED"] } },
-            orderBy: { revision: "desc" },
-            take: 1,
-            include: {
-              validations: true,
-              artifacts: { include: { artifact: true, content: true } },
-              approvals: {
-                where: { invalidatedAt: null },
-                orderBy: { approvedAt: "desc" },
-                take: 1,
-              },
-              comments: { where: { status: "OPEN" } },
-              publicationRequests: {
-                orderBy: { createdAt: "desc" },
-                take: 1,
-                include: {
-                  steps: true,
-                  databasePublication: true,
-                  publicationTarget: { include: { officialSnapshot: true } },
-                },
-              },
-            },
-          },
-        },
-      },
-      versions: {
-        orderBy: { createdAt: "asc" },
-        take: 1,
-        include: { artifacts: { include: { artifact: true, content: true } } },
-      },
-      currentPublication: {
-        include: {
-          version: {
-            include: {
-              artifacts: { include: { artifact: true, content: true } },
-            },
-          },
-        },
-      },
-      artifacts: {
-        include: {
-          outgoingEdges: {
-            include: { target: { include: { primarySituation: true } } },
-          },
-          incomingEdges: {
-            include: { source: { include: { primarySituation: true } } },
-          },
-        },
-      },
-      publications: { orderBy: { createdAt: "desc" }, take: 8 },
-    },
+  const session = await requireSession(`/situations/${slug}`);
+  await reconcileLeadershipRelease();
+  const workspace = await workspaceForSlug(slug);
+  if (!workspace) notFound();
+  const checkout = workspace.checkouts[0] ?? null;
+  const draft = workspace.drafts[0];
+  const revision = draft?.revisions[0];
+  const production = workspace.productionVersions[0];
+  const productionBody =
+    production?.artifacts.find((artifact) => artifact.kind === "SITUATION")
+      ?.content.textBody ?? "";
+  const initialBody =
+    revision?.artifacts.find((artifact) => artifact.kind === "SITUATION")
+      ?.content.textBody ??
+    productionBody ??
+    "";
+  const fallback = newSituationTemplate({
+    situationId: workspace.id,
+    slug: workspace.slug,
+    title: workspace.title,
   });
-  if (!situation) notFound();
-  const databaseTarget = databaseBackend
-    ? await database().publicationTarget.findUnique({
-        where: { code: "leadership-production" },
-        include: {
-          officialSnapshot: true,
-          observations: {
-            orderBy: { observedAt: "desc" },
-            take: 1,
-          },
-          currentDatabasePublication: {
-            include: {
-              bundle: true,
-              previousOfficialSnapshot: true,
-              resultingOfficialSnapshot: true,
-            },
-          },
-        },
-      })
+  const initialBundle = situationBundleSchema.parse(
+    revision?.bundleManifest ?? production?.bundleManifest ?? fallback.bundle,
+  );
+  let initialSections: Record<string, string>;
+  try {
+    initialSections = parseSituationSections(initialBody || fallback.body);
+  } catch {
+    initialSections = parseSituationSections(fallback.body);
+  }
+  const activeReview = workspace.reviewJobs[0];
+  const publicationJob = workspace.publicationJobs[0];
+  const review = activeReview
+    ? {
+        id: activeReview.id,
+        state: activeReview.state,
+        queuedAt: activeReview.queuedAt.toISOString(),
+        steps: activeReview.steps.map((step) => ({
+          ordinal: step.ordinal,
+          roleCode: step.roleCode,
+          state: step.state,
+        })),
+        proposal: activeReview.proposal
+          ? {
+              id: activeReview.proposal.id,
+              summary: activeReview.proposal.summary,
+              changes: activeReview.proposal.changes.map((change) => ({
+                id: change.id,
+                targetKind: change.targetKind,
+                targetKey: change.targetKey,
+                rationale: change.rationale,
+                state: change.state,
+              })),
+            }
+          : null,
+      }
     : null;
-  const rollbackRequest =
-    databaseBackend && !databaseTarget
-      ? null
-      : await database().rollbackRequest.findFirst({
-          where: { situationId: situation.id },
-          orderBy: { createdAt: "desc" },
-        });
-  const databaseRollbackPublication =
-    databaseTarget?.currentDatabasePublication;
-  const databaseRollbackTarget =
-    databaseRollbackPublication?.state === "RECONCILED" &&
-    databaseRollbackPublication.terminalOutcome === "PUBLISHED" &&
-    databaseRollbackPublication.bundle?.situationId === situation.id &&
-    databaseRollbackPublication.resultingOfficialSnapshotId ===
-      databaseTarget?.officialSnapshotId
-      ? databaseRollbackPublication
-      : null;
-  const checkout = situation.checkouts[0] ?? null;
-  const reviewJobRecord =
-    checkout?.custody === "AI_JOB" && checkout.custodyReference
-      ? await reviewJobSnapshotById(checkout.custodyReference)
-      : null;
-  const reviewActive = Boolean(reviewJobRecord);
-  const reviewJob =
-    reviewJobRecord &&
-    (reviewJobRecord.ownerId === session.userId ||
-      session.permissions.has("system.admin"))
-      ? reviewJobRecord.snapshot
-      : null;
-  const draft = situation.drafts[0] ?? null;
-  const revision = draft?.revisions[0] ?? null;
-  const publishedArtifactEntry =
-    situation.currentPublication?.version?.artifacts.find(
-      (item) => item.artifact.logicalId === `situation:${slug}`,
-    ) ??
-    situation.versions[0]?.artifacts.find(
-      (item) => item.artifact.logicalId === `situation:${slug}`,
-    ) ??
-    null;
-  const draftArtifactEntry =
-    revision?.artifacts.find(
-      (item) => item.artifact.logicalId === `situation:${slug}`,
-    ) ?? null;
-  const bundle = draft?.bundles[0] ?? null;
-  const publicationRequest = bundle?.publicationRequests[0] ?? null;
-  const recoveryOfficialArtifacts =
-    databaseBackend &&
-    bundle &&
-    publicationRequest?.state === "FAILED_PREVIEW" &&
-    databaseTarget?.officialSnapshotId
-      ? await database().contentSnapshotArtifact.findMany({
-          where: {
-            snapshotId: databaseTarget.officialSnapshotId,
-            artifactId: {
-              in: bundle.artifacts.map((artifact) => artifact.artifactId),
-            },
-          },
-          select: { artifactId: true, contentHash: true },
-        })
-      : [];
-  const failedPreviewRecoveryOfficialBaseMatches = Boolean(
-    bundle &&
-    databaseTarget?.officialSnapshotId &&
-    exactBundleBaseMatchesOfficialSnapshot(
-      bundle.artifacts,
-      recoveryOfficialArtifacts,
-    ),
+  const variantsByLogicalId = new Map(
+    workspace.variants.map((variant) => [variant.forkedFromLogicalId, variant]),
   );
-  const publishedCommitSha =
-    (databaseBackend
-      ? databaseTarget?.officialSnapshot?.manifestHash
-      : (publicationRequest?.baseCommit ??
-        situation.currentPublication?.commitSha ??
-        situation.publications[0]?.commitSha)) ?? null;
-  const candidateCommitSha =
-    (databaseBackend
-      ? publicationRequest?.candidateContentSnapshotHash
-      : publicationRequest?.steps.find(
-          (step) => step.step === "COMMITTED" && step.state === "SUCCEEDED",
-        )?.externalId) ?? null;
-  const publicationPresentation = publicationRequest
-    ? publicationWorkspacePresentation({
-        state: publicationRequest.state,
-        finalConfirmed: Boolean(publicationRequest.finalConfirmedAt),
-        backend: publicationBackend,
-        candidateIdentity: candidateCommitSha,
-      })
-    : null;
-  const bundleArtifactEntry =
-    bundle?.artifacts.find(
-      (item) => item.artifact.logicalId === `situation:${slug}`,
-    ) ?? null;
-  const artifactEntry =
-    bundleArtifactEntry ?? draftArtifactEntry ?? publishedArtifactEntry ?? null;
-  const preparedProvenance = readPreparedReviewProvenance(
-    bundle?.decisionLedger,
-  );
-  const provenanceReady = Boolean(
-    bundle &&
-    preparedProvenance &&
-    preparedProvenance.repositoryReviewerId ===
-      session.user.repositoryReviewerId &&
-    preparedProvenance.preparedByUserId === session.userId &&
-    bundle.validations.some(
-      (validation) =>
-        validation.validator === "human-review-provenance" &&
-        validation.state === "PASSED" &&
-        validation.bundleHash === bundle.canonicalHash,
-    ) &&
-    exactArtifactsMatchReviewProvenance(bundle.artifacts, preparedProvenance) &&
-    exactArtifactsMatchStoredHashes(bundle.artifacts),
-  );
-  const graphItems = situation.artifacts.flatMap((artifact) => [
-    ...artifact.outgoingEdges.map((edge) => ({
-      id: edge.id,
-      direction: "Uses",
-      relationship: edge.edgeType,
-      item: edge.target,
-    })),
-    ...artifact.incomingEdges.map((edge) => ({
-      id: edge.id,
-      direction: "Used by",
-      relationship: edge.edgeType,
-      item: edge.source,
-    })),
-  ]);
-  const graphGroups = graphItems.reduce<Record<string, typeof graphItems>>(
-    (groups, item) => {
-      (groups[item.item.type] ??= []).push(item);
-      return groups;
-    },
-    {},
-  );
-  const groupedGraphItems = Object.entries(graphGroups).sort(
-    ([left], [right]) =>
-      left === "SITUATION"
-        ? -1
-        : right === "SITUATION"
-          ? 1
-          : left.localeCompare(right),
-  );
-  const ownsCheckout =
-    checkout?.holderUserId === session.userId && checkout.custody === "USER";
-  const canRecoverFailedPreview = canPrepareDatabaseFailedPreviewRecovery({
-    publicationBackend,
-    bundleState: bundle?.state ?? null,
-    publicationRequestState: publicationRequest?.state ?? null,
-    ownsCheckout,
-    canApprove: session.permissions.has("publication.approve"),
-    officialBaseMatches: failedPreviewRecoveryOfficialBaseMatches,
-  });
-  const failedPreviewRecoveryBlockedByOfficialBase =
-    !failedPreviewRecoveryOfficialBaseMatches &&
-    canPrepareDatabaseFailedPreviewRecovery({
-      publicationBackend,
-      bundleState: bundle?.state ?? null,
-      publicationRequestState: publicationRequest?.state ?? null,
-      ownsCheckout,
-      canApprove: session.permissions.has("publication.approve"),
-      officialBaseMatches: true,
-    });
-  const nextAction = publicationRequest
-    ? isPrivateCandidateReviewPending(
-        publicationBackend,
-        publicationRequest.state,
-      )
-      ? session.permissions.has("publication.publish")
-        ? "Open and review the private candidate. Its healthy Leadership observation will unlock final confirmation."
-        : "The private candidate is awaiting review from an authorized publisher."
-      : publicationRequest.state === "AWAITING_CONFIRMATION" &&
-          !publicationRequest.finalConfirmedAt
-        ? session.permissions.has("publication.publish")
-          ? databaseBackend
-            ? "Review the private candidate, then explicitly confirm this exact snapshot."
-            : "Review the staged candidate, then explicitly confirm this exact commit."
-          : databaseBackend
-            ? "The private candidate is awaiting confirmation from an authorized publisher."
-            : "The staged candidate is awaiting confirmation from an authorized publisher."
-        : publicationRequest.state === "FAILED_PREVIEW"
-          ? databaseBackend
-            ? canRecoverFailedPreview
-              ? bundle?.comments.some((comment) => comment.blocking)
-                ? "Resolve the blocking review feedback before preparing a fresh database-bound review."
-                : "Prepare a fresh database-bound review from the preserved candidate, then approve its exact bytes."
-              : failedPreviewRecoveryBlockedByOfficialBase
-                ? "Official content changed in an affected artifact after this bundle was reviewed. The preserved candidate cannot be recovered safely; run a new complete review from the current official snapshot."
-                : !checkout &&
-                    session.permissions.has("draft.update") &&
-                    session.permissions.has("publication.approve")
-                  ? "Check out this situation to prepare a fresh review against the current official snapshot."
-                  : "The private preview failed safely. Inspect the recorded failure before retrying."
-            : "Candidate staging failed safely; inspect the recorded failure before retrying."
-          : publicationRequest.state === "RECONCILIATION_REQUIRED"
-            ? databaseBackend
-              ? "Publication is blocked until the database pointer, Leadership observation, and Studio agree."
-              : "Publication is blocked until Git, Leadership, and Studio are reconciled."
-            : "No action required while the trusted publisher completes and verifies publication."
-    : reviewActive
-      ? "No action required—your complete review is durable and this page updates automatically."
-      : checkout
-        ? ownsCheckout
-          ? draft
-            ? "Continue the checked-out draft, then save, start review, or check in to release it."
-            : "This checkout is yours; continue the workflow or check in to release it."
-          : `Read the official baseline while ${checkout.holder?.displayName ?? "another operator"} holds the exclusive checkout.`
-        : session.permissions.has("draft.update")
-          ? "Check out this situation when you are ready to create or continue a draft."
-          : "Read the official baseline. Your current permissions do not include editing.";
-  const passedValidations =
-    bundle?.validations.filter((item) => item.state === "PASSED").length ?? 0;
-  const failedValidations =
-    bundle?.validations.filter((item) => item.state === "FAILED").length ?? 0;
+  const context = initialBundle.relationships.map((relationship) => ({
+    logicalId: relationship.logicalId,
+    kind: relationship.kind,
+    visibility: relationship.visibility,
+    contentHash: relationship.contentHash,
+    sharingCount: 1,
+    hasVariant: variantsByLogicalId.has(relationship.logicalId),
+  }));
   return (
     <AppShell
-      user={session.user}
+      active="situations"
       csrfToken={session.csrfToken}
-      canAccessAdministration={session.permissions.has("system.admin")}
+      user={{
+        displayName: session.user.displayName,
+        isAdmin: session.roles.has("ADMIN"),
+      }}
     >
-      <nav className="breadcrumb" aria-label="Breadcrumb">
-        <Link href="/">Situations</Link>
-        <span aria-hidden="true">/</span>
-        <span aria-current="page">{situation.title}</span>
-      </nav>
-      <div className="workspaceTop">
-        <div>
-          <p className="eyebrow">
-            Situation workspace · official baseline{" "}
-            {publishedCommitSha?.slice(0, 8) ?? "unavailable"}
-          </p>
-          <h1>{situation.title}</h1>
-        </div>
-        <div className="workspaceActions">
-          {publicationRequest ? (
-            <>
-              <span className="badge ink">Official baseline</span>
-              <span
-                className="badge gold"
-                data-testid="publication-candidate-status"
-              >
-                {publicationPresentation?.candidateBadge}
-              </span>
-              <span
-                className="badge rust"
-                data-testid="publication-decision-status"
-              >
-                {publicationPresentation?.decisionLabel}
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="badge ink">{situation.publicationState}</span>
-              {reviewActive ? (
-                <>
-                  <span className="badge gold">Complete review active</span>
-                  <span className="badge rust">Live progress below</span>
-                </>
-              ) : (
-                draft && <span className="badge gold">{draft.state}</span>
-              )}
-              {checkout && !reviewActive && (
-                <span className="badge rust">
-                  {checkout.mode} ·{" "}
-                  {checkout.holder?.displayName ?? checkout.custody}
-                </span>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-      <section
-        className="workspaceSummary"
-        aria-label="Current situation state"
-      >
-        <div>
-          <span>Official baseline</span>
-          <strong>
-            {publishedCommitSha ? "Published" : "No official publication"}
-          </strong>
-          <small>
-            {databaseBackend
-              ? "Database official snapshot"
-              : "Protected Git main"}{" "}
-            · {publishedCommitSha?.slice(0, 8) ?? "not published"}
-          </small>
-        </div>
-        {publicationRequest ? (
-          <div>
-            <span>Leadership display</span>
-            <strong data-testid="leadership-display-status">
-              {publicationPresentation?.leadershipDisplay}
-            </strong>
-            <small data-testid="leadership-display-detail">
-              {publicationPresentation?.leadershipDetail}
-            </small>
-          </div>
-        ) : (
-          <div>
-            <span>Exclusive checkout</span>
-            <strong>
-              {reviewActive
-                ? "Protected during review"
-                : checkout
-                  ? "In use"
-                  : "Available"}
-            </strong>
-            <small>
-              {reviewActive
-                ? "The review job has custody of the saved draft"
-                : checkout
-                  ? `${checkout.mode.toLowerCase().replaceAll("_", " ")} · ${checkout.holder?.displayName ?? checkout.custody.toLowerCase()}`
-                  : "No active owner"}
-            </small>
-          </div>
-        )}
-        <div className="nextActionSummary">
-          <span>
-            {publicationRequest ? "Publication decision" : "Next valid action"}
-          </span>
-          <strong>{nextAction}</strong>
-          {publicationRequest && (
-            <small>
-              Publisher custody protects the reviewed candidate during this
-              decision.
-            </small>
-          )}
-        </div>
-        <div>
-          <span>Blast radius</span>
-          <strong>{graphItems.length} direct connections</strong>
-          <small>Detail remains available below</small>
-        </div>
-      </section>
-      {reviewJob && <ReviewProgress initialJob={reviewJob} />}
-      {reviewActive && !reviewJob && (
-        <section
-          aria-labelledby="review-progress-restricted-title"
-          className="reviewProgressCard"
-        >
-          <header className="reviewProgressHeader">
-            <div>
-              <p className="eyebrow">Complete review active</p>
-              <h2 id="review-progress-restricted-title">
-                Another operator’s review is in progress
-              </h2>
-            </div>
-          </header>
-          <p className="reviewProgressDetail">
-            The saved draft is protected while the durable review job runs.
-            Detailed live progress is available to the job owner and system
-            administrators.
-          </p>
-          <footer className="reviewProgressFooter">
-            <p>
-              <strong>What you should do:</strong> No action is required.
-            </p>
-            <p>The official published guidance remains live.</p>
-          </footer>
-        </section>
-      )}
-      {!publicationRequest &&
-        !reviewActive &&
-        checkout &&
-        (checkout.holderUserId !== session.userId ||
-          checkout.custody !== "USER") && (
-          <p className="alert" role="status">
-            Read-only: checkout held by{" "}
-            {checkout.custody === "USER"
-              ? (checkout.holder?.displayName ?? "another operator")
-              : checkout.custody.toLowerCase().replaceAll("_", " ")}{" "}
-            for {checkout.mode.toLowerCase().replaceAll("_", " ")}. Last active{" "}
-            {checkout.renewedAt.toISOString()}.
-          </p>
-        )}
-      <div className="workspaceGrid">
-        <div className="workspacePrimary">
-          <WorkspaceEditor
-            situationId={situation.id}
-            situationSlug={situation.slug}
-            publicationBackend={publicationBackend}
-            failedPreviewRecoveryBlockedByOfficialBase={
-              failedPreviewRecoveryBlockedByOfficialBase
-            }
-            lifecycle={situation.lifecycle}
-            draftId={draft?.id ?? null}
-            checkout={
-              checkout
-                ? {
-                    id: checkout.id,
-                    fencingToken: checkout.fencingToken.toString(),
-                    holderUserId: checkout.holderUserId,
-                    custody: checkout.custody,
-                  }
-                : null
-            }
-            userId={session.userId}
-            artifact={
-              artifactEntry
-                ? {
-                    id: artifactEntry.artifactId,
-                    body: artifactEntry.content.body,
-                  }
-                : null
-            }
-            displayedArtifactState={
-              bundleArtifactEntry
-                ? "PROPOSAL"
-                : draftArtifactEntry
-                  ? "DRAFT"
-                  : "PUBLISHED"
-            }
-            publishedBody={publishedArtifactEntry?.content.body ?? null}
-            publishedCommitSha={publishedCommitSha}
-            revision={bundle?.revision ?? draft?.currentRevision ?? null}
-            csrfToken={session.csrfToken}
-            bundle={
-              bundle
-                ? {
-                    id: bundle.id,
-                    state: bundle.state,
-                    canonicalHash: bundle.canonicalHash,
-                    repositoryReviewerId:
-                      session.user.repositoryReviewerId ?? null,
-                    provenanceReady,
-                    preparedReviewDate: preparedProvenance?.reviewDate ?? null,
-                    artifacts: bundle.artifacts.map((artifact) => ({
-                      id: artifact.artifactId,
-                      logicalId: artifact.artifact.logicalId,
-                      path: artifact.path,
-                      changeKind: artifact.changeKind,
-                      candidateHash: artifact.candidateHash,
-                      body: artifact.content.body,
-                    })),
-                    comments: bundle.comments.map((comment) => ({
-                      id: comment.id,
-                      body: comment.body,
-                      blocking: comment.blocking,
-                    })),
-                  }
-                : null
-            }
-            approvalId={bundle?.approvals[0]?.id ?? null}
-            publicationRequest={
-              publicationRequest
-                ? {
-                    id: publicationRequest.id,
-                    state: publicationRequest.state,
-                    currentStep: publicationRequest.currentStep,
-                    previewCommitSha: candidateCommitSha,
-                    finalConfirmed: Boolean(
-                      publicationRequest.finalConfirmedAt,
-                    ),
-                    reconciliationReason:
-                      publicationRequest.reconciliationReason,
-                  }
-                : null
-            }
-            reconciliation={
-              databaseTarget
-                ? {
-                    officialSnapshotHash:
-                      databaseTarget.officialSnapshot?.manifestHash ?? null,
-                    observedSnapshotHash:
-                      databaseTarget.observations[0]?.snapshotHash ?? null,
-                    candidateSnapshotHash:
-                      publicationRequest?.candidateContentSnapshotHash ?? null,
-                  }
-                : null
-            }
-            rollbackTarget={
-              databaseBackend
-                ? databaseRollbackTarget
-                  ? {
-                      id: databaseRollbackTarget.id,
-                      commitSha:
-                        databaseRollbackTarget.previousOfficialSnapshot
-                          .manifestHash,
-                    }
-                  : null
-                : (situation.publications.find(
-                    (publication) =>
-                      publication.id !== situation.currentPublicationId,
-                  ) ?? null)
-            }
-            rollbackRequest={
-              rollbackRequest
-                ? {
-                    id: rollbackRequest.id,
-                    state: rollbackRequest.state,
-                    currentStep: rollbackRequest.currentStep,
-                    candidateIdentity:
-                      rollbackRequest.targetContentSnapshotHash,
-                  }
-                : null
-            }
-            permissions={[...session.permissions]}
-          />
-          <details className="panel dependencyPanel">
-            <summary>
-              <span>
-                <strong>Connected bundle surfaces</strong>
-                <small>Grouped dependency detail and exact identifiers</small>
-              </span>
-              <span className="badge">
-                {graphItems.length} direct connections
-              </span>
-            </summary>
-            <div className="panelBody dependencyGroups">
-              <section>
-                <h3>Situation guidance</h3>
-                <code>
-                  {artifactEntry?.path ?? "No artifact path available"}
-                </code>
-              </section>
-              {groupedGraphItems.map(([type, items]) => (
-                <section key={type}>
-                  <h3>{type.toLowerCase().replaceAll("_", " ")}</h3>
-                  <ul>
-                    {items?.map(({ id, direction, relationship, item }) => {
-                      const label =
-                        item.primarySituation?.title ??
-                        item.logicalId.split(":").slice(1).join(":");
-                      return (
-                        <li key={id}>
-                          <div>
-                            {item.type === "SITUATION" &&
-                            item.primarySituation ? (
-                              <Link
-                                href={`/situations/${item.primarySituation.slug}`}
-                              >
-                                {label}
-                              </Link>
-                            ) : (
-                              <strong>{label}</strong>
-                            )}
-                            <small>
-                              {direction} ·{" "}
-                              {relationship.toLowerCase().replaceAll("_", " ")}
-                            </small>
-                          </div>
-                          <code>{item.canonicalPath}</code>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </section>
-              ))}
-            </div>
-          </details>
-        </div>
-        <aside className="panel contextPanel">
-          <div className="panelHeader">
-            <h2>Candidate lifecycle</h2>
-          </div>
-          <div className="panelBody">
-            <p className="lifecycleExplanation">
-              One official baseline remains in force while a separate candidate
-              moves through review and publication.
-            </p>
-            <ol className="lifecycleList">
-              <li className="complete">
-                <span>1</span>
-                <div>
-                  <strong>Official baseline</strong>
-                  <small>
-                    {databaseBackend
-                      ? "Database official snapshot"
-                      : "Protected Git main"}{" "}
-                    · {publishedCommitSha?.slice(0, 8) ?? "unavailable"}
-                  </small>
-                </div>
-              </li>
-              <li
-                className={bundle ? "complete" : draft ? "current" : undefined}
-              >
-                <span>2</span>
-                <div>
-                  <strong>Candidate created</strong>
-                  <small>
-                    {bundle
-                      ? `Revision ${bundle.revision} immutable candidate`
-                      : draft
-                        ? `Draft revision ${draft.currentRevision} in progress`
-                        : "No current candidate draft."}
-                  </small>
-                </div>
-              </li>
-              <li
-                className={
-                  bundle?.approvals[0]
-                    ? "complete"
-                    : bundle
-                      ? "current"
-                      : undefined
-                }
-              >
-                <span>3</span>
-                <div>
-                  <strong>Review bundle</strong>
-                  <small>
-                    {bundle
-                      ? `Exact bundle ${bundle.canonicalHash.slice(0, 10)}…`
-                      : "Awaiting a candidate bundle."}
-                  </small>
-                </div>
-              </li>
-              <li
-                className={
-                  failedValidations
-                    ? "blocked"
-                    : bundle?.validations.length &&
-                        passedValidations === bundle.validations.length
-                      ? "complete"
-                      : bundle
-                        ? "current"
-                        : undefined
-                }
-              >
-                <span>4</span>
-                <div>
-                  <strong>Validation</strong>
-                  <small>
-                    {bundle
-                      ? failedValidations
-                        ? `${failedValidations} candidate validation run${failedValidations === 1 ? "" : "s"} failed.`
-                        : `${passedValidations}/${bundle.validations.length} candidate validations passed.`
-                      : "Not applicable until a candidate bundle exists."}
-                  </small>
-                </div>
-              </li>
-              <li
-                className={
-                  bundle?.approvals[0]
-                    ? "complete"
-                    : bundle &&
-                        !failedValidations &&
-                        passedValidations === bundle.validations.length
-                      ? "current"
-                      : undefined
-                }
-              >
-                <span>5</span>
-                <div>
-                  <strong>Human approval</strong>
-                  <small>
-                    {bundle?.approvals[0]
-                      ? "The exact validated bundle is approved."
-                      : "No approval is expected without a validated candidate."}
-                  </small>
-                </div>
-              </li>
-              <li
-                className={
-                  publicationRequest
-                    ? [
-                        "FAILED_PREVIEW",
-                        "AUTO_ROLLED_BACK",
-                        "RECONCILIATION_REQUIRED",
-                      ].includes(publicationRequest.state)
-                      ? "blocked"
-                      : publicationRequest.state === "RECONCILED"
-                        ? "complete"
-                        : "current"
-                    : undefined
-                }
-              >
-                <span>6</span>
-                <div>
-                  <strong>Final publication</strong>
-                  <small>
-                    {publicationRequest
-                      ? publicationRequest.state === "AWAITING_CONFIRMATION" &&
-                        !publicationRequest.finalConfirmedAt
-                        ? `Candidate ${candidateCommitSha?.slice(0, 8) ?? ""} ${databaseBackend ? "privately verified" : "staged"} · awaiting you`
-                        : (publicationPresentation?.decisionLabel ??
-                          publicationDecisionLabel(
-                            publicationRequest.state,
-                            Boolean(publicationRequest.finalConfirmedAt),
-                            publicationBackend,
-                          ))
-                      : "No candidate publication is pending."}
-                  </small>
-                </div>
-              </li>
-            </ol>
-            <p className="blockingCount">
-              <strong>
-                {bundle?.comments.filter((comment) => comment.blocking)
-                  .length ?? 0}
-              </strong>{" "}
-              blocking comments on the current candidate
-            </p>
-          </div>
-        </aside>
-      </div>
+      <WorkspaceEditor
+        situation={{
+          id: workspace.id,
+          slug: workspace.slug,
+          title: workspace.title,
+          visibility: workspace.visibility,
+          productionBundleHash: workspace.productionBundleHash,
+        }}
+        initialBundle={initialBundle}
+        initialSections={initialSections}
+        initialBody={initialBody || fallback.body}
+        productionBody={productionBody}
+        sectionNames={[...requiredSituationSections]}
+        checkout={
+          checkout
+            ? {
+                id: checkout.id,
+                fence: checkout.fence.toString(),
+                holderId: checkout.holder.id,
+                holderName: checkout.holder.displayName,
+              }
+            : null
+        }
+        currentUserId={session.userId}
+        csrfToken={session.csrfToken}
+        review={review}
+        publication={publicationJob ? { state: publicationJob.state } : null}
+        history={workspace.productionVersions.map((version) => ({
+          id: version.id,
+          bundleHash: version.bundleHash,
+          productionAt: version.productionAt.toISOString(),
+          sourceKind: version.sourceKind,
+          releaseId: version.observation.releaseId,
+          manifestHash: version.observation.manifestHash,
+          changeSummary: version.changeSummary,
+          editorNote: version.editorNote,
+          body:
+            version.artifacts.find((artifact) => artifact.kind === "SITUATION")
+              ?.content.textBody ?? "",
+        }))}
+        context={context}
+      />
     </AppShell>
   );
 }

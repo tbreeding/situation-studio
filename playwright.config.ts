@@ -1,76 +1,59 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const databaseUrl =
+  process.env.STUDIO_BROWSER_DATABASE_URL ?? process.env.STUDIO_DATABASE_URL;
+if (!databaseUrl)
+  throw new Error(
+    "STUDIO_BROWSER_DATABASE_URL is required. Point it at a migrated, disposable Studio database.",
+  );
+
 export default defineConfig({
-  testDir: "./browser",
+  testDir: "./tests/browser",
   fullyParallel: false,
-  // Every viewport project shares one disposable PostgreSQL fixture database.
-  // Keep cross-project mutations from leaking into read-only workspace checks.
   workers: 1,
   retries: 0,
-  reporter: [["list"]],
+  reporter: [["list"], ["html", { open: "never" }]],
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3015",
+    baseURL: "http://localhost:3015",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
+    video: "retain-on-failure",
+  },
+  webServer: {
+    command: "pnpm --filter @situation-studio/web dev",
+    url: "http://127.0.0.1:3015/health/live",
+    reuseExistingServer: false,
+    timeout: 120_000,
+    env: {
+      ...process.env,
+      STUDIO_DATABASE_URL: databaseUrl,
+      SESSION_SECRET: process.env.SESSION_SECRET ?? "s".repeat(32),
+      CSRF_SECRET: process.env.CSRF_SECRET ?? "c".repeat(32),
+      THROTTLE_SECRET: process.env.THROTTLE_SECRET ?? "t".repeat(32),
+      SITUATION_STUDIO_ORIGIN: "http://localhost:3015",
+    },
   },
   projects: [
     {
       name: "desktop-1280",
-      testMatch: "studio.spec.ts",
       use: {
         ...devices["Desktop Chrome"],
-        baseURL:
-          process.env.PLAYWRIGHT_GIT_BASE_URL ??
-          process.env.PLAYWRIGHT_BASE_URL ??
-          "http://127.0.0.1:3015",
         viewport: { width: 1280, height: 800 },
       },
     },
     {
       name: "desktop-1440",
-      testMatch: "studio.spec.ts",
       use: {
         ...devices["Desktop Chrome"],
-        baseURL:
-          process.env.PLAYWRIGHT_GIT_BASE_URL ??
-          process.env.PLAYWRIGHT_BASE_URL ??
-          "http://127.0.0.1:3015",
         viewport: { width: 1440, height: 900 },
       },
     },
     {
-      name: "mobile-chromium",
-      testMatch: "studio.spec.ts",
-      use: {
-        ...devices["Pixel 7"],
-        baseURL:
-          process.env.PLAYWRIGHT_GIT_BASE_URL ??
-          process.env.PLAYWRIGHT_BASE_URL ??
-          "http://127.0.0.1:3015",
-      },
-    },
-    {
-      name: "private-candidate-handoff",
-      testMatch: "private-candidate-handoff.spec.ts",
+      name: "mobile-390",
       use: {
         ...devices["Desktop Chrome"],
-        baseURL:
-          process.env.PLAYWRIGHT_DATABASE_BASE_URL ??
-          process.env.PLAYWRIGHT_BASE_URL ??
-          "http://127.0.0.1:3015",
-        viewport: { width: 1280, height: 800 },
-      },
-    },
-    {
-      name: "database-publication-presentation",
-      testMatch: "database-publication-presentation.spec.ts",
-      use: {
-        ...devices["Desktop Chrome"],
-        baseURL:
-          process.env.PLAYWRIGHT_DATABASE_BASE_URL ??
-          process.env.PLAYWRIGHT_BASE_URL ??
-          "http://127.0.0.1:3015",
-        viewport: { width: 1280, height: 800 },
+        viewport: { width: 390, height: 844 },
+        isMobile: true,
       },
     },
   ],

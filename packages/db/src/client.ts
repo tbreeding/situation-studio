@@ -12,10 +12,4 @@ export function createDatabaseClient(databaseUrl: string, max = 8) {
 }
 
 export type DatabaseClient = ReturnType<typeof createDatabaseClient>;
-export {
-  Prisma,
-  type User,
-  type Situation,
-  type Draft,
-  type SituationCheckout,
-} from "../generated/client";
+export * from "../generated/client";

@@ -1,100 +1,82 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { database } from "@/server/database";
-import { environment, isSecureOrigin } from "@/server/environment";
+import { environment } from "@/server/environment";
+import { keyedHash } from "@/server/auth/crypto";
+import { safeReturnTo } from "@/server/auth/return-to";
 import { DUMMY_PASSWORD_HASH, verifyPassword } from "@/server/auth/password";
 import {
-  canonicalUsername,
-  clearUsernameFailure,
-  isBlocked,
-  recordFailure,
+  evaluateLoginAttempt,
   throttleKeys,
+  canonicalUsername,
 } from "@/server/auth/throttle";
 import {
   createSession,
-  LOGIN_CSRF_COOKIE,
-  SESSION_COOKIE,
+  setSessionCookie,
+  verifyLoginCsrf,
 } from "@/server/auth/sessions";
-import { equalText } from "@/server/auth/crypto";
-import { audit } from "@/server/audit";
 
-function redirect(error = false) {
-  return NextResponse.redirect(
-    new URL(
-      error ? "/login?error=1" : "/",
-      environment().SITUATION_STUDIO_ORIGIN,
-    ),
-    303,
-  );
+function errorRedirect(url: URL, code: string, returnTo: string) {
+  const destination = new URL("/login", url);
+  destination.searchParams.set("error", code);
+  const safeDestination = safeReturnTo(returnTo);
+  if (safeDestination !== "/")
+    destination.searchParams.set("returnTo", safeDestination);
+  return NextResponse.redirect(destination, 303);
 }
 
-export async function POST(request: NextRequest) {
-  const configured = environment();
-  if (request.headers.get("host") !== configured.SITUATION_STUDIO_HOST)
-    return redirect(true);
-  const requestOrigin = request.headers.get("origin");
-  const localNavigationWithoutOrigin =
-    configured.SITUATION_STUDIO_ORIGIN.startsWith("http://") &&
-    (requestOrigin === null || requestOrigin === "null");
-  if (
-    requestOrigin !== configured.SITUATION_STUDIO_ORIGIN &&
-    !localNavigationWithoutOrigin
-  )
-    return redirect(true);
+export async function POST(request: Request) {
+  const url = new URL(request.url);
+  const origin = request.headers.get("origin");
+  const expected = new URL(environment().SITUATION_STUDIO_ORIGIN);
+  const opaqueSameOrigin =
+    origin === "null" &&
+    request.headers.get("sec-fetch-site") === "same-origin" &&
+    request.headers.get("sec-fetch-mode") === "navigate" &&
+    request.headers.get("host") === expected.host;
+  if (origin !== expected.origin && !opaqueSameOrigin)
+    return errorRedirect(url, "verification", "/");
   const form = await request.formData();
   const username = canonicalUsername(String(form.get("username") ?? ""));
   const password = String(form.get("password") ?? "");
-  const presentedCsrf = String(form.get("loginCsrf") ?? "");
-  const cookieCsrf = request.cookies.get(LOGIN_CSRF_COOKIE)?.value ?? "";
-  if (!presentedCsrf || !equalText(presentedCsrf, cookieCsrf))
-    return redirect(true);
-  const forwarded =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-  const keys = throttleKeys(username, forwarded);
-  const blocked = await isBlocked(keys);
-  const user = await database().user.findUnique({ where: { username } });
-  const passwordOkay = await verifyPassword(
-    user?.passwordHash ?? DUMMY_PASSWORD_HASH,
-    password,
-  );
-  if (blocked || !user || user.state !== "ACTIVE" || !passwordOkay) {
-    await recordFailure(keys);
-    await audit({
-      actorId: user?.id ?? null,
-      action: "auth.login",
-      targetType: "user",
-      targetId: user?.id ?? null,
-      outcome: "DENIED",
-      reason: blocked ? "THROTTLED" : "GENERIC_FAILURE",
+  const csrf = String(form.get("csrf") ?? "");
+  const returnTo = safeReturnTo(String(form.get("returnTo") ?? "/"));
+  if (!(await verifyLoginCsrf(csrf)))
+    return errorRedirect(url, "verification", returnTo);
+  const forwarded = request.headers
+    .get("x-forwarded-for")
+    ?.split(",")[0]
+    ?.trim();
+  const ip = forwarded || "unknown";
+  const keys = throttleKeys(username, ip);
+  const attempt = await evaluateLoginAttempt(keys, async (transaction) => {
+    const user = await transaction.user.findUnique({
+      where: { username },
+      include: { roles: true },
     });
-    return redirect(true);
-  }
-  const session = await createSession(user);
+    const valid = await verifyPassword(
+      user?.passwordHash ?? DUMMY_PASSWORD_HASH,
+      password,
+    );
+    return valid && user?.state === "ACTIVE" ? user : null;
+  });
+  if (attempt.blocked) return errorRedirect(url, "blocked", returnTo);
+  const user = attempt.value;
+  if (!user) return errorRedirect(url, "invalid", returnTo);
+  const ipHash = keyedHash(environment().SESSION_SECRET, "session-ip", ip);
+  const session = await createSession(user, ipHash);
+  await setSessionCookie(session.token);
   await database().user.update({
     where: { id: user.id },
     data: { lastLoginAt: new Date() },
   });
-  await clearUsernameFailure(keys.username);
-  await audit({
-    actorId: user.id,
-    action: "auth.login",
-    targetType: "session",
-    targetId: session.row.id,
-    outcome: "SUCCEEDED",
+  await database().auditEvent.create({
+    data: {
+      actorId: user.id,
+      action: "USER_LOGGED_IN",
+      subjectType: "SESSION",
+      subjectId: session.row.id,
+      payload: {},
+    },
   });
-  const response = redirect(false);
-  response.cookies.set(SESSION_COOKIE, session.token, {
-    httpOnly: true,
-    secure: isSecureOrigin(),
-    sameSite: "lax",
-    path: "/",
-    maxAge: 12 * 60 * 60,
-  });
-  response.cookies.set(LOGIN_CSRF_COOKIE, "", {
-    httpOnly: true,
-    secure: isSecureOrigin(),
-    sameSite: "lax",
-    path: "/",
-    maxAge: 0,
-  });
-  return response;
+  return NextResponse.redirect(new URL(returnTo, url), 303);
 }

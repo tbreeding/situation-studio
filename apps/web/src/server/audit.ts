@@ -1,34 +1,29 @@
-import { randomUUID } from "node:crypto";
-import { Prisma } from "@situation-studio/db";
+import type { Prisma } from "@situation-studio/db";
 import { database } from "@/server/database";
 
-export async function audit(input: {
+const forbidden = /password|secret|token|credential|authorization|cookie/iu;
+
+function safePayload(payload: Record<string, unknown>) {
+  for (const key of Object.keys(payload))
+    if (forbidden.test(key))
+      throw new Error(`Sensitive audit payload key is forbidden: ${key}.`);
+  return payload as Prisma.InputJsonValue;
+}
+
+export function recordAudit(input: {
   actorId?: string | null;
-  actorType?: "HUMAN" | "SERVICE" | "AI";
-  permissions?: readonly string[];
   action: string;
-  targetType: string;
-  targetId?: string | null;
-  targetVersion?: string | null;
-  outcome: "SUCCEEDED" | "FAILED" | "DENIED";
-  reason?: string | null;
-  before?: object | null;
-  after?: object | null;
-  correlationId?: string;
+  subjectType: string;
+  subjectId: string;
+  payload?: Record<string, unknown>;
 }) {
-  const data: Prisma.AuditEventUncheckedCreateInput = {
-    actorType: input.actorType ?? "HUMAN",
-    actorId: input.actorId ?? null,
-    permissionSnapshot: input.permissions ? [...input.permissions] : [],
-    action: input.action,
-    targetType: input.targetType,
-    targetId: input.targetId ?? null,
-    targetVersion: input.targetVersion ?? null,
-    correlationId: input.correlationId ?? randomUUID(),
-    outcome: input.outcome,
-    reason: input.reason ?? null,
-    ...(input.before ? { beforeMetadata: input.before } : {}),
-    ...(input.after ? { afterMetadata: input.after } : {}),
-  };
-  await database().auditEvent.create({ data });
+  return database().auditEvent.create({
+    data: {
+      actorId: input.actorId ?? null,
+      action: input.action,
+      subjectType: input.subjectType,
+      subjectId: input.subjectId,
+      payload: safePayload(input.payload ?? {}),
+    },
+  });
 }

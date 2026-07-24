@@ -10,9 +10,12 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@leadership-field-guide/situation-contract": "file:../../vendor/leadership-field-guide-situation-contract-1.0.0.tgz",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "typescript": "5.9.3"
+    "@types/node": "24.13.3",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
   }
 }

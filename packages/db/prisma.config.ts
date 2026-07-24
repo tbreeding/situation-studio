@@ -6,7 +6,7 @@ export default defineConfig({
   migrations: { path: "prisma/migrations" },
   datasource: {
     url:
-      process.env.DATABASE_URL ??
-      "postgresql://invalid:invalid@127.0.0.1:5432/situation_studio_dev",
+      process.env.STUDIO_DATABASE_URL ??
+      "postgresql://invalid@127.0.0.1:5432/situation_studio",
   },
 });

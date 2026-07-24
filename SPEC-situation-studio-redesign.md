@@ -489,14 +489,21 @@ Rebuild the former 22-stage workflow:
 7. run semantic, teaching-alignment, and repository-integrity audits;
 8. run deterministic repository/content validation.
 
-The workflow runs in the separate review worker using service API credentials.
-The default routing remains OpenAI/Codex first and Claude fallback. Exact model
-IDs and policy versions are configuration resolved at run time and recorded
-with every agent run.
+The workflow runs in the separate review worker. By explicit production
+decision on 2026-07-24, provider execution uses the user's existing
+subscription accounts through pinned, non-interactive Codex and Claude CLIs:
+Codex first, then Claude fallback. It does not require metered service API
+keys. Exact CLI versions, model IDs, policy versions, and requested/resolved
+providers are recorded operationally or with every agent run.
 
-Production must not depend on a user's personal Codex or Claude login or on an
-open desktop task. CLI adapters may exist only as explicit local qualification
-fixtures and may not be enabled in production.
+Production must not depend on an open desktop task or expose an administrator's
+home directory. Both CLIs authenticate under the dedicated review-worker
+operating-system user. The child environment excludes Studio database, web,
+publisher, backup, and Leadership credentials. Claude tools are disabled.
+Codex runs ephemerally in a per-call directory with user/project configuration
+and rules ignored, a read-only sandbox, a stripped tool-command environment,
+and strict structured output; only its temporary review request and schema are
+needed.
 
 Only one full review runs globally. Additional jobs queue FIFO. Queuing a job:
 
@@ -579,7 +586,7 @@ promotion boundary. It may not:
 - bypass validation;
 - change schema;
 - manage roles;
-- read Studio passwords, sessions, or provider credentials.
+- read Studio passwords, sessions, or review-provider auth state.
 
 Prefer database constraints, triggers, and narrowly scoped security-definer
 functions for invariants that application checks alone cannot protect.
@@ -790,10 +797,10 @@ The deployed processes are:
 - `situation-studio-review-worker`;
 - `situation-studio-publisher`.
 
-The review worker has provider credentials but no Leadership write access. The
-publisher has restricted Leadership release authority but no provider,
-password, or session credentials. The web process has neither provider
-credentials nor direct Leadership publication authority.
+The review worker owns isolated subscription CLI auth state but no Leadership
+write access. The publisher has restricted Leadership release authority but no
+review-provider, password, or session credentials. The web process has neither
+review-provider auth nor direct Leadership publication authority.
 
 ### 16. Deploy only after a measured migration
 
@@ -832,7 +839,9 @@ approval at the appropriate implementation checkpoint.
 - Do not restore the former multi-step user-visible publication saga.
 - Do not add a global capacity-management page.
 - Do not let an agent apply edits, create variants, publish, restore, retire,
-  force-check-in, manage users, or call tools.
+  force-check-in, manage users, or invoke network/mutation tools. The
+  constrained Codex adapter may read only its temporary review request and
+  schema within the dedicated review-user boundary.
 - Do not allow validation bypasses.
 - Do not edit a shared artifact globally from a situation checkout.
 - Do not promote a situation-scoped variant to shared content in this pass.

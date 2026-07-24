@@ -9,7 +9,7 @@ flowchart LR
   Browser["Authenticated editor"] --> Web["Studio web"]
   Web --> Studio[("situation_studio")]
   Review["Review worker"] --> Studio
-  Review --> Providers["Service model APIs"]
+  Review --> Providers["Codex CLI → Claude CLI fallback"]
   Publisher["Publisher"] --> Studio
   Observer["SELECT-only observer"] --> Leadership[("leadership_field_guide")]
   Publisher --> Leadership
@@ -21,13 +21,14 @@ flowchart LR
 | Process            | Studio authority                                    | Leadership authority                                             | Other secrets           |
 | ------------------ | --------------------------------------------------- | ---------------------------------------------------------------- | ----------------------- |
 | Web                | accounts, sessions, drafts, checkouts, user actions | none                                                             | session, CSRF, throttle |
-| Review worker      | review queue, runs, evidence, proposals             | none                                                             | service-provider keys   |
+| Review worker      | review queue, runs, evidence, proposals             | none                                                             | isolated CLI auth state |
 | Publisher          | publication jobs, receipts, production history      | SELECT plus restricted append/validate/promote/restore functions | Leadership health URL   |
 | Observer/bootstrap | imported observations and history                   | SELECT only                                                      | none                    |
 
 Production startup uses a clean environment for each process and sources one
-mode-0400/0600 file. Provider keys cannot reach the publisher, and Leadership
-publisher credentials cannot reach the web or review worker.
+mode-0400/0600 file. Subscription CLI auth is owned by the dedicated review
+user; it cannot reach the publisher. Leadership publisher credentials cannot
+reach the web or review worker.
 
 ## Data and lifecycle
 
@@ -54,7 +55,8 @@ persists all 22 stages: graph mapping, seven critics, seven rebuttals,
 adjudication, teaching design, consolidated proposal, validation, and summary.
 Every run records requested and resolved provider/model/effort, evidence and
 output hashes, strict structured output, usage, and failure classification.
-Proposals never alter a draft until the editor accepts a change.
+Codex is preferred and Claude is the provider-scoped fallback. Proposals never
+alter a draft until the editor accepts a change.
 
 ## Publication and recovery
 

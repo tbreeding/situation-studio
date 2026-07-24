@@ -32,7 +32,7 @@ flowchart LR
   Editor["Editor browser"] --> Web["Studio web role"]
   Web --> Studio[("situation_studio")]
   Worker["Review worker"] --> Studio
-  Worker --> Providers["Model provider APIs"]
+  Worker --> Providers["Codex CLI → Claude CLI fallback"]
   Publisher["Publisher"] --> Studio
   Observer["Read-only observer"] --> Leadership[("leadership_field_guide")]
   Publisher --> Leadership
@@ -166,7 +166,7 @@ activity badge and one ordinary confirmation.
 | ----------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------- |
 | `studio_owner`                | schema/migration ownership only                                    | none                                                                         | migration credential            |
 | `studio_web`                  | auth, inventory, checkout, draft, proposal application, enqueue    | read-only observed identity through service boundary                         | session/CSRF/throttle           |
-| `studio_review_worker`        | claim review jobs; append runs, steps, proposals                   | none                                                                         | provider API credentials        |
+| `studio_review_worker`        | claim review jobs; append runs, steps, proposals                   | none                                                                         | isolated subscription CLI state |
 | `studio_publisher`            | claim publication jobs; append attempts, events, receipts, history | restricted release assembly and promotion functions                          | Leadership publisher credential |
 | `studio_backup_inspector`     | read backup metadata and immutable history                         | none                                                                         | backup inspection credential    |
 | `leadership_studio_reader`    | none                                                               | SELECT official/formerly-official releases and projections                   | read-only database credential   |

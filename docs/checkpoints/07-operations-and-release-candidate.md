@@ -44,7 +44,7 @@ was written.
 Reviewed operational checksums are:
 
 - guarded deployment launcher:
-  `a87968ada8b14fd9ef4cb598b9581904a8f53281af881ca29fd49ee011cc5b2c`;
+  `68473e423e03277bc8019f17c9e6e54e7d8ad68db91488f031dfe05c82ff4d0b`;
 - protected public-gate verifier:
   `8bcc34158834ee5d0f922d0ae43a940a847f4298a42e45d94828e1e84abbf418`;
 - fresh-database provisioning:
@@ -54,7 +54,11 @@ Reviewed operational checksums are:
 - Studio runtime grants:
   `d4c60d5f1b1f9a02697cc673431c6df48b3eb32be81701a1d4786876b1386ca3`;
 - isolated launcher:
-  `36f66320b1cbb548d686b824721a1ec2ad20bb0fd7ad621308f73c79892e93b5`;
+  `0557be09e20abaf66165d4ebcf020252800b513cd5e834a63db32976cec2789d`;
+- pinned subscription CLI installer:
+  `7b2c1be29fdbe5a3c5b031519ba84af425a2456b05e6d6868391b84ee6bf23e3`;
+- constrained Codex PTY wrapper:
+  `c606e518ecb37f9e23791aff6a380bb743c132ff04c07a14bca3a29b34764653`;
 - encrypted local/off-site backup:
   `537a82c306ec1feccd75d46564791c1cffe69ac398c33111de92782489653ba4`;
 - nightly enqueue:
@@ -66,7 +70,7 @@ Final local evidence includes:
 
 - Studio formatting, lint, typecheck, strict secret scan, and optimized
   production build;
-- 90 unit tests and 12 cross-database integration scenarios;
+- 110 unit tests and 12 cross-database integration scenarios;
 - 9 publisher scenarios, including lifecycle, consecutive scoped releases,
   all-release history import, and injected crashes;
 - browser/accessibility: 9 passed, 6 intentionally skipped duplicates;
@@ -78,7 +82,7 @@ Final local evidence includes:
 - independent review and dispositions in
   [independent-review.md](independent-review.md).
 
-External pre-deployment inputs remain the live provider qualification,
-off-host backup destination/retention, approved Studio hostname, and separate
-checkpoint-8 approval. Both coordinated release candidates are committed on
-clean local `main` branches and remain unpushed.
+External pre-deployment inputs remain dedicated production CLI authentication
+and the Claude fallback smoke, off-host backup destination/retention, approved
+Studio hostname, and separate checkpoint-8 approval. Both coordinated release
+candidates are committed on clean local `main` branches and remain unpushed.

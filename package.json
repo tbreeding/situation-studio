@@ -17,6 +17,7 @@
     "db:migrate:deploy": "pnpm --filter @situation-studio/db migrate:deploy",
     "db:seed": "pnpm --filter @situation-studio/db seed",
     "bootstrap:leadership": "pnpm --filter @situation-studio/testing bootstrap",
+    "qualify:review-clis": "pnpm --filter @situation-studio/review-worker qualify",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:browser": "playwright test",

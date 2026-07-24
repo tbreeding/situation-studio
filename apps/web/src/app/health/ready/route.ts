@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { database } from "@/server/database";
+import { safeProcessState } from "@/server/health/process-status";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,11 @@ export async function GET() {
       const age = ageSeconds(heartbeat?.lastSeenAt);
       return {
         id,
-        state: !heartbeat || age === null || age > 60 ? "stale" : "fresh",
+        state: safeProcessState({
+          id,
+          heartbeatStatus: heartbeat?.status,
+          ageSeconds: age,
+        }),
         ageSeconds: age,
       };
     });
@@ -40,7 +45,7 @@ export async function GET() {
       recoveryRequired > 0 ||
       cursorAge === null ||
       cursorAge > 120 ||
-      processStatus.some((process) => process.state === "stale") ||
+      processStatus.some((process) => process.state !== "fresh") ||
       backupAge === null ||
       backupAge > 26 * 60 * 60;
     return NextResponse.json(

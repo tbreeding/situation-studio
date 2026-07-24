@@ -3,6 +3,7 @@ import {
   bundleWriterOutputSchema,
   runWithFallback,
   type AdapterResult,
+  type SubscriptionCliProvider,
 } from "@situation-studio/ai-adapters";
 import {
   Prisma,
@@ -15,11 +16,13 @@ import {
   validateSituationBundle,
 } from "@situation-studio/domain";
 
-export type ReviewProviderConfiguration = {
-  mode: "deterministic" | "service";
-  openai?: { apiKey: string; model: string };
-  anthropic?: { apiKey: string; model: string };
-};
+export type ReviewProviderConfiguration =
+  | { mode: "deterministic" }
+  | {
+      mode: "subscription-cli";
+      codex: SubscriptionCliProvider;
+      claude: SubscriptionCliProvider;
+    };
 
 function failureClass(error: AdapterFailure): AgentFailureClass {
   const classes: Record<AdapterFailure["failureClass"], AgentFailureClass> = {
@@ -516,17 +519,11 @@ export async function processClaimedReview(
       return;
     }
     const requestedProvider =
-      configuration.mode === "deterministic"
-        ? "deterministic"
-        : configuration.openai
-          ? "openai"
-          : "anthropic";
+      configuration.mode === "deterministic" ? "deterministic" : "codex";
     const requestedModel =
       configuration.mode === "deterministic"
         ? "deterministic-provider-v1"
-        : (configuration.openai?.model ??
-          configuration.anthropic?.model ??
-          "unconfigured");
+        : configuration.codex.model;
     const run = await database.$transaction(async (transaction) => {
       await transaction.reviewStep.update({
         where: { id: ready.id },
@@ -577,10 +574,7 @@ export async function processClaimedReview(
           evidence,
           outputKind:
             ready.roleCode === "bundle-writer" ? "bundle-writer" : "review",
-          signal: AbortSignal.any([
-            controller.signal,
-            AbortSignal.timeout(90_000),
-          ]),
+          signal: controller.signal,
         },
         configuration,
       );

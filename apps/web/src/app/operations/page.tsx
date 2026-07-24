@@ -9,26 +9,36 @@ export const dynamic = "force-dynamic";
 export default async function OperationsPage() {
   const session = await requireSession("/operations");
   if (!session.roles.has("ADMIN")) redirect("/");
-  const [users, checkouts, reviewQueue, failedPublications, sync, backup] =
-    await Promise.all([
-      database().user.findMany({
-        orderBy: { displayName: "asc" },
-        include: { roles: true },
-      }),
-      database().situationCheckout.findMany({
-        where: { releasedAt: null },
-        orderBy: { acquiredAt: "asc" },
-        include: { holder: true, situation: true },
-      }),
-      database().reviewJob.count({
-        where: { state: { in: ["QUEUED", "RUNNING"] } },
-      }),
-      database().publicationJob.count({
-        where: { state: { in: ["FAILED", "RESTORED", "RECOVERY_REQUIRED"] } },
-      }),
-      database().leadershipSyncCursor.findUnique({ where: { id: "official" } }),
-      database().backupReceipt.findFirst({ orderBy: { createdAt: "desc" } }),
-    ]);
+  const [
+    users,
+    checkouts,
+    reviewQueue,
+    reviewHeartbeat,
+    failedPublications,
+    sync,
+    backup,
+  ] = await Promise.all([
+    database().user.findMany({
+      orderBy: { displayName: "asc" },
+      include: { roles: true },
+    }),
+    database().situationCheckout.findMany({
+      where: { releasedAt: null },
+      orderBy: { acquiredAt: "asc" },
+      include: { holder: true, situation: true },
+    }),
+    database().reviewJob.count({
+      where: { state: { in: ["QUEUED", "RUNNING"] } },
+    }),
+    database().processHeartbeat.findUnique({
+      where: { id: "review-worker" },
+    }),
+    database().publicationJob.count({
+      where: { state: { in: ["FAILED", "RESTORED", "RECOVERY_REQUIRED"] } },
+    }),
+    database().leadershipSyncCursor.findUnique({ where: { id: "official" } }),
+    database().backupReceipt.findFirst({ orderBy: { createdAt: "desc" } }),
+  ]);
   return (
     <AppShell
       active="operations"
@@ -47,10 +57,20 @@ export default async function OperationsPage() {
           </div>
         </header>
         <div className="healthStrip">
-          <article>
+          <article
+            className={
+              reviewHeartbeat?.status.startsWith("PROVIDER_")
+                ? "healthWarning"
+                : ""
+            }
+          >
             <span>Review queue</span>
             <strong>{reviewQueue}</strong>
-            <small>one running globally</small>
+            <small>
+              {reviewHeartbeat?.status.startsWith("PROVIDER_")
+                ? reviewHeartbeat.status.toLowerCase().replaceAll("_", " ")
+                : "one running globally"}
+            </small>
           </article>
           <article className={failedPublications ? "healthWarning" : ""}>
             <span>Publisher failures</span>

@@ -8,6 +8,9 @@ const executeFile = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "../../..");
 const deployPath = path.join(root, "deploy.sh");
 const publicGatePath = path.join(root, "ops/verify-public-gate.sh");
+const codexReviewPath = path.join(root, "ops/run-codex-review.sh");
+const installReviewClisPath = path.join(root, "ops/install-review-clis.sh");
+const isolatedLauncherPath = path.join(root, "ops/start-isolated-process.sh");
 const backupPath = path.join(root, "ops/backup-studio.sh");
 const provisionDatabasePath = path.join(
   root,
@@ -76,6 +79,56 @@ describe("production deployment contract", () => {
       "cache-control:.*private.*no-store",
     ])
       position(source, fragment);
+  });
+
+  test("subscription review uses a constrained Codex PTY and an isolated service home", async () => {
+    await expect(
+      Promise.all([
+        executeFile("bash", ["-n", codexReviewPath]),
+        executeFile("bash", ["-n", installReviewClisPath]),
+        executeFile("bash", ["-n", isolatedLauncherPath]),
+      ]),
+    ).resolves.toEqual([
+      expect.objectContaining({ stderr: "" }),
+      expect.objectContaining({ stderr: "" }),
+      expect.objectContaining({ stderr: "" }),
+    ]);
+    const codexSource = await readFile(codexReviewPath, "utf8");
+    for (const fragment of [
+      "--ephemeral",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "read-only",
+      "model_reasoning_effort",
+      "shell_environment_policy.inherit",
+      "shell_environment_policy.set.PATH",
+      "--output-schema",
+      "--output-last-message",
+      "script -qec",
+      "</dev/null",
+    ])
+      position(codexSource, fragment);
+    const launcherSource = await readFile(isolatedLauncherPath, "utf8");
+    for (const fragment of [
+      'service_home="$(getent passwd "$(id -u)"',
+      'HOME="${service_home}"',
+      'USER="${service_user}"',
+      'LOGNAME="${service_user}"',
+    ])
+      position(launcherSource, fragment);
+    const installerSource = await readFile(installReviewClisPath, "utf8");
+    for (const fragment of [
+      'codex_version="0.145.0"',
+      'claude_version="2.1.218"',
+      'codex_integrity="sha512-/PSPSF',
+      'claude_integrity="sha512-BHV951',
+      'npm view "@openai/codex@${codex_version}" dist.integrity',
+      'npm view "@anthropic-ai/claude-code@${claude_version}" dist.integrity',
+      '"@openai/codex@${codex_version}"',
+      '"@anthropic-ai/claude-code@${claude_version}"',
+      '--prefix "${HOME}/.local"',
+    ])
+      position(installerSource, fragment);
   });
 
   test("production backups require checksum-verified encrypted off-site replication", async () => {

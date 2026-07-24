@@ -49,9 +49,18 @@ if [[ "${environment_owner}" != "$(id -u)" ]]; then
   exit 1
 fi
 
-runtime_path="${PATH}"
+service_home="$(getent passwd "$(id -u)" | cut -d: -f6)"
+service_user="$(id -un)"
+if [[ -z "${service_home}" || ! -d "${service_home}" ]]; then
+  echo "Service user has no usable home directory." >&2
+  exit 1
+fi
+runtime_path="${service_home}/.local/bin:${PATH}"
 exec env -i \
+  HOME="${service_home}" \
   PATH="${runtime_path}" \
+  USER="${service_user}" \
+  LOGNAME="${service_user}" \
   NODE_ENV=production \
   SITUATION_STUDIO_RELEASE="${SITUATION_STUDIO_RELEASE}" \
   SITUATION_STUDIO_PROCESS_ENV_FILE="${environment_file}" \

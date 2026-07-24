@@ -38,6 +38,18 @@ worker never receive Leadership publisher or backup credentials, and the
 publisher never receives login, session, CSRF, throttle, or review-provider
 secrets.
 
+The review user has a dedicated home directory for subscription CLI state but
+no interactive login shell. Run `ops/install-review-clis.sh` as that user to
+install exactly Codex CLI `0.145.0` and Claude Code `2.1.218` under
+`~/.local`. Authenticate both subscriptions as that user—Codex device
+authentication is suitable for the headless host—and run one structured smoke
+through each adapter with `pnpm qualify:review-clis`. Do not copy the
+administrator's home or auth files.
+The installer rejects either package unless its registry integrity matches the
+reviewed SHA-512 value embedded in the script.
+Production preference is pinned to Codex `gpt-5.6-sol`, then Claude `sonnet`.
+The deployment preflight verifies exact CLI versions and both login states.
+
 Run `ops/process-backup-queue.sh` as the backup operating-system user at least
 once per minute. It claims one `QUEUED` receipt with `SKIP LOCKED`, streams
 `pg_dump` directly into GPG recipient encryption, verifies the final
@@ -64,41 +76,50 @@ not replace the paths with literal credentials.
 
 ## Ordered procedure after separate approval
 
-1. Run `deploy.sh` with `SITUATION_STUDIO_PREFLIGHT_ONLY=1` and the exact
+1. Re-read repository cleanliness, host identity, current service and database
+   inventory, official Leadership identity, schema history, roles, disk, and
+   memory without mutation. Abort on any mismatch with the approved packet.
+2. Create the approved service users, home/release/shared/backup directories,
+   and mode-restricted per-process environment files. Install and authenticate
+   the two pinned subscription CLIs under the dedicated review user and run
+   structured Codex and no-tools Claude smokes.
+3. Run `deploy.sh` with `SITUATION_STUDIO_PREFLIGHT_ONLY=1` and the exact
    approved commit, host, origin, and host header. This proves the service
-   users, mode-restricted environment files, disk, memory, and process manager
-   boundary without creating a release.
-2. Produce and restore-drill encrypted Leadership and Studio backups, including
+   users, exact authenticated CLI versions, mode-restricted environment files,
+   disk, memory, and process manager boundary without creating a release.
+4. Produce and restore-drill encrypted Leadership and Studio backups, including
    the required checksum-verified off-RP1 copy.
-3. Re-read and record the pre-migration official pointer, manifest, artifact
+5. Re-read and record the pre-migration official pointer, manifest, artifact
    bytes, API inventory, sitemap, feed, and baseline screenshots.
-4. Apply only the reviewed additive Leadership migration as its owner.
-5. Re-read the official pointer, manifest, artifact bytes, API inventory,
+6. Apply only the reviewed additive Leadership migration as its owner, deploy
+   the exact approved Leadership application commit through its immutable
+   release launcher, and verify local health.
+7. Re-read the official pointer, manifest, artifact bytes, API inventory,
    sitemap, feed, and baseline screenshots and prove they are unchanged.
-6. Create the Studio owner and database with
+8. Create the Studio owner and database with
    `ops/provision-studio-database.sql`; apply the reviewed migrations; create
    and grant runtime roles with `ops/grant-runtime-roles.sql`; then inject the
    five generated runtime passwords from the protected execution environment
    with `ops/provision-studio-role-passwords.sql`.
-7. Seed the first administrator through separately supplied secrets.
-8. Bootstrap Studio through the read-only Leadership role and compare the
-   exact release/hash/generation captured in step 3.
-9. Install the exact prepared Studio release and start web, review worker, and
-   publisher with distinct environment files and database roles. On the first
-   release only, set
-   `SITUATION_STUDIO_PUBLIC_GATE_MODE=first-deploy-deferred`; the launcher
-   rejects that mode if a prior Studio release already exists.
-10. Register the exact approved slug in the TimsPrototypes access platform,
+9. Seed the first administrator through separately supplied secrets.
+10. Bootstrap Studio through the read-only Leadership role and compare the
+    exact release/hash/generation captured in step 5.
+11. Install the exact prepared Studio release and start web, review worker, and
+    publisher with distinct environment files and database roles. On the first
+    release only, set
+    `SITUATION_STUDIO_PUBLIC_GATE_MODE=first-deploy-deferred`; the launcher
+    rejects that mode if a prior Studio release already exists.
+12. Register the exact approved slug in the TimsPrototypes access platform,
     pointing it to RP1's approved private IPv4 and port 3015. Run
     `ops/verify-public-gate.sh`; an unauthenticated `/health/live` probe must
     receive the platform's fail-closed 403 plus `Cache-Control: private,
 no-store`. Unknown hosts receive 404, so this also proves the protected
     route exists. All later deployments use the launcher's default `required`
     gate mode.
-11. Verify authenticated access, inventory, local `/health/live`,
+13. Verify authenticated access, inventory, local `/health/live`,
     `/health/ready`, heartbeats, and
     Leadership observation. Do not submit production content.
-12. Preserve all receipts and stop. A real publication needs another approval
+14. Preserve all receipts and stop. A real publication needs another approval
     naming the test situation and expected bundle hash.
 
 The immutable Studio release root is

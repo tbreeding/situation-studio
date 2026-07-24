@@ -1,5 +1,6 @@
 import { createDatabaseClient } from "@situation-studio/db";
 import { runOneReview, type ReviewProviderConfiguration } from "./review";
+import { reviewWorkerIdleStatus } from "./status";
 
 const databaseUrl = process.env.STUDIO_REVIEW_DATABASE_URL;
 if (!databaseUrl)
@@ -10,32 +11,31 @@ if (!databaseUrl)
 function configuration(): ReviewProviderConfiguration {
   if (process.env.REVIEW_PROVIDER_MODE === "deterministic")
     return { mode: "deterministic" };
-  const openai =
-    process.env.OPENAI_API_KEY && process.env.OPENAI_REVIEW_MODEL
-      ? {
-          apiKey: process.env.OPENAI_API_KEY,
-          model: process.env.OPENAI_REVIEW_MODEL,
-        }
-      : undefined;
-  const anthropic =
-    process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_REVIEW_MODEL
-      ? {
-          apiKey: process.env.ANTHROPIC_API_KEY,
-          model: process.env.ANTHROPIC_REVIEW_MODEL,
-        }
-      : undefined;
-  if (!openai && !anthropic)
-    throw new Error("At least one service provider route must be configured.");
+  const release = process.env.SITUATION_STUDIO_RELEASE;
+  const codexModel = process.env.CODEX_REVIEW_MODEL;
+  const claudeModel = process.env.CLAUDE_REVIEW_MODEL;
+  if (!release || !codexModel || !claudeModel)
+    throw new Error(
+      "Subscription CLI review requires the release and both pinned models.",
+    );
   return {
-    mode: "service",
-    ...(openai ? { openai } : {}),
-    ...(anthropic ? { anthropic } : {}),
+    mode: "subscription-cli",
+    codex: {
+      binary: process.env.CODEX_BIN ?? "codex",
+      model: codexModel,
+      wrapper: `${release}/ops/run-codex-review.sh`,
+    },
+    claude: {
+      binary: process.env.CLAUDE_BIN ?? "claude",
+      model: claudeModel,
+    },
   };
 }
 
 const database = createDatabaseClient(databaseUrl, 4);
 const providerConfiguration = configuration();
 let stopping = false;
+let workerStatus = "IDLE";
 
 async function heartbeat(status: string) {
   await database.processHeartbeat.upsert({
@@ -45,8 +45,17 @@ async function heartbeat(status: string) {
       status,
       details: {
         providerMode: providerConfiguration.mode,
-        openaiConfigured: Boolean(providerConfiguration.openai),
-        anthropicConfigured: Boolean(providerConfiguration.anthropic),
+        providerPreference:
+          providerConfiguration.mode === "subscription-cli"
+            ? ["codex", "claude"]
+            : ["deterministic"],
+        models:
+          providerConfiguration.mode === "subscription-cli"
+            ? {
+                codex: providerConfiguration.codex.model,
+                claude: providerConfiguration.claude.model,
+              }
+            : { deterministic: "deterministic-provider-v1" },
       },
       lastSeenAt: new Date(),
     },
@@ -54,8 +63,17 @@ async function heartbeat(status: string) {
       status,
       details: {
         providerMode: providerConfiguration.mode,
-        openaiConfigured: Boolean(providerConfiguration.openai),
-        anthropicConfigured: Boolean(providerConfiguration.anthropic),
+        providerPreference:
+          providerConfiguration.mode === "subscription-cli"
+            ? ["codex", "claude"]
+            : ["deterministic"],
+        models:
+          providerConfiguration.mode === "subscription-cli"
+            ? {
+                codex: providerConfiguration.codex.model,
+                claude: providerConfiguration.claude.model,
+              }
+            : { deterministic: "deterministic-provider-v1" },
       },
       lastSeenAt: new Date(),
     },
@@ -69,19 +87,37 @@ process.on("SIGINT", () => {
   stopping = true;
 });
 
+async function refreshWorkerStatus() {
+  const latestReview = await database.reviewJob.findFirst({
+    where: { finishedAt: { not: null } },
+    orderBy: { finishedAt: "desc" },
+    select: { state: true, failureCode: true },
+  });
+  workerStatus = reviewWorkerIdleStatus(latestReview);
+}
+
+await refreshWorkerStatus();
+const heartbeatMonitor = setInterval(() => {
+  void heartbeat(workerStatus).catch(() => undefined);
+}, 15_000);
+heartbeatMonitor.unref();
+
 try {
   while (!stopping) {
-    await heartbeat("CHECKING_QUEUE");
+    await heartbeat(workerStatus);
     const worked = await runOneReview(database, providerConfiguration);
-    if (!worked) {
-      await heartbeat("IDLE");
+    if (worked) {
+      await refreshWorkerStatus();
+      await heartbeat(workerStatus);
+    } else {
       await new Promise((resolve) => {
         const timer = setTimeout(resolve, 1_000);
         timer.unref();
       });
-    } else await heartbeat("IDLE");
+    }
   }
 } finally {
+  clearInterval(heartbeatMonitor);
   await heartbeat("STOPPING").catch(() => undefined);
   await database.$disconnect();
 }

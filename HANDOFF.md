@@ -28,9 +28,10 @@ changes are at `/Users/timothybreeding/projects/leadership`. The coordinated
 Leadership candidate is commit
 `bb0ee441986e1923bce2d7793227f35d4f385923`.
 
-Both working trees are clean on local `main` and one commit ahead of their
-respective remotes. Existing Situation Studio deletions and prior user changes
-were preserved. Neither candidate has been pushed or deployed.
+Both working trees are clean on local `main`. Situation Studio is four commits
+ahead of its remote; Leadership is one commit ahead. Existing Situation Studio
+deletions and prior user changes were preserved. Neither candidate has been
+pushed or deployed.
 
 The exact shared situation-contract archive has SHA-256
 `9cd3aeebb384edb2c1fb70647b55d0bbed147910216293fea2979d8eec7b17f4`
@@ -40,7 +41,7 @@ in both repositories.
 
 - Studio unit, integration, publisher lifecycle, crash recovery, type, and
   browser/accessibility suites pass.
-- The final gate passes formatting, lint, typecheck, 90 unit tests, 12
+- The final gate passes formatting, lint, typecheck, 110 unit tests, 12
   cross-database integration scenarios, a strict post-build secret scan, and
   an optimized production build.
 - The browser suite covers 1280×800, 1440×900, and 390×844; all 9 executed
@@ -60,9 +61,11 @@ in both repositories.
 - Leadership's complete production gate passed: database validation, lint,
   typecheck, 38 unit tests, 13 integration tests, and 70 cross-browser
   database/rendering checks with 18 intentional platform-scope skips.
-- The deterministic 22-stage provider route is qualified. A live service
-  provider route was not invoked because no service credential was supplied;
-  personal CLI credentials were deliberately not used.
+- The deterministic 22-stage route and the production-shaped Codex subscription
+  wrapper are qualified. Codex is primary, Claude is fallback, child
+  environments exclude application secrets, and secret-shaped model output is
+  rejected. The local Claude OAuth session was expired, so the production
+  review user still needs Claude authentication and a no-tools smoke.
 
 See [docs/checkpoints/07-operations-and-release-candidate.md](docs/checkpoints/07-operations-and-release-candidate.md)
 and [docs/checkpoints/independent-review.md](docs/checkpoints/independent-review.md)
@@ -81,7 +84,7 @@ External inputs still required before that approval are:
 
 - an off-RP1 encrypted backup destination and retention choice;
 - mode-restricted per-process production environment files;
-- a service-provider credential and selected review model for live
-  qualification;
+- dedicated Codex and Claude subscription sign-in under the production review
+  user, followed by the guarded CLI preflight;
 - the exact Studio HTTPS hostname registered in the TimsPrototypes access
   platform.

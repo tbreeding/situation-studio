@@ -13,6 +13,8 @@ studio_release="${studio_root}/releases/${studio_release_id}"
 studio_commit="$(git rev-parse HEAD)"
 studio_archive_limit_bytes=$((50 * 1024 * 1024))
 public_gate_mode="${SITUATION_STUDIO_PUBLIC_GATE_MODE:-required}"
+required_codex_cli_version="0.145.0"
+required_claude_cli_version="2.1.218"
 web_user="${SITUATION_STUDIO_WEB_USER:-situation-studio-web}"
 review_user="${SITUATION_STUDIO_REVIEW_USER:-situation-studio-review}"
 publisher_user="${SITUATION_STUDIO_PUBLISHER_USER:-situation-studio-publisher}"
@@ -82,7 +84,9 @@ ssh "${studio_host}" bash -s -- \
   "${publisher_environment}" \
   "${web_user}" \
   "${review_user}" \
-  "${publisher_user}" <<'REMOTE'
+  "${publisher_user}" \
+  "${required_codex_cli_version}" \
+  "${required_claude_cli_version}" <<'REMOTE'
 set -euo pipefail
 studio_root="${1}"
 web_environment="${2}"
@@ -91,6 +95,8 @@ publisher_environment="${4}"
 web_user="${5}"
 review_user="${6}"
 publisher_user="${7}"
+required_codex_cli_version="${8}"
+required_claude_cli_version="${9}"
 for service_user in "${web_user}" "${review_user}" "${publisher_user}"; do
   id "${service_user}" >/dev/null
 done
@@ -110,6 +116,49 @@ install -d -m 0755 "${studio_root}/releases"
 test "$(df --output=avail -B1 "${studio_root}" | tail -1)" -ge 5368709120
 source ~/.nvm/nvm.sh
 pm2_bin="$(command -v pm2)"
+review_home="$(getent passwd "${review_user}" | cut -d: -f6)"
+test -d "${review_home}"
+codex_bin="${review_home}/.local/bin/codex"
+claude_bin="${review_home}/.local/bin/claude"
+test -x "${codex_bin}"
+test -x "${claude_bin}"
+command -v script >/dev/null
+review_path="${review_home}/.local/bin:${PATH}"
+test "$(
+  sudo -n -u "${review_user}" env -i \
+    "HOME=${review_home}" \
+    "USER=${review_user}" \
+    "LOGNAME=${review_user}" \
+    "PATH=${review_path}" \
+    "${codex_bin}" --version
+)" = "codex-cli ${required_codex_cli_version}"
+test "$(
+  sudo -n -u "${review_user}" env -i \
+    "HOME=${review_home}" \
+    "USER=${review_user}" \
+    "LOGNAME=${review_user}" \
+    "PATH=${review_path}" \
+    "${claude_bin}" --version
+)" = "${required_claude_cli_version} (Claude Code)"
+sudo -n -u "${review_user}" env -i \
+  "HOME=${review_home}" \
+  "USER=${review_user}" \
+  "LOGNAME=${review_user}" \
+  "PATH=${review_path}" \
+  "${codex_bin}" login status >/dev/null
+sudo -n -u "${review_user}" env -i \
+  "HOME=${review_home}" \
+  "USER=${review_user}" \
+  "LOGNAME=${review_user}" \
+  "PATH=${review_path}" \
+  "${claude_bin}" auth status --json |
+  node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => { input += chunk });
+    process.stdin.on("end", () => {
+      if (JSON.parse(input).loggedIn !== true) process.exit(1);
+    });
+  '
 sudo -n env "PATH=${PATH}" "${pm2_bin}" --version >/dev/null
 REMOTE
 

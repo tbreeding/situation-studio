@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { database } from "@/server/database";
 import { environment } from "@/server/environment";
 import { keyedHash } from "@/server/auth/crypto";
+import { publicUrl } from "@/server/auth/public-url";
 import { safeReturnTo } from "@/server/auth/return-to";
 import { DUMMY_PASSWORD_HASH, verifyPassword } from "@/server/auth/password";
 import {
@@ -15,8 +16,8 @@ import {
   verifyLoginCsrf,
 } from "@/server/auth/sessions";
 
-function errorRedirect(url: URL, code: string, returnTo: string) {
-  const destination = new URL("/login", url);
+function errorRedirect(code: string, returnTo: string) {
+  const destination = publicUrl("/login");
   destination.searchParams.set("error", code);
   const safeDestination = safeReturnTo(returnTo);
   if (safeDestination !== "/")
@@ -25,7 +26,6 @@ function errorRedirect(url: URL, code: string, returnTo: string) {
 }
 
 export async function POST(request: Request) {
-  const url = new URL(request.url);
   const origin = request.headers.get("origin");
   const expected = new URL(environment().SITUATION_STUDIO_ORIGIN);
   const opaqueSameOrigin =
@@ -34,14 +34,14 @@ export async function POST(request: Request) {
     request.headers.get("sec-fetch-mode") === "navigate" &&
     request.headers.get("host") === expected.host;
   if (origin !== expected.origin && !opaqueSameOrigin)
-    return errorRedirect(url, "verification", "/");
+    return errorRedirect("verification", "/");
   const form = await request.formData();
   const username = canonicalUsername(String(form.get("username") ?? ""));
   const password = String(form.get("password") ?? "");
   const csrf = String(form.get("csrf") ?? "");
   const returnTo = safeReturnTo(String(form.get("returnTo") ?? "/"));
   if (!(await verifyLoginCsrf(csrf)))
-    return errorRedirect(url, "verification", returnTo);
+    return errorRedirect("verification", returnTo);
   const forwarded = request.headers
     .get("x-forwarded-for")
     ?.split(",")[0]
@@ -59,9 +59,9 @@ export async function POST(request: Request) {
     );
     return valid && user?.state === "ACTIVE" ? user : null;
   });
-  if (attempt.blocked) return errorRedirect(url, "blocked", returnTo);
+  if (attempt.blocked) return errorRedirect("blocked", returnTo);
   const user = attempt.value;
-  if (!user) return errorRedirect(url, "invalid", returnTo);
+  if (!user) return errorRedirect("invalid", returnTo);
   const ipHash = keyedHash(environment().SESSION_SECRET, "session-ip", ip);
   const session = await createSession(user, ipHash);
   await setSessionCookie(session.token);
@@ -78,5 +78,5 @@ export async function POST(request: Request) {
       payload: {},
     },
   });
-  return NextResponse.redirect(new URL(returnTo, url), 303);
+  return NextResponse.redirect(publicUrl(returnTo), 303);
 }

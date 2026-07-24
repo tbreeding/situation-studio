@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { safeEqual, sha256 } from "@/server/auth/crypto";
+import { publicUrl } from "@/server/auth/public-url";
 import {
   clearSessionCookie,
   currentSession,
@@ -19,5 +20,5 @@ export async function POST(request: Request) {
     await revokeSession(session.id, "LOGOUT");
   }
   await clearSessionCookie();
-  return NextResponse.redirect(new URL("/login", request.url), 303);
+  return NextResponse.redirect(publicUrl("/login"), 303);
 }

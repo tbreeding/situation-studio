@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { publicUrl } from "@/server/auth/public-url";
 import { safeReturnTo } from "@/server/auth/return-to";
 import { canonicalUsername } from "@/server/auth/throttle";
 
@@ -20,5 +21,14 @@ describe("authentication input boundaries", () => {
 
   test("canonicalizes usernames without creating confusable whitespace variants", () => {
     expect(canonicalUsername("  Studio.Admin  ")).toBe("studio.admin");
+  });
+
+  test("builds authentication redirects from the public origin", () => {
+    expect(
+      publicUrl(
+        "/situations/active?tab=review",
+        "https://situation-studio.example",
+      ).href,
+    ).toBe("https://situation-studio.example/situations/active?tab=review");
   });
 });

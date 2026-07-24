@@ -54,7 +54,7 @@ Reviewed operational checksums are:
 - Studio runtime grants:
   `d4c60d5f1b1f9a02697cc673431c6df48b3eb32be81701a1d4786876b1386ca3`;
 - isolated launcher:
-  `0557be09e20abaf66165d4ebcf020252800b513cd5e834a63db32976cec2789d`;
+  `19485675cb21408af8c308ce45a47930774e642ea575e116415bf849ae06355a`;
 - pinned subscription CLI installer:
   `7b2c1be29fdbe5a3c5b031519ba84af425a2456b05e6d6868391b84ee6bf23e3`;
 - constrained Codex PTY wrapper:

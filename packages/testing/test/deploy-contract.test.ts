@@ -111,6 +111,8 @@ describe("production deployment contract", () => {
     const launcherSource = await readFile(isolatedLauncherPath, "utf8");
     for (const fragment of [
       'service_home="$(getent passwd "$(id -u)"',
+      "stat -c '%a'",
+      "stat -c '%u'",
       'HOME="${service_home}"',
       'USER="${service_user}"',
       'LOGNAME="${service_user}"',

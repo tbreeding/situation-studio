@@ -38,12 +38,12 @@ if [[ ! -f "${environment_file}" ]]; then
   exit 1
 fi
 
-environment_mode="$(stat -f '%Lp' "${environment_file}" 2>/dev/null || stat -c '%a' "${environment_file}")"
+environment_mode="$(stat -c '%a' "${environment_file}" 2>/dev/null || stat -f '%Lp' "${environment_file}")"
 if [[ "${environment_mode}" != "600" && "${environment_mode}" != "400" ]]; then
   echo "Process environment file must have mode 0600 or 0400." >&2
   exit 1
 fi
-environment_owner="$(stat -f '%u' "${environment_file}" 2>/dev/null || stat -c '%u' "${environment_file}")"
+environment_owner="$(stat -c '%u' "${environment_file}" 2>/dev/null || stat -f '%u' "${environment_file}")"
 if [[ "${environment_owner}" != "$(id -u)" ]]; then
   echo "Process environment file must be owned by the service user." >&2
   exit 1

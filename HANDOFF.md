@@ -40,7 +40,7 @@ in both repositories.
 
 - Studio unit, integration, publisher lifecycle, crash recovery, type, and
   browser/accessibility suites pass.
-- The final gate passes formatting, lint, typecheck, 89 unit tests, 12
+- The final gate passes formatting, lint, typecheck, 90 unit tests, 12
   cross-database integration scenarios, a strict post-build secret scan, and
   an optimized production build.
 - The browser suite covers 1280×800, 1440×900, and 390×844; all 9 executed

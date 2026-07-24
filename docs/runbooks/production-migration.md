@@ -84,10 +84,21 @@ not replace the paths with literal credentials.
 8. Bootstrap Studio through the read-only Leadership role and compare the
    exact release/hash/generation captured in step 3.
 9. Install the exact prepared Studio release and start web, review worker, and
-   publisher with distinct environment files and database roles.
-10. Verify auth, inventory, `/health/live`, `/health/ready`, heartbeats, and
+   publisher with distinct environment files and database roles. On the first
+   release only, set
+   `SITUATION_STUDIO_PUBLIC_GATE_MODE=first-deploy-deferred`; the launcher
+   rejects that mode if a prior Studio release already exists.
+10. Register the exact approved slug in the TimsPrototypes access platform,
+    pointing it to RP1's approved private IPv4 and port 3015. Run
+    `ops/verify-public-gate.sh`; an unauthenticated `/health/live` probe must
+    receive the platform's fail-closed 403 plus `Cache-Control: private,
+no-store`. Unknown hosts receive 404, so this also proves the protected
+    route exists. All later deployments use the launcher's default `required`
+    gate mode.
+11. Verify authenticated access, inventory, local `/health/live`,
+    `/health/ready`, heartbeats, and
     Leadership observation. Do not submit production content.
-11. Preserve all receipts and stop. A real publication needs another approval
+12. Preserve all receipts and stop. A real publication needs another approval
     naming the test situation and expected bundle hash.
 
 The immutable Studio release root is

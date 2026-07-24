@@ -7,6 +7,7 @@ import { describe, expect, test } from "vitest";
 const executeFile = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "../../..");
 const deployPath = path.join(root, "deploy.sh");
+const publicGatePath = path.join(root, "ops/verify-public-gate.sh");
 const backupPath = path.join(root, "ops/backup-studio.sh");
 const provisionDatabasePath = path.join(
   root,
@@ -39,6 +40,7 @@ describe("production deployment contract", () => {
       'git archive --format=tar "${studio_commit}"',
       "SITUATION_STUDIO_PUBLIC_ORIGIN",
       "SITUATION_STUDIO_PUBLIC_HOST",
+      "SITUATION_STUDIO_PUBLIC_GATE_MODE",
     ])
       expect(position(source, guard)).toBeLessThan(firstSsh);
   });
@@ -56,7 +58,22 @@ describe("production deployment contract", () => {
       "http://127.0.0.1:3015/health/live",
       "http://127.0.0.1:3015/health/ready",
       'ln -sfn "${studio_previous}"',
-      'curl -fsS "${SITUATION_STUDIO_PUBLIC_ORIGIN}/health/live"',
+      "first-deploy-deferred",
+      'if [[ -n "${studio_previous}" ]]',
+      "ops/verify-public-gate.sh",
+    ])
+      position(source, fragment);
+  });
+
+  test("the public gate is verified as protected, private, and no-store", async () => {
+    await expect(
+      executeFile("bash", ["-n", publicGatePath]),
+    ).resolves.toMatchObject({ stderr: "" });
+    const source = await readFile(publicGatePath, "utf8");
+    for (const fragment of [
+      '"${SITUATION_STUDIO_PUBLIC_ORIGIN}/health/live"',
+      'if [[ "${status}" != "403" ]]',
+      "cache-control:.*private.*no-store",
     ])
       position(source, fragment);
   });

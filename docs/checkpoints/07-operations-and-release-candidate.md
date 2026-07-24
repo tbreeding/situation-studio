@@ -44,7 +44,9 @@ was written.
 Reviewed operational checksums are:
 
 - guarded deployment launcher:
-  `51b74b0a3bd1a6c33fb8853ab85eb5e589bd4400e50219636be1c3da2f277ea8`;
+  `a87968ada8b14fd9ef4cb598b9581904a8f53281af881ca29fd49ee011cc5b2c`;
+- protected public-gate verifier:
+  `8bcc34158834ee5d0f922d0ae43a940a847f4298a42e45d94828e1e84abbf418`;
 - fresh-database provisioning:
   `3a6dc220fe296141e18632752055215665d26d96edb0aaab5ed923f418ca083d`;
 - runtime-password provisioning:
@@ -64,7 +66,7 @@ Final local evidence includes:
 
 - Studio formatting, lint, typecheck, strict secret scan, and optimized
   production build;
-- 89 unit tests and 12 cross-database integration scenarios;
+- 90 unit tests and 12 cross-database integration scenarios;
 - 9 publisher scenarios, including lifecycle, consecutive scoped releases,
   all-release history import, and injected crashes;
 - browser/accessibility: 9 passed, 6 intentionally skipped duplicates;
@@ -77,5 +79,6 @@ Final local evidence includes:
   [independent-review.md](independent-review.md).
 
 External pre-deployment inputs remain the live provider qualification,
-off-host backup destination/retention, exact clean commits, and separate
-checkpoint-8 approval.
+off-host backup destination/retention, approved Studio hostname, and separate
+checkpoint-8 approval. Both coordinated release candidates are committed on
+clean local `main` branches and remain unpushed.

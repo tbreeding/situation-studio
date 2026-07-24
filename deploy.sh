@@ -12,6 +12,7 @@ studio_release_id="${SITUATION_STUDIO_RELEASE_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 studio_release="${studio_root}/releases/${studio_release_id}"
 studio_commit="$(git rev-parse HEAD)"
 studio_archive_limit_bytes=$((50 * 1024 * 1024))
+public_gate_mode="${SITUATION_STUDIO_PUBLIC_GATE_MODE:-required}"
 web_user="${SITUATION_STUDIO_WEB_USER:-situation-studio-web}"
 review_user="${SITUATION_STUDIO_REVIEW_USER:-situation-studio-review}"
 publisher_user="${SITUATION_STUDIO_PUBLISHER_USER:-situation-studio-publisher}"
@@ -29,6 +30,10 @@ if [[ "${SITUATION_STUDIO_PUBLIC_ORIGIN}" != https://* ]]; then
 fi
 if [[ "${SITUATION_STUDIO_PUBLIC_ORIGIN}" != "https://${SITUATION_STUDIO_PUBLIC_HOST}" ]]; then
   echo "Approved origin and public host must match exactly." >&2
+  exit 1
+fi
+if [[ "${public_gate_mode}" != "required" && "${public_gate_mode}" != "first-deploy-deferred" ]]; then
+  echo "SITUATION_STUDIO_PUBLIC_GATE_MODE must be required or first-deploy-deferred." >&2
   exit 1
 fi
 if [[
@@ -239,6 +244,16 @@ REMOTE
   exit 1
 fi
 
-echo "[7/7] Verifying the approved public origin"
-curl -fsS "${SITUATION_STUDIO_PUBLIC_ORIGIN}/health/live" >/dev/null
-echo "Situation Studio ${studio_release_id} is healthy at the approved origin."
+echo "[7/7] Verifying the approved protected public origin"
+if [[ "${public_gate_mode}" == "first-deploy-deferred" ]]; then
+  if [[ -n "${studio_previous}" ]]; then
+    echo "Public-gate verification may be deferred only for the first Studio release." >&2
+    exit 1
+  fi
+  echo "Situation Studio ${studio_release_id} is locally healthy."
+  echo "Register the approved TimsPrototypes route, then run ops/verify-public-gate.sh."
+else
+  SITUATION_STUDIO_PUBLIC_ORIGIN="${SITUATION_STUDIO_PUBLIC_ORIGIN}" \
+    ops/verify-public-gate.sh
+  echo "Situation Studio ${studio_release_id} is healthy behind the approved public access gate."
+fi

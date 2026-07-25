@@ -2,6 +2,11 @@
 
 import { Fragment } from "react";
 
+export type RenderedGuidanceDiff = {
+  kind: "added" | "removed";
+  lines: ReadonlySet<number>;
+};
+
 function inline(value: string) {
   const parts = value.split(/(\*\*[^*]+\*\*)/gu);
   return parts.map((part, index) =>
@@ -13,56 +18,99 @@ function inline(value: string) {
   );
 }
 
+function diffProperties(
+  diff: RenderedGuidanceDiff | undefined,
+  lineNumbers: number[],
+) {
+  if (!diff || !lineNumbers.some((lineNumber) => diff.lines.has(lineNumber)))
+    return {};
+  const label = diff.kind === "added" ? "Added content: " : "Removed content: ";
+  return {
+    className: `renderDiffLine renderDiff${diff.kind === "added" ? "Added" : "Removed"}`,
+    cue: <span className="srOnly">{label}</span>,
+  };
+}
+
 export function RenderedGuidance({
   body,
   compact = false,
+  diff,
 }: {
   body: string;
   compact?: boolean;
+  diff?: RenderedGuidanceDiff;
 }) {
   const lines = body.replace(/\r\n?/gu, "\n").split("\n");
   const nodes: React.ReactNode[] = [];
-  let paragraph: string[] = [];
-  let list: string[] = [];
+  let paragraph: Array<{ lineNumber: number; value: string }> = [];
+  let list: Array<{ lineNumber: number; value: string }> = [];
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
-    const value = paragraph.join(" ").trim();
-    if (value) nodes.push(<p key={`p-${nodes.length}`}>{inline(value)}</p>);
+    const value = paragraph
+      .map((line) => line.value)
+      .join(" ")
+      .trim();
+    const properties = diffProperties(
+      diff,
+      paragraph.map((line) => line.lineNumber),
+    );
+    if (value)
+      nodes.push(
+        <p key={`p-${nodes.length}`} className={properties.className}>
+          {properties.cue}
+          {inline(value)}
+        </p>,
+      );
     paragraph = [];
   };
   const flushList = () => {
     if (!list.length) return;
     nodes.push(
       <ul key={`ul-${nodes.length}`}>
-        {list.map((item, index) => (
-          <li key={`${item}-${index}`}>{inline(item)}</li>
-        ))}
+        {list.map((item, index) => {
+          const properties = diffProperties(diff, [item.lineNumber]);
+          return (
+            <li key={`${item.value}-${index}`} className={properties.className}>
+              {properties.cue}
+              {inline(item.value)}
+            </li>
+          );
+        })}
       </ul>,
     );
     list = [];
   };
 
-  for (const line of lines) {
+  for (const [lineNumber, line] of lines.entries()) {
     if (line.startsWith("## ")) {
       flushParagraph();
       flushList();
-      nodes.push(<h2 key={`h-${nodes.length}`}>{line.slice(3)}</h2>);
+      const properties = diffProperties(diff, [lineNumber]);
+      nodes.push(
+        <h2 key={`h-${nodes.length}`} className={properties.className}>
+          {properties.cue}
+          {line.slice(3)}
+        </h2>,
+      );
     } else if (/^[-*] /u.test(line)) {
       flushParagraph();
-      list.push(line.slice(2));
+      list.push({ lineNumber, value: line.slice(2) });
     } else if (line.startsWith("> ")) {
       flushParagraph();
       flushList();
+      const properties = diffProperties(diff, [lineNumber]);
       nodes.push(
-        <blockquote key={`q-${nodes.length}`}>
+        <blockquote key={`q-${nodes.length}`} className={properties.className}>
+          {properties.cue}
           {inline(line.slice(2))}
         </blockquote>,
       );
     } else if (!line.trim()) {
       flushParagraph();
       flushList();
-    } else if (!line.startsWith("---")) paragraph.push(line.trim());
+    } else if (!line.startsWith("---"))
+      paragraph.push({ lineNumber, value: line.trim() });
   }
   flushParagraph();
   flushList();

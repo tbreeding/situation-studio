@@ -12,6 +12,7 @@ import {
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { RenderedGuidance } from "@/components/rendered-guidance";
+import { RenderedComparison } from "@/components/rendered-comparison";
 import { formattedRetryTime } from "@/components/review-retry-status";
 import { SynchronizedDiff } from "@/components/synchronized-diff";
 import {
@@ -1352,22 +1353,11 @@ export function WorkspaceEditor({
               </div>
             )}
           </div>
-          <div className="renderCompare">
-            <article tabIndex={0} aria-label="Scrollable current production">
-              <header>
-                <span>Current production</span>
-                <code>{shortHash(situation.productionBundleHash)}</code>
-              </header>
-              <RenderedGuidance body={productionBody} compact />
-            </article>
-            <article tabIndex={0} aria-label="Scrollable saved draft">
-              <header>
-                <span>Saved draft</span>
-                <code>Working copy</code>
-              </header>
-              <RenderedGuidance body={body} compact />
-            </article>
-          </div>
+          <RenderedComparison
+            production={productionBody}
+            draft={body}
+            productionRevision={shortHash(situation.productionBundleHash)}
+          />
           <details className="diffDisclosure" open>
             <summary>Exact source diff</summary>
             <SynchronizedDiff production={productionBody} draft={body} />

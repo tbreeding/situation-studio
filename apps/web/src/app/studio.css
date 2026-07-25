@@ -1592,9 +1592,80 @@ button {
   gap: 1rem;
 }
 
+.renderedComparison {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.renderCompareToolbar {
+  display: flex;
+  min-height: 1.75rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 0.15rem;
+  color: #667069;
+  font-size: 0.65rem;
+  font-weight: 720;
+}
+
+.linkedScrollStatus,
+.renderDiffLegend,
+.renderDiffLegend > span {
+  display: inline-flex;
+  align-items: center;
+}
+
+.linkedScrollStatus {
+  gap: 0.35rem;
+}
+
+.linkedScrollStatus > span {
+  color: var(--forest);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.renderDiffLegend {
+  gap: 0.85rem;
+}
+
+.renderDiffLegend > span {
+  gap: 0.3rem;
+}
+
+.renderDiffLegend i {
+  display: inline-grid;
+  width: 1rem;
+  height: 1rem;
+  place-items: center;
+  border-radius: 0.2rem;
+  font-size: 0.72rem;
+  font-style: normal;
+  line-height: 1;
+}
+
+.diffLegendRemoved i {
+  border: 1px solid #e8b8b4;
+  background: #fff0ee;
+  color: #a0332b;
+}
+
+.diffLegendAdded i {
+  border: 1px solid #aed8bc;
+  background: #eaf7ee;
+  color: #236d3c;
+}
+
+.renderDiffEmpty {
+  color: #778079;
+}
+
 .renderCompare > article {
   max-height: 36rem;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   border: 1px solid var(--line);
   border-radius: 0.7rem;
   background: var(--paper);
@@ -1621,6 +1692,43 @@ button {
 
 .renderCompare .renderedGuidance {
   padding: 1.4rem;
+}
+
+.renderedGuidance .renderDiffLine {
+  position: relative;
+  border-radius: 0.25rem;
+  box-shadow: inset 3px 0 0;
+}
+
+.renderedGuidance p.renderDiffLine,
+.renderedGuidance h2.renderDiffLine {
+  margin-right: -0.65rem;
+  margin-left: -0.65rem;
+  padding-right: 0.65rem;
+  padding-left: 0.9rem;
+}
+
+.renderedGuidance li.renderDiffLine {
+  margin: 0.14rem 0;
+  padding: 0.14rem 0.45rem 0.14rem 0.7rem;
+}
+
+.renderedGuidance .renderDiffRemoved {
+  background: #fff0ee;
+  box-shadow: inset 3px 0 0 #c84a40;
+}
+
+.renderedGuidance .renderDiffAdded {
+  background: #eaf7ee;
+  box-shadow: inset 3px 0 0 #338553;
+}
+
+.renderedGuidance blockquote.renderDiffRemoved {
+  border-left-color: #c84a40;
+}
+
+.renderedGuidance blockquote.renderDiffAdded {
+  border-left-color: #338553;
 }
 
 .diffDisclosure {

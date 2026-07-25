@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 export function AppShell({
@@ -16,7 +17,14 @@ export function AppShell({
       <header className="topBar">
         <Link className="brand" href="/">
           <span className="brandMark" aria-hidden="true">
-            SS
+            <Image
+              src="/icon.svg"
+              alt=""
+              width={35}
+              height={35}
+              priority
+              unoptimized
+            />
           </span>
           <span>
             <strong>Situation Studio</strong>

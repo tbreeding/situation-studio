@@ -47,7 +47,7 @@ Reviewed operational checksums are:
 - guarded deployment launcher:
   `c6d011f4fb0698620c636c186b21582093fa810e13fd7252d6f9bb71b9796ddd`;
 - fail-closed release schema helper:
-  `8c29e521e7575e11a28cf38342000be1c2d41152579e7feca20a535bd3c88e5f`;
+  `e4197d24910e03beb5decede99dcda67835b9b39d36393db887a894b78207217`;
 - protected public-gate verifier:
   `8bcc34158834ee5d0f922d0ae43a940a847f4298a42e45d94828e1e84abbf418`;
 - fresh-database provisioning:

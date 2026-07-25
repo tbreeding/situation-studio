@@ -87,6 +87,7 @@ describe("production deployment contract", () => {
       "STUDIO_OWNER_MIGRATION_PASSWORD",
       "ALTER ROLE situation_studio_owner LOGIN PASSWORD",
       "trap disable_owner_login EXIT",
+      "nvm use --silent",
       "pnpm db:migrate:deploy",
       "ALTER ROLE situation_studio_owner NOLOGIN",
       "ops/grant-runtime-roles.sql",

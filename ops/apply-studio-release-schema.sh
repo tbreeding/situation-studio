@@ -62,6 +62,7 @@ owner_database_url="$(
 )"
 (
   cd "${STUDIO_RELEASE}"
+  nvm use --silent
   STUDIO_DATABASE_URL="${owner_database_url}" pnpm db:migrate:deploy
 )
 disable_owner_login

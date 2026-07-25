@@ -35,7 +35,15 @@ function configuration(): ReviewProviderConfiguration {
 const database = createDatabaseClient(databaseUrl, 4);
 const providerConfiguration = configuration();
 let stopping = false;
-let workerStatus = "IDLE";
+let latestFinishedReview: {
+  state: string;
+  failureCode: string | null;
+  finishedAt: Date | null;
+} | null = null;
+
+function workerStatus() {
+  return reviewWorkerIdleStatus(latestFinishedReview);
+}
 
 async function heartbeat(status: string) {
   await database.processHeartbeat.upsert({
@@ -91,24 +99,24 @@ async function refreshWorkerStatus() {
   const latestReview = await database.reviewJob.findFirst({
     where: { finishedAt: { not: null } },
     orderBy: { finishedAt: "desc" },
-    select: { state: true, failureCode: true },
+    select: { state: true, failureCode: true, finishedAt: true },
   });
-  workerStatus = reviewWorkerIdleStatus(latestReview);
+  latestFinishedReview = latestReview;
 }
 
 await refreshWorkerStatus();
 const heartbeatMonitor = setInterval(() => {
-  void heartbeat(workerStatus).catch(() => undefined);
+  void heartbeat(workerStatus()).catch(() => undefined);
 }, 15_000);
 heartbeatMonitor.unref();
 
 try {
   while (!stopping) {
-    await heartbeat(workerStatus);
+    await heartbeat(workerStatus());
     const worked = await runOneReview(database, providerConfiguration);
     if (worked) {
       await refreshWorkerStatus();
-      await heartbeat(workerStatus);
+      await heartbeat(workerStatus());
     } else {
       await new Promise((resolve) => {
         const timer = setTimeout(resolve, 1_000);

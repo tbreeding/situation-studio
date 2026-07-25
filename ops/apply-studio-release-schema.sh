@@ -52,16 +52,17 @@ SELECT format(
 SQL
 
 source ~/.nvm/nvm.sh
-encoded_owner_password="$(
-  PASSWORD_TO_ENCODE="${STUDIO_OWNER_MIGRATION_PASSWORD}" \
-    node -e 'process.stdout.write(encodeURIComponent(process.env.PASSWORD_TO_ENCODE))'
+owner_database_url="$(
+  DATABASE_PASSWORD="${STUDIO_OWNER_MIGRATION_PASSWORD}" node -e '
+    const url = new URL("postgresql://127.0.0.1:5432/situation_studio");
+    url.username = "situation_studio_owner";
+    url.password = process.env.DATABASE_PASSWORD;
+    process.stdout.write(url.toString());
+  '
 )"
 (
   cd "${STUDIO_RELEASE}"
-  STUDIO_DATABASE_URL="$(
-    printf 'postgresql://situation_studio_owner:%s@127.0.0.1:5432/situation_studio' \
-      "${encoded_owner_password}"
-  )" pnpm db:migrate:deploy
+  STUDIO_DATABASE_URL="${owner_database_url}" pnpm db:migrate:deploy
 )
 disable_owner_login
 trap - EXIT

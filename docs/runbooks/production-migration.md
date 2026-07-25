@@ -131,6 +131,19 @@ no-store`. Unknown hosts receive 404, so this also proves the protected
 The immutable Studio release root is
 `/home/admin/projects/situation-studio/releases/<UTC release ID>`, with
 `/home/admin/projects/situation-studio/current` as the atomic pointer.
+For subsequent releases, `deploy.sh` applies pending additive Studio migrations
+before process cutover by temporarily enabling login for the schema owner with
+the protected `STUDIO_OWNER_MIGRATION_PASSWORD`. The helper restores the owner
+to `NOLOGIN` on success or failure, reapplies the reviewed runtime grants, and
+verifies the new columns and review-worker audit insert privilege. A failed
+application-health check rolls the processes back to the previous release;
+additive database migrations remain forward-only and must stay compatible with
+that release.
+
+When the approved host is reached through a private address that is not the
+local SSH alias, set `SITUATION_STUDIO_DEPLOY_USER` explicitly. The launcher
+validates the user and host separately, archives only the exact pushed commit,
+and records that commit in the immutable release's `.release-commit` marker.
 `deploy.sh` starts `situation-studio-web`,
 `situation-studio-review-worker`, and `situation-studio-publisher` through the
 root-owned PM2 daemon while each application process runs under its dedicated

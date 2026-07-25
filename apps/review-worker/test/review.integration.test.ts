@@ -16,6 +16,12 @@ import {
   sha256,
   situationBundleSchema,
 } from "@situation-studio/domain";
+import {
+  AdapterFailure,
+  runDeterministic,
+  type AdapterRequest,
+  type AdapterResult,
+} from "@situation-studio/ai-adapters";
 import { claimNextReview, processClaimedReview } from "../src/review";
 
 const executeFile = promisify(execFile);
@@ -25,6 +31,72 @@ function databaseUrl(container: StartedPostgreSqlContainer) {
   return container
     .getConnectionUri()
     .replace(/^postgres:\/\//u, "postgresql://");
+}
+
+const subscriptionConfiguration = {
+  mode: "subscription-cli" as const,
+  codex: {
+    binary: "codex",
+    model: "gpt-5.6-sol",
+    wrapper: "/release/ops/run-codex-review.sh",
+  },
+  claude: {
+    binary: "claude",
+    model: "sonnet",
+  },
+};
+
+async function successfulStage(
+  request: Omit<AdapterRequest, "provider" | "model">,
+): Promise<AdapterResult> {
+  const result = await runDeterministic({
+    ...request,
+    provider: "deterministic",
+    model: "deterministic-provider-v1",
+  });
+  return {
+    ...result,
+    requestedProvider: "codex",
+    resolvedProvider: "codex",
+    requestedModel: "gpt-5.6-sol",
+    resolvedModel: "gpt-5.6-sol",
+    providerAttempts: [
+      {
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        durationMs: 250,
+        outcome: "SUCCEEDED",
+        failureClass: null,
+        retryable: null,
+      },
+    ],
+  };
+}
+
+function doubleTimeoutFailure(retryable = true) {
+  return new AdapterFailure(
+    "TRANSIENT",
+    "Both review providers timed out.",
+    retryable,
+    [
+      {
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        durationMs: 90_000,
+        outcome: "TIMED_OUT",
+        failureClass: "TRANSIENT",
+        retryable: true,
+      },
+      {
+        provider: "claude",
+        model: "sonnet",
+        durationMs: 90_000,
+        outcome: "TIMED_OUT",
+        failureClass: "TRANSIENT",
+        retryable: true,
+      },
+    ],
+  );
 }
 
 describe("checkout fencing and the complete durable review DAG", () => {
@@ -345,6 +417,383 @@ describe("checkout fencing and the complete durable review DAG", () => {
     );
   });
 
+  it("durably backs off after a timeout, survives restart, and preserves immutable successful-stage history", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-review-timeout-recovery",
+      title: "A retryable timeout recovery scenario",
+    });
+    const queued = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    let now = new Date(Date.now() + 60_000);
+    const timing = {
+      now: () => now,
+      retryDelaysMs: [1_000, 2_000],
+    };
+    let criticAttempts = 0;
+    const runStage = async (
+      request: Omit<AdapterRequest, "provider" | "model">,
+    ) => {
+      if (request.role === "critic-nvc") {
+        criticAttempts += 1;
+        if (criticAttempts === 1) throw doubleTimeoutFailure();
+      }
+      return successfulStage(request);
+    };
+
+    const firstClaim = await claimNextReview(database, timing);
+    expect(firstClaim?.id).toBe(queued.id);
+    if (!firstClaim?.claimToken)
+      throw new Error("Retry fixture did not receive its first claim.");
+    await processClaimedReview(
+      database,
+      queued.id,
+      subscriptionConfiguration,
+      firstClaim.claimToken,
+      { timing, runStage },
+    );
+
+    const backingOff = await database.reviewJob.findUniqueOrThrow({
+      where: { id: queued.id },
+      include: {
+        steps: {
+          orderBy: { ordinal: "asc" },
+          include: { runs: { orderBy: { attempt: "asc" } } },
+        },
+      },
+    });
+    expect(backingOff).toMatchObject({
+      state: "QUEUED",
+      failureCode: "TRANSIENT",
+      claimToken: null,
+      leaseExpiresAt: null,
+    });
+    expect(backingOff.retryNotBefore).toEqual(new Date(now.getTime() + 1_000));
+    expect(backingOff.steps[0]).toMatchObject({ state: "SUCCEEDED" });
+    expect(backingOff.steps[1]).toMatchObject({ state: "READY" });
+    const preservedRun = backingOff.steps[0]?.runs[0];
+    const failedRun = backingOff.steps[1]?.runs[0];
+    expect(preservedRun?.outputHash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(failedRun).toMatchObject({
+      attempt: 1,
+      failureClass: "PROVIDER_TRANSIENT",
+      retryable: true,
+    });
+    expect(failedRun?.providerAttempts).toEqual([
+      {
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        durationMs: 90_000,
+        outcome: "TIMED_OUT",
+        failureClass: "TRANSIENT",
+        retryable: true,
+      },
+      {
+        provider: "claude",
+        model: "sonnet",
+        durationMs: 90_000,
+        outcome: "TIMED_OUT",
+        failureClass: "TRANSIENT",
+        retryable: true,
+      },
+    ]);
+
+    expect(await claimNextReview(database, timing)).toBeNull();
+    now = new Date(now.getTime() + 1_000);
+    const restartedClaim = await claimNextReview(database, timing);
+    expect(restartedClaim?.id).toBe(queued.id);
+    expect(restartedClaim?.claimToken).not.toBe(firstClaim.claimToken);
+    if (!restartedClaim?.claimToken)
+      throw new Error("Retry fixture was not reclaimable after backoff.");
+    await processClaimedReview(
+      database,
+      queued.id,
+      subscriptionConfiguration,
+      restartedClaim.claimToken,
+      { timing, runStage },
+    );
+
+    const completed = await database.reviewJob.findUniqueOrThrow({
+      where: { id: queued.id },
+      include: {
+        steps: {
+          orderBy: { ordinal: "asc" },
+          include: { runs: { orderBy: { attempt: "asc" } } },
+        },
+      },
+    });
+    expect(completed.state).toBe("SUCCEEDED");
+    expect(completed.retryNotBefore).toBeNull();
+    expect(completed.steps.every((step) => step.state === "SUCCEEDED")).toBe(
+      true,
+    );
+    expect(completed.steps[0]?.runs[0]).toEqual(preservedRun);
+    expect(completed.steps[1]?.runs).toHaveLength(2);
+    expect(completed.steps[1]?.runs.map((run) => run.attempt)).toEqual([1, 2]);
+    expect(completed.steps[1]?.runs[0]).toEqual(failedRun);
+    expect(completed.steps[1]?.runs[1]?.outputHash).toMatch(/^[a-f0-9]{64}$/u);
+
+    const retryAudit = await database.auditEvent.findMany({
+      where: {
+        action: "REVIEW_AUTOMATIC_RETRY_SCHEDULED",
+        subjectId: queued.id,
+      },
+    });
+    expect(retryAudit).toHaveLength(1);
+    expect(retryAudit[0]).toMatchObject({
+      actorId: null,
+      subjectType: "REVIEW_JOB",
+      payload: {
+        systemActor: "review-worker",
+        stageOrdinal: 2,
+        stageRole: "critic-nvc",
+        failureClass: "PROVIDER_TRANSIENT",
+        attempt: 1,
+        maximumAttempts: 3,
+        scheduledRetryAt: backingOff.retryNotBefore?.toISOString(),
+      },
+    });
+  });
+
+  it("stops after three retryable attempts and retains the manual retry path", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-review-retry-exhaustion",
+      title: "An exhausted automatic retry scenario",
+    });
+    const queued = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    let now = new Date(Date.now() + 120_000);
+    const timing = {
+      now: () => now,
+      retryDelaysMs: [1_000, 2_000],
+    };
+    const runStage = async () => {
+      throw doubleTimeoutFailure();
+    };
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const claim = await claimNextReview(database, timing);
+      expect(claim?.id).toBe(queued.id);
+      if (!claim?.claimToken)
+        throw new Error(`Retry attempt ${attempt} was not claimable.`);
+      await processClaimedReview(
+        database,
+        queued.id,
+        subscriptionConfiguration,
+        claim.claimToken,
+        { timing, runStage },
+      );
+      const state = await database.reviewJob.findUniqueOrThrow({
+        where: { id: queued.id },
+      });
+      if (attempt < 3) {
+        expect(state.state).toBe("QUEUED");
+        if (!state.retryNotBefore)
+          throw new Error("Retry exhaustion fixture lost its schedule.");
+        now = state.retryNotBefore;
+      }
+    }
+
+    const exhausted = await database.reviewJob.findUniqueOrThrow({
+      where: { id: queued.id },
+      include: {
+        steps: {
+          where: { ordinal: 1 },
+          include: { runs: { orderBy: { attempt: "asc" } } },
+        },
+      },
+    });
+    expect(exhausted).toMatchObject({
+      state: "FAILED",
+      failureCode: "TRANSIENT",
+      retryNotBefore: null,
+    });
+    expect(exhausted.steps[0]?.state).toBe("FAILED");
+    expect(exhausted.steps[0]?.runs.map((run) => run.attempt)).toEqual([
+      1, 2, 3,
+    ]);
+    expect(
+      await database.auditEvent.count({
+        where: {
+          action: "REVIEW_AUTOMATIC_RETRY_SCHEDULED",
+          subjectId: queued.id,
+        },
+      }),
+    ).toBe(2);
+
+    const manuallyRetried = await workflows.retryReview({
+      actorId: editorOneId,
+      jobId: queued.id,
+    });
+    expect(manuallyRetried).toMatchObject({
+      state: "QUEUED",
+      retryNotBefore: null,
+    });
+    await workflows.cancelReview({
+      actorId: editorOneId,
+      jobId: queued.id,
+      reason: "Integration cleanup after manual retry proof",
+    });
+  });
+
+  it("keeps an explicitly non-retryable provider failure terminal", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-review-nonretryable",
+      title: "A non-retryable authentication failure scenario",
+    });
+    const queued = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    const now = new Date(Date.now() + 180_000);
+    const timing = { now: () => now, retryDelaysMs: [1_000, 2_000] };
+    const runStage = async () => {
+      throw new AdapterFailure(
+        "AUTHENTICATION",
+        "Provider authentication is unavailable.",
+        false,
+        [
+          {
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            durationMs: 100,
+            outcome: "FAILED",
+            failureClass: "AUTHENTICATION",
+            retryable: false,
+          },
+        ],
+      );
+    };
+    const claim = await claimNextReview(database, timing);
+    if (!claim?.claimToken)
+      throw new Error("Non-retryable fixture was not claimable.");
+    await processClaimedReview(
+      database,
+      queued.id,
+      subscriptionConfiguration,
+      claim.claimToken,
+      { timing, runStage },
+    );
+
+    const failed = await database.reviewJob.findUniqueOrThrow({
+      where: { id: queued.id },
+      include: { steps: { where: { ordinal: 1 }, include: { runs: true } } },
+    });
+    expect(failed).toMatchObject({
+      state: "FAILED",
+      failureCode: "AUTHENTICATION",
+      retryNotBefore: null,
+    });
+    expect(failed.steps[0]?.runs).toHaveLength(1);
+    expect(failed.steps[0]?.runs[0]).toMatchObject({
+      failureClass: "PROVIDER_AUTH",
+      retryable: false,
+    });
+    expect(
+      await database.auditEvent.count({
+        where: {
+          action: "REVIEW_AUTOMATIC_RETRY_SCHEDULED",
+          subjectId: queued.id,
+        },
+      }),
+    ).toBe(0);
+  });
+
+  it("honors cancellation and checkout fencing while a retry is backing off", async () => {
+    let now = new Date(Date.now() + 240_000);
+    const timing = { now: () => now, retryDelaysMs: [1_000, 2_000] };
+    const runStage = async () => {
+      throw doubleTimeoutFailure();
+    };
+
+    const cancelledFixture = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-review-backoff-cancel",
+      title: "A cancelled retry backoff scenario",
+    });
+    const cancelledJob = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: cancelledFixture.checkout.id,
+      fence: cancelledFixture.checkout.fence,
+    });
+    const cancellationClaim = await claimNextReview(database, timing);
+    if (!cancellationClaim?.claimToken)
+      throw new Error("Cancellation fixture was not claimable.");
+    await processClaimedReview(
+      database,
+      cancelledJob.id,
+      subscriptionConfiguration,
+      cancellationClaim.claimToken,
+      { timing, runStage },
+    );
+    await workflows.cancelReview({
+      actorId: editorOneId,
+      jobId: cancelledJob.id,
+      reason: "Cancel during durable backoff",
+    });
+    now = new Date(now.getTime() + 5_000);
+    expect(await claimNextReview(database, timing)).toBeNull();
+    const cancelled = await database.reviewJob.findUniqueOrThrow({
+      where: { id: cancelledJob.id },
+      include: { steps: true },
+    });
+    expect(cancelled).toMatchObject({
+      state: "CANCELLED",
+      fence: 2n,
+      retryNotBefore: null,
+    });
+    expect(cancelled.steps.every((step) => step.state === "CANCELLED")).toBe(
+      true,
+    );
+
+    const fencedFixture = await workflows.createSituation({
+      actorId: editorTwoId,
+      slug: "integration-review-backoff-fence",
+      title: "A fenced retry backoff scenario",
+    });
+    const fencedJob = await workflows.queueReview({
+      actorId: editorTwoId,
+      checkoutId: fencedFixture.checkout.id,
+      fence: fencedFixture.checkout.fence,
+    });
+    const fencingClaim = await claimNextReview(database, timing);
+    if (!fencingClaim?.claimToken)
+      throw new Error("Fencing fixture was not claimable.");
+    await processClaimedReview(
+      database,
+      fencedJob.id,
+      subscriptionConfiguration,
+      fencingClaim.claimToken,
+      { timing, runStage },
+    );
+    await workflows.forceCheckInSituation({
+      adminId,
+      situationId: fencedFixture.situation.id,
+      reason: "Fence retry during integration backoff",
+    });
+    now = new Date(now.getTime() + 5_000);
+    expect(await claimNextReview(database, timing)).toBeNull();
+    const fenced = await database.reviewJob.findUniqueOrThrow({
+      where: { id: fencedJob.id },
+      include: { steps: true },
+    });
+    expect(fenced).toMatchObject({
+      state: "CANCELLED",
+      fence: 2n,
+      retryNotBefore: null,
+    });
+    expect(fenced.steps.every((step) => step.state === "CANCELLED")).toBe(true);
+  });
+
   it("reclaims an expired stage lease and records the interrupted attempt", async () => {
     const created = await workflows.createSituation({
       actorId: editorOneId,
@@ -404,7 +853,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
     expect(completed.steps[0]?.runs).toHaveLength(2);
     expect(completed.steps[0]?.runs[0]).toMatchObject({
       failureClass: "APPLICATION",
-      retryable: true,
+      retryable: false,
     });
     expect(completed.steps[0]?.runs[1]?.outputHash).toMatch(/^[a-f0-9]{64}$/u);
   });

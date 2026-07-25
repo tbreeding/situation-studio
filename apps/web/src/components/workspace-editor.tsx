@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   useTransition,
@@ -11,7 +12,25 @@ import {
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { RenderedGuidance } from "@/components/rendered-guidance";
+import { formattedRetryTime } from "@/components/review-retry-status";
 import { SynchronizedDiff } from "@/components/synchronized-diff";
+import {
+  initialLiveReviewState,
+  nextReviewAnnouncement,
+  reduceLiveReviewState,
+  retryCountdown,
+  reviewProgressText,
+  SAFE_REVIEW_FAILURE_LABELS,
+  terminalRefreshDelay,
+  type ReviewAnnouncementState,
+} from "@/review-status-client";
+import {
+  isActiveReviewState,
+  isTerminalReviewState,
+  reviewStatusSnapshotSchema,
+  REVIEW_STATUS_EVENT_NAME,
+  type ReviewStatusSnapshot,
+} from "@/review-status-contract";
 
 type Metadata = {
   slug: string;
@@ -68,9 +87,8 @@ type HistoryItem = {
 
 type Review = {
   id: string;
-  state: string;
   queuedAt: string;
-  steps: Array<{ ordinal: number; roleCode: string; state: string }>;
+  status: ReviewStatusSnapshot;
   proposal: null | {
     id: string;
     summary: string;
@@ -179,9 +197,20 @@ export function WorkspaceEditor({
   context: ContextItem[];
 }) {
   const router = useRouter();
+  const serverReviewSnapshot = review?.status ?? null;
+  const [liveReview, dispatchLiveReview] = useReducer(
+    reduceLiveReviewState,
+    serverReviewSnapshot,
+    initialLiveReviewState,
+  );
+  const reviewStatus =
+    liveReview.reviewJobId === review?.id
+      ? (liveReview.snapshot ?? serverReviewSnapshot)
+      : serverReviewSnapshot;
   const mine = checkout?.holderId === currentUserId;
-  const reviewLocked =
-    review?.state === "QUEUED" || review?.state === "RUNNING";
+  const reviewLocked = reviewStatus
+    ? isActiveReviewState(reviewStatus.state)
+    : false;
   const publicationLocked = Boolean(
     publication &&
     ["REQUESTED", "ASSEMBLING", "PROMOTING", "VERIFYING"].includes(
@@ -210,6 +239,111 @@ export function WorkspaceEditor({
   const savedVersion = useRef(0);
   const submitButton = useRef<HTMLButtonElement>(null);
   const submitDialog = useRef<HTMLDivElement>(null);
+  const reviewConnectionGeneration = useRef(0);
+  const refreshedTerminalSnapshot = useRef<string | null>(
+    serverReviewSnapshot && isTerminalReviewState(serverReviewSnapshot.state)
+      ? serverReviewSnapshot.snapshotId
+      : null,
+  );
+  const previousAnnouncedSnapshot = useRef<ReviewStatusSnapshot | null>(null);
+  const announcementState = useRef<ReviewAnnouncementState>({
+    message: "",
+    lastAnnouncedAt: Number.NEGATIVE_INFINITY,
+    snapshotId: null,
+  });
+  const [reviewAnnouncement, setReviewAnnouncement] = useState("");
+  const [reviewClock, setReviewClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    const generation = ++reviewConnectionGeneration.current;
+    if (
+      !serverReviewSnapshot ||
+      !isActiveReviewState(serverReviewSnapshot.state)
+    ) {
+      dispatchLiveReview({
+        type: "sync",
+        generation,
+        snapshot: serverReviewSnapshot,
+      });
+      return;
+    }
+
+    const reviewJobId = serverReviewSnapshot.reviewJobId;
+    dispatchLiveReview({
+      type: "start",
+      reviewJobId,
+      generation,
+      snapshot: serverReviewSnapshot,
+    });
+    const source = new EventSource(`/api/reviews/${reviewJobId}/events`);
+    source.onopen = () =>
+      dispatchLiveReview({ type: "open", reviewJobId, generation });
+    source.onerror = () =>
+      dispatchLiveReview({
+        type: "connection-error",
+        reviewJobId,
+        generation,
+      });
+    const receiveSnapshot = (rawEvent: Event) => {
+      const event = rawEvent as MessageEvent<string>;
+      try {
+        const snapshot = reviewStatusSnapshotSchema.parse(
+          JSON.parse(event.data) as unknown,
+        );
+        dispatchLiveReview({
+          type: "snapshot",
+          reviewJobId,
+          generation,
+          snapshot,
+        });
+        if (isTerminalReviewState(snapshot.state)) source.close();
+      } catch {
+        // The durable snapshot is recovered by the next valid event or native
+        // EventSource reconnection; malformed public input is never rendered.
+      }
+    };
+    source.addEventListener(REVIEW_STATUS_EVENT_NAME, receiveSnapshot);
+    return () => {
+      source.removeEventListener(REVIEW_STATUS_EVENT_NAME, receiveSnapshot);
+      source.close();
+    };
+  }, [serverReviewSnapshot]);
+
+  useEffect(() => {
+    if (!reviewStatus) return;
+    const nextAnnouncement = nextReviewAnnouncement(
+      announcementState.current,
+      previousAnnouncedSnapshot.current,
+      reviewStatus,
+      Date.now(),
+    );
+    previousAnnouncedSnapshot.current = reviewStatus;
+    if (nextAnnouncement.message !== announcementState.current.message)
+      setReviewAnnouncement(nextAnnouncement.message);
+    announcementState.current = nextAnnouncement;
+  }, [reviewStatus]);
+
+  useEffect(() => {
+    const scheduledAt = reviewStatus?.retry?.scheduledAt;
+    if (!scheduledAt) return;
+    const timer = window.setInterval(() => setReviewClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [reviewStatus?.retry?.scheduledAt]);
+
+  useEffect(() => {
+    if (!reviewStatus || !isTerminalReviewState(reviewStatus.state)) {
+      refreshedTerminalSnapshot.current = null;
+      return;
+    }
+    if (refreshedTerminalSnapshot.current === reviewStatus.snapshotId) return;
+    refreshedTerminalSnapshot.current = reviewStatus.snapshotId;
+    const reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const delay = terminalRefreshDelay(reviewStatus, reducedMotion) ?? 0;
+    const timer = window.setTimeout(() => router.refresh(), delay);
+    return () => window.clearTimeout(timer);
+  }, [reviewStatus, router]);
 
   const body = useMemo(
     () =>
@@ -429,6 +563,9 @@ export function WorkspaceEditor({
 
   return (
     <main className="workspacePage">
+      <span className="srOnly" aria-live="polite" aria-atomic="true">
+        {reviewAnnouncement}
+      </span>
       <header className="workspaceHeader">
         <div className="workspaceTitle">
           <Link className="backLink" href="/">
@@ -450,7 +587,9 @@ export function WorkspaceEditor({
             </span>
             {reviewLocked ? (
               <span className="activityLabel">
-                Review {review?.state.toLowerCase()}
+                {reviewStatus?.retry
+                  ? `Review retrying · ${reviewStatus.currentStage?.displayName ?? "current stage"}`
+                  : `Review ${reviewStatus?.state.toLowerCase()}`}
               </span>
             ) : null}
             {publicationLocked ? (
@@ -501,7 +640,7 @@ export function WorkspaceEditor({
                 >
                   Cancel review
                 </button>
-              ) : review?.state === "FAILED" ? (
+              ) : review && reviewStatus?.state === "FAILED" ? (
                 <button
                   className="secondaryButton"
                   type="button"
@@ -667,8 +806,13 @@ export function WorkspaceEditor({
             </div>
           ) : reviewLocked ? (
             <div className="readOnlyBanner">
-              <strong>Draft pinned for review.</strong> Editing returns when the
-              job finishes or is cancelled.
+              <strong>
+                {reviewStatus?.retry
+                  ? `Review retrying ${reviewStatus.currentStage?.displayName ?? "the current stage"}.`
+                  : "Draft pinned for review."}
+              </strong>{" "}
+              Editing returns when the job finishes or is cancelled. Review
+              continues safely on the server.
             </div>
           ) : null}
           <div className="editColumn">
@@ -1068,29 +1212,138 @@ export function WorkspaceEditor({
                 bytes. The source diff below is exact.
               </p>
             </div>
-            {review ? (
-              <div className="reviewJobCard">
+            {review && reviewStatus ? (
+              <div
+                className={`reviewJobCard review-${reviewStatus.state.toLowerCase()} ${
+                  reviewStatus.retry ? "review-retrying" : ""
+                }`}
+              >
                 <span
-                  className={`jobState state-${review.state.toLowerCase()}`}
+                  className={`jobState state-${
+                    reviewStatus.retry
+                      ? "retrying"
+                      : reviewStatus.state.toLowerCase()
+                  }`}
                 >
-                  {review.state}
+                  {reviewStatus.retry ? "RETRYING" : reviewStatus.state}
                 </span>
                 <strong>22-stage agent review</strong>
-                <span>
-                  {
-                    review.steps.filter((step) => step.state === "SUCCEEDED")
-                      .length
-                  }{" "}
-                  of 22 stages complete
+                <span className="reviewProgressText">
+                  {reviewProgressText(reviewStatus)}
                 </span>
-                <div className="stageRail" aria-hidden="true">
-                  {review.steps.map((step) => (
-                    <i
-                      key={step.ordinal}
-                      className={step.state.toLowerCase()}
-                    />
-                  ))}
+                <div
+                  className="reviewProgressBar"
+                  role="progressbar"
+                  aria-label="Agent review progress"
+                  aria-valuemin={0}
+                  aria-valuemax={reviewStatus.totalStages}
+                  aria-valuenow={reviewStatus.completedStages}
+                  aria-valuetext={reviewProgressText(reviewStatus)}
+                >
+                  <div className="stageRail" aria-hidden="true">
+                    {reviewStatus.stages.map((step) => (
+                      <i
+                        key={step.ordinal}
+                        className={[
+                          step.state.toLowerCase(),
+                          isActiveReviewState(reviewStatus.state) &&
+                          reviewStatus.currentStage?.ordinal === step.ordinal
+                            ? "active"
+                            : "",
+                          reviewStatus.retry?.stageOrdinal === step.ordinal
+                            ? "retrying"
+                            : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                      />
+                    ))}
+                  </div>
                 </div>
+                {reviewStatus.currentStage ? (
+                  <p className="reviewCurrentStage">
+                    <span>
+                      {reviewStatus.state === "FAILED"
+                        ? "Stopped at"
+                        : reviewStatus.state === "CANCELLED"
+                          ? "Cancelled at"
+                          : reviewStatus.retry
+                            ? "Retrying stage"
+                            : "Current stage"}
+                    </span>
+                    <strong>{reviewStatus.currentStage.displayName}</strong>
+                    {reviewStatus.currentStage.attempt ? (
+                      <small>
+                        Attempt {reviewStatus.currentStage.attempt}
+                        {reviewStatus.retry
+                          ? ` of ${reviewStatus.retry.maximumAttempts}`
+                          : ""}
+                      </small>
+                    ) : null}
+                  </p>
+                ) : null}
+                {isActiveReviewState(reviewStatus.state) ? (
+                  <p className="reviewServerActivity">
+                    <i className="reviewActivityIndicator" aria-hidden="true" />
+                    <span>
+                      {liveReview.connection === "reconnecting"
+                        ? "Reconnecting… Review continues safely on the server."
+                        : liveReview.connection === "connecting"
+                          ? "Connecting to live updates… Review continues safely on the server."
+                          : "Review continues safely on the server."}
+                    </span>
+                  </p>
+                ) : null}
+                {reviewStatus.retry ? (
+                  <p className="reviewRetryStatus">
+                    <strong>Automatic retry scheduled</strong>
+                    <span>
+                      {
+                        SAFE_REVIEW_FAILURE_LABELS[
+                          reviewStatus.retry.failureClass
+                        ]
+                      }
+                      {" · "}
+                      attempt {reviewStatus.retry.attempt} of{" "}
+                      {reviewStatus.retry.maximumAttempts}
+                    </span>
+                    <span className="retrySchedule">
+                      {retryCountdown(
+                        reviewStatus.retry.scheduledAt,
+                        reviewClock,
+                      )}
+                      {" · "}
+                      <time dateTime={reviewStatus.retry.scheduledAt}>
+                        {formattedRetryTime(reviewStatus.retry.scheduledAt)}
+                      </time>
+                    </span>
+                  </p>
+                ) : null}
+                {reviewStatus.state === "SUCCEEDED" ? (
+                  <p className="reviewTerminalStatus reviewTerminalSuccess">
+                    <strong>Review complete.</strong>
+                    <span>
+                      {reviewStatus.proposalReady
+                        ? "Loading the complete proposal…"
+                        : "Finalizing the proposal view…"}
+                    </span>
+                  </p>
+                ) : reviewStatus.state === "FAILED" ? (
+                  <p className="reviewTerminalStatus reviewTerminalFailure">
+                    <strong>Review stopped safely.</strong>
+                    <span>
+                      {reviewStatus.terminal?.failureClass
+                        ? `${SAFE_REVIEW_FAILURE_LABELS[reviewStatus.terminal.failureClass]}. `
+                        : ""}
+                      Use Retry review when you are ready.
+                    </span>
+                  </p>
+                ) : reviewStatus.state === "CANCELLED" ? (
+                  <p className="reviewTerminalStatus">
+                    <strong>Review cancelled.</strong>
+                    <span>The workspace is editable again.</span>
+                  </p>
+                ) : null}
               </div>
             ) : (
               <div className="reviewJobCard quiet">

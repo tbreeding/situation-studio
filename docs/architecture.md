@@ -58,6 +58,48 @@ output hashes, strict structured output, usage, and failure classification.
 Codex is preferred and Claude is the provider-scoped fallback. Proposals never
 alter a draft until the editor accepts a change.
 
+An explicitly retryable provider failure returns the job to `QUEUED` at its
+first incomplete stage for two bounded automatic retries. The persisted
+not-before timestamp survives worker restarts, while the global running slot is
+available to other due work. Every attempt remains an immutable `AgentRun`,
+including bounded per-provider duration, safe outcome, and failure-class
+metadata. System retry audits contain no provider output or error text.
+
+### Live review status
+
+The authenticated workspace opens
+`GET /api/reviews/:reviewJobId/events` only while its displayed review is
+`QUEUED` or `RUNNING`. This Node-runtime route is a read-only, same-origin
+Server-Sent Events stream. It uses the ordinary session cookie and does not
+change mutation CSRF handling.
+
+PostgreSQL remains authoritative. A connection receives one complete
+`review-status-v1` snapshot immediately, including the job state, exact
+completed/total counts, the 22 bounded stage states, a safe human-readable
+current stage, attempt and durable retry information when applicable, terminal
+state, proposal readiness, and a deterministic SHA-256 snapshot identity.
+The public Zod schema rejects unknown structure at runtime. It cannot contain
+prompts, evidence, provider output, raw errors, secrets, logs, lease claims, or
+fencing tokens.
+
+The route queries the compact status projection every 1.5 seconds and emits a
+new event only when the deterministic safe snapshot identity changes. A
+15-second comment heartbeat keeps an idle provider call visible to
+intermediaries without causing a client update. A terminal snapshot closes the
+stream. Non-terminal streams also close after two minutes so native
+`EventSource` reconnects with a fresh authenticated request and another full
+snapshot; `Last-Event-ID` is never treated as state. Request abort, response
+cancellation, missing jobs, validation failures, and database errors clear
+timers and stop the stream without exposing the underlying error.
+
+The browser keys every event to both the displayed review ID and a local
+connection generation, so an old review or superseded connection cannot update
+the workspace. A disconnect shows a quiet reconnecting state while the durable
+worker continues independently. Terminal state schedules exactly one server
+refresh, after a short reduced-motion-aware completion transition, to load the
+full proposal and authoritative controls. Heartbeats and countdown ticks do not
+enter the polite live region.
+
 ## Publication and recovery
 
 The publisher:

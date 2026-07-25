@@ -1314,13 +1314,16 @@ button {
 }
 
 .reviewJobCard {
-  min-width: 20rem;
+  min-width: 24rem;
   display: grid;
-  gap: 0.25rem;
+  gap: 0.35rem;
   padding: 0.8rem 0.9rem;
   border: 1px solid #d5ddd8;
   border-radius: 0.55rem;
   background: #f4f8f5;
+  transition:
+    border-color 300ms ease,
+    background-color 300ms ease;
 }
 
 .reviewJobCard strong {
@@ -1330,6 +1333,25 @@ button {
 .reviewJobCard span {
   color: #5f6963;
   font-size: 0.66rem;
+}
+
+.reviewJobCard.review-retrying {
+  border-color: #dfc39f;
+  background: #fffaf1;
+}
+
+.reviewJobCard.review-failed {
+  border-color: #d9c4bf;
+  background: #fbf7f5;
+}
+
+.reviewJobCard.review-cancelled {
+  background: #f7f7f3;
+}
+
+.reviewJobCard.review-succeeded {
+  border-color: #b8d2c4;
+  animation: reviewCompletion 700ms ease-out both;
 }
 
 .reviewJobCard.quiet {
@@ -1344,6 +1366,129 @@ button {
   letter-spacing: 0.08em;
 }
 
+.state-retrying {
+  color: #8a561f !important;
+}
+
+.state-failed {
+  color: #805148 !important;
+}
+
+.state-cancelled {
+  color: #626966 !important;
+}
+
+.reviewProgressText {
+  font-variant-numeric: tabular-nums;
+}
+
+.reviewProgressBar {
+  width: 100%;
+}
+
+.reviewRetryStatus {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0.2rem 0 0 !important;
+  padding: 0.45rem 0.55rem;
+  border-left: 3px solid #c07a32;
+  background: #fff9ef;
+}
+
+.reviewRetryStatus strong {
+  color: #714719;
+}
+
+.reviewRetryStatus span {
+  line-height: 1.45;
+}
+
+.reviewRetryStatus .retrySchedule {
+  color: #684e33;
+  font-variant-numeric: tabular-nums;
+}
+
+.reviewCurrentStage {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin: 0.12rem 0 0 !important;
+}
+
+.reviewCurrentStage > span {
+  color: #5f6963;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.reviewCurrentStage strong {
+  overflow: hidden;
+  color: #39453f;
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reviewCurrentStage small {
+  color: #6a746e;
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.reviewServerActivity {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.15rem 0 0 !important;
+  color: #52635a !important;
+}
+
+.reviewServerActivity span {
+  line-height: 1.4;
+}
+
+.reviewActivityIndicator {
+  position: relative;
+  width: 0.48rem;
+  height: 0.48rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #4c9173;
+}
+
+.reviewActivityIndicator::after {
+  position: absolute;
+  inset: -0.22rem;
+  border: 1px solid #4c9173;
+  border-radius: inherit;
+  content: "";
+  opacity: 0;
+  animation: reviewActivityPulse 2.4s ease-out infinite;
+}
+
+.reviewTerminalStatus {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0.2rem 0 0 !important;
+  padding-top: 0.4rem;
+  border-top: 1px solid #dfe6e1;
+}
+
+.reviewTerminalStatus strong {
+  color: #445049;
+}
+
+.reviewTerminalFailure strong {
+  color: #74483f;
+}
+
+.reviewTerminalSuccess strong {
+  color: var(--forest);
+}
+
 .stageRail {
   display: grid;
   grid-template-columns: repeat(22, 1fr);
@@ -1352,17 +1497,93 @@ button {
 }
 
 .stageRail i {
+  position: relative;
+  overflow: hidden;
   height: 0.28rem;
   border-radius: 2px;
   background: #d7ddd9;
+  transition:
+    background-color 360ms ease,
+    transform 360ms ease;
 }
 
 .stageRail i.succeeded {
   background: #4c9173;
+  animation: reviewStageComplete 460ms ease-out both;
 }
 
 .stageRail i.running {
   background: #c07a32;
+}
+
+.stageRail i.active:not(.succeeded) {
+  background: #c9b08e;
+}
+
+.stageRail i.active:not(.succeeded)::after {
+  position: absolute;
+  inset: 0;
+  width: 55%;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 72%),
+    transparent
+  );
+  transform: translateX(-140%);
+  animation: reviewStageTravel 2.8s ease-in-out infinite;
+}
+
+.stageRail i.retrying {
+  background: #bd7b36;
+}
+
+@keyframes reviewStageTravel {
+  0%,
+  24% {
+    transform: translateX(-140%);
+  }
+
+  76%,
+  100% {
+    transform: translateX(240%);
+  }
+}
+
+@keyframes reviewStageComplete {
+  from {
+    background: #c9b08e;
+    transform: scaleY(0.72);
+  }
+
+  to {
+    background: #4c9173;
+    transform: scaleY(1);
+  }
+}
+
+@keyframes reviewActivityPulse {
+  0% {
+    opacity: 0.45;
+    transform: scale(0.75);
+  }
+
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+
+@keyframes reviewCompletion {
+  from {
+    background: #f4f8f5;
+  }
+
+  to {
+    background: #f1f8f4;
+  }
 }
 
 .renderCompare {
@@ -2030,6 +2251,13 @@ button {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+
+  .reviewJobCard.review-succeeded,
+  .stageRail i.succeeded,
+  .stageRail i.active::after,
+  .reviewActivityIndicator::after {
+    animation: none !important;
   }
 }
 

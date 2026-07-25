@@ -23,6 +23,16 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      {
+        source: "/api/reviews/:id/events",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "private, no-cache, no-store, no-transform",
+          },
+          { key: "X-Accel-Buffering", value: "no" },
+        ],
+      },
     ];
   },
 };

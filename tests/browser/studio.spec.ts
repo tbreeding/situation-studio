@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { Client } from "pg";
 
 const databaseUrl =
@@ -65,6 +66,13 @@ test.beforeAll(async () => {
 test("rejects off-site return destinations and exposes no public signup", async ({
   page,
 }) => {
+  const unauthenticatedStream = await page.request.get(
+    "/api/reviews/11111111-1111-4111-8111-111111111111/events",
+  );
+  expect(unauthenticatedStream.status()).toBe(401);
+  await expect(unauthenticatedStream.json()).resolves.toEqual({
+    error: "Authentication required.",
+  });
   await page.goto("/auth/login/begin?returnTo=%2F%2Fattacker.example%2Fsteal");
   await expect(page).toHaveURL("http://localhost:3015/login");
   await expect(
@@ -201,6 +209,319 @@ test("durable checkout, autosave, preview, dialog focus, and check-in work end t
   expect(latest.rows[0]?.bundle_manifest).toMatchObject({
     metadata: { title: changedTitle },
   });
+});
+
+test("workspace streams worker progress, retry, terminal, and proposal state without reload", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-1280",
+    "Run the retry-state mutation path once.",
+  );
+  const candidate = await database.query<{ id: string; slug: string }>(
+    `SELECT situation.id, situation.slug
+       FROM situations situation
+      WHERE NOT EXISTS (
+              SELECT 1
+                FROM situation_checkouts checkout
+               WHERE checkout.situation_id = situation.id
+                 AND checkout.released_at IS NULL
+            )
+        AND NOT EXISTS (
+              SELECT 1
+                FROM review_jobs review
+               WHERE review.situation_id = situation.id
+                 AND review.state IN ('QUEUED', 'RUNNING')
+            )
+        AND situation.slug <> 'defensive-about-feedback'
+      ORDER BY situation.slug
+      LIMIT 1`,
+  );
+  const situation = candidate.rows[0];
+  if (!situation)
+    throw new Error("Browser retry-state fixture situation is unavailable.");
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await signIn(page);
+  const row = page
+    .locator("article.inventoryRow")
+    .filter({ hasText: situation.slug });
+  await row.getByRole("button", { name: "Check out" }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/situations/${situation.slug}$`, "u"),
+  );
+  const streamConnected = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/reviews/") &&
+      response.url().endsWith("/events") &&
+      response.status() === 200,
+  );
+  await page.getByRole("button", { name: "Run agent review" }).click();
+  await expect(page.getByText("Review queued")).toBeVisible();
+  const streamResponse = await streamConnected;
+  expect(streamResponse.headers()["content-type"]).toContain(
+    "text/event-stream",
+  );
+  expect(streamResponse.headers()["cache-control"]).toContain("no-transform");
+
+  const jobResult = await database.query<{
+    id: string;
+    input_revision_id: string;
+  }>(
+    `SELECT id, input_revision_id
+       FROM review_jobs
+      WHERE situation_id = $1
+        AND state = 'QUEUED'
+      ORDER BY queued_at DESC
+      LIMIT 1`,
+    [situation.id],
+  );
+  const job = jobResult.rows[0];
+  if (!job) throw new Error("Browser retry-state review was not queued.");
+  const stepResult = await database.query<{
+    id: string;
+    role_code: string;
+    ordinal: number;
+  }>(
+    `SELECT id, role_code, ordinal
+       FROM review_steps
+      WHERE job_id = $1
+      ORDER BY ordinal
+      LIMIT 2`,
+    [job.id],
+  );
+  const firstStep = stepResult.rows[0];
+  const activeStep = stepResult.rows[1];
+  if (!firstStep || !activeStep)
+    throw new Error("Browser live-review steps are unavailable.");
+
+  await page.getByRole("tab", { name: "Review" }).click();
+  const progress = page.getByRole("progressbar", {
+    name: "Agent review progress",
+  });
+  await expect(progress).toHaveAttribute("aria-valuenow", "0");
+  const pageIdentity = await page.evaluate(() => {
+    const identity = crypto.randomUUID();
+    Object.assign(window, { __studioLiveReviewIdentity: identity });
+    return identity;
+  });
+
+  await database.query(
+    `UPDATE review_jobs
+        SET state = 'RUNNING',
+            started_at = now(),
+            claim_token = $2,
+            lease_expires_at = now() + interval '2 minutes'
+      WHERE id = $1`,
+    [job.id, randomUUID()],
+  );
+  await database.query(
+    `UPDATE review_steps
+        SET state = 'SUCCEEDED',
+            output_hash = $2,
+            finished_at = now()
+      WHERE id = $1`,
+    [firstStep.id, "b".repeat(64)],
+  );
+  await database.query(
+    `UPDATE review_steps
+        SET state = 'RUNNING',
+            started_at = now()
+      WHERE id = $1`,
+    [activeStep.id],
+  );
+  await database.query(
+    `INSERT INTO agent_runs (
+       id, step_id, attempt, requested_provider, requested_model,
+       reasoning_effort, evidence_hash, started_at
+     ) VALUES (
+       $1, $2, 1, 'codex', 'gpt-5.6-sol', 'high', $3, now()
+     )`,
+    [randomUUID(), activeStep.id, "a".repeat(64)],
+  );
+
+  await expect(progress).toHaveAttribute("aria-valuenow", "1", {
+    timeout: 10_000,
+  });
+  await expect(progress).toHaveAttribute(
+    "aria-valuetext",
+    "1 of 22 stages complete",
+  );
+  await expect(
+    page.getByText("1 of 22 stages complete", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Nonviolent communication critique", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Review continues safely on the server."),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as typeof window & {
+            __studioLiveReviewIdentity?: string;
+          }
+        ).__studioLiveReviewIdentity,
+    ),
+  ).toBe(pageIdentity);
+  await expect(page.locator(".stageRail i.active")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
+  expect(
+    await page
+      .locator(".reviewActivityIndicator")
+      .evaluate(
+        (element) => getComputedStyle(element, "::after").animationName,
+      ),
+  ).toBe("none");
+
+  const scheduledAt = new Date(Date.now() + 15 * 60_000);
+  await database.query(
+    `UPDATE review_jobs
+        SET state = 'QUEUED',
+            retry_not_before = $2,
+            failure_code = 'TRANSIENT',
+            claim_token = NULL,
+            lease_expires_at = NULL
+      WHERE id = $1`,
+    [job.id, scheduledAt],
+  );
+  await database.query(
+    `UPDATE review_steps
+        SET state = 'READY',
+            started_at = NULL,
+            finished_at = NULL
+      WHERE id = $1`,
+    [activeStep.id],
+  );
+  await database.query(
+    `UPDATE agent_runs
+        SET provider_attempts = $2::jsonb,
+            failure_class = 'PROVIDER_TRANSIENT',
+            retryable = true,
+            finished_at = now()
+      WHERE step_id = $1
+        AND attempt = 1`,
+    [
+      activeStep.id,
+      JSON.stringify([
+        {
+          provider: "codex",
+          model: "gpt-5.6-sol",
+          durationMs: 90_000,
+          outcome: "TIMED_OUT",
+          failureClass: "TRANSIENT",
+          retryable: true,
+        },
+      ]),
+    ],
+  );
+
+  await expect(page.getByText("RETRYING", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Nonviolent communication critique", { exact: true }),
+  ).toBeVisible();
+  const retryStatus = page.locator(".reviewRetryStatus");
+  await expect(retryStatus).toContainText("Temporary provider interruption");
+  await expect(retryStatus).toContainText("attempt 1 of 3");
+  await expect(retryStatus.locator("time")).toHaveAttribute(
+    "datetime",
+    scheduledAt.toISOString(),
+  );
+  await expect(page.locator('[aria-live="polite"]')).toContainText(
+    "will retry automatically",
+  );
+  await expectNoCriticalAccessibilityViolations(page);
+
+  await database.query(
+    `UPDATE review_jobs
+        SET state = 'FAILED',
+            finished_at = now(),
+            retry_not_before = NULL
+      WHERE id = $1`,
+    [job.id],
+  );
+  await database.query(
+    `UPDATE review_steps
+        SET state = 'FAILED',
+            finished_at = now()
+      WHERE id = $1`,
+    [activeStep.id],
+  );
+  await expect(page.getByRole("button", { name: "Retry review" })).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByText("Review stopped safely.")).toBeVisible();
+
+  const retryStreamConnected = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/reviews/${job.id}/events`) &&
+      response.status() === 200,
+  );
+  await page.getByRole("button", { name: "Retry review" }).click();
+  await retryStreamConnected;
+  await expect(page.getByText("QUEUED", { exact: true })).toBeVisible();
+
+  await database.query(
+    `UPDATE review_steps
+        SET state = 'SUCCEEDED',
+            output_hash = COALESCE(output_hash, $2),
+            finished_at = now()
+      WHERE job_id = $1`,
+    [job.id, "c".repeat(64)],
+  );
+  const proposalSummary = `Browser live proposal ${Date.now()}`;
+  await database.query(
+    `INSERT INTO review_proposals (
+       id, job_id, input_revision_id, summary, findings, proposal_hash
+     ) VALUES ($1, $2, $3, $4, '[]'::jsonb, $5)`,
+    [
+      randomUUID(),
+      job.id,
+      job.input_revision_id,
+      proposalSummary,
+      randomUUID().replaceAll("-", "").repeat(2),
+    ],
+  );
+  await database.query(
+    `UPDATE review_jobs
+        SET state = 'SUCCEEDED',
+            finished_at = now(),
+            retry_not_before = NULL,
+            failure_code = NULL,
+            claim_token = NULL,
+            lease_expires_at = NULL
+      WHERE id = $1`,
+    [job.id],
+  );
+  await expect(page.getByText("Review complete.", { exact: true })).toBeVisible(
+    {
+      timeout: 10_000,
+    },
+  );
+  await expect(page.getByText(proposalSummary)).toBeVisible({
+    timeout: 10_000,
+  });
+
+  const cancellationStream = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/reviews/") &&
+      response.url().endsWith("/events") &&
+      response.status() === 200 &&
+      response.url() !== streamResponse.url(),
+  );
+  await page.getByRole("button", { name: "Run agent review" }).click();
+  await cancellationStream;
+  await page.getByRole("button", { name: "Cancel review" }).click();
+  await expect(
+    page.getByRole("button", { name: "Run agent review" }),
+  ).toBeVisible();
+  await expect(page.getByText("Review cancelled.")).toBeVisible();
+  await page.getByRole("button", { name: "Check in" }).click();
+  await expect(page).toHaveURL("http://localhost:3015/");
 });
 
 test("throttles indistinguishable invalid logins", async ({

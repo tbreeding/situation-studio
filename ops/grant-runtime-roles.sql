@@ -73,6 +73,8 @@ GRANT SELECT, INSERT, UPDATE ON agent_runs
   TO situation_studio_review_worker;
 GRANT SELECT, INSERT ON review_proposals, proposal_changes
   TO situation_studio_review_worker;
+GRANT INSERT ON audit_events
+  TO situation_studio_review_worker;
 GRANT SELECT ON draft_revisions, draft_revision_artifacts, content_blobs,
   drafts, production_situation_versions, production_version_artifacts,
   scoped_artifact_variants

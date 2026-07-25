@@ -7,6 +7,8 @@ set -euo pipefail
 : "${SITUATION_STUDIO_PUBLIC_HOST:?missing approved host header}"
 
 studio_host="${SITUATION_STUDIO_DEPLOY_HOST}"
+studio_ssh_user="${SITUATION_STUDIO_DEPLOY_USER:-}"
+studio_ssh_target="${studio_host}"
 studio_root="${SITUATION_STUDIO_DEPLOY_ROOT:-/home/admin/projects/situation-studio}"
 studio_release_id="${SITUATION_STUDIO_RELEASE_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 studio_release="${studio_root}/releases/${studio_release_id}"
@@ -21,6 +23,11 @@ publisher_user="${SITUATION_STUDIO_PUBLISHER_USER:-situation-studio-publisher}"
 web_environment="${studio_root}/shared/web.env"
 review_environment="${studio_root}/shared/review.env"
 publisher_environment="${studio_root}/shared/publisher.env"
+provision_environment="${studio_root}/shared/provision.env"
+
+if [[ -n "${studio_ssh_user}" ]]; then
+  studio_ssh_target="${studio_ssh_user}@${studio_host}"
+fi
 
 if [[ "${SITUATION_STUDIO_APPROVED_COMMIT}" != "${studio_commit}" ]]; then
   echo "Production deployment is approved only for ${SITUATION_STUDIO_APPROVED_COMMIT}." >&2
@@ -40,6 +47,7 @@ if [[ "${public_gate_mode}" != "required" && "${public_gate_mode}" != "first-dep
 fi
 if [[
   ! "${studio_host}" =~ ^[A-Za-z0-9._-]+$ ||
+  ( -n "${studio_ssh_user}" && ! "${studio_ssh_user}" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ) ||
   ! "${studio_root}" =~ ^/[A-Za-z0-9._/-]+$ ||
   "${studio_root}" == "/" ||
   "${studio_root}" == *"/../"* ||
@@ -76,12 +84,13 @@ if [[ ! "${studio_release_id}" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
   exit 1
 fi
 
-echo "[1/7] Preflighting the approved production host"
-ssh "${studio_host}" bash -s -- \
+echo "[1/8] Preflighting the approved production host"
+ssh "${studio_ssh_target}" bash -s -- \
   "${studio_root}" \
   "${web_environment}" \
   "${review_environment}" \
   "${publisher_environment}" \
+  "${provision_environment}" \
   "${web_user}" \
   "${review_user}" \
   "${publisher_user}" \
@@ -92,18 +101,20 @@ studio_root="${1}"
 web_environment="${2}"
 review_environment="${3}"
 publisher_environment="${4}"
-web_user="${5}"
-review_user="${6}"
-publisher_user="${7}"
-required_codex_cli_version="${8}"
-required_claude_cli_version="${9}"
+provision_environment="${5}"
+web_user="${6}"
+review_user="${7}"
+publisher_user="${8}"
+required_codex_cli_version="${9}"
+required_claude_cli_version="${10}"
 for service_user in "${web_user}" "${review_user}" "${publisher_user}"; do
   id "${service_user}" >/dev/null
 done
 for environment_file in \
   "${web_environment}" \
   "${review_environment}" \
-  "${publisher_environment}"; do
+  "${publisher_environment}" \
+  "${provision_environment}"; do
   test -f "${environment_file}"
   mode="$(stat -c '%a' "${environment_file}")"
   [[ "${mode}" == "400" || "${mode}" == "600" ]]
@@ -111,6 +122,7 @@ done
 test "$(stat -c '%U' "${web_environment}")" = "${web_user}"
 test "$(stat -c '%U' "${review_environment}")" = "${review_user}"
 test "$(stat -c '%U' "${publisher_environment}")" = "${publisher_user}"
+test "$(stat -c '%U' "${provision_environment}")" = "$(id -un)"
 test "$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)" -ge 1048576
 install -d -m 0755 "${studio_root}/releases"
 test "$(df --output=avail -B1 "${studio_root}" | tail -1)" -ge 5368709120
@@ -167,17 +179,25 @@ if [[ "${SITUATION_STUDIO_PREFLIGHT_ONLY:-}" == "1" ]]; then
   exit 0
 fi
 
-echo "[2/7] Verifying the complete local workspace"
+echo "[2/8] Verifying the complete local workspace"
 pnpm verify
 
-echo "[3/7] Creating immutable committed-source release (${studio_archive_bytes} bytes)"
-ssh "${studio_host}" test ! -e "${studio_release}"
-ssh "${studio_host}" mkdir -p "${studio_release}"
+echo "[3/8] Creating immutable committed-source release (${studio_archive_bytes} bytes)"
+ssh "${studio_ssh_target}" test ! -e "${studio_release}"
+ssh "${studio_ssh_target}" mkdir -p "${studio_release}"
 git archive --format=tar "${studio_commit}" |
-  ssh "${studio_host}" tar -xf - -C "${studio_release}"
+  ssh "${studio_ssh_target}" tar -xf - -C "${studio_release}"
+ssh "${studio_ssh_target}" bash -s -- \
+  "${studio_release}" \
+  "${studio_commit}" <<'REMOTE'
+set -euo pipefail
+release="${1}"
+commit="${2}"
+printf '%s\n' "${commit}" >"${release}/.release-commit"
+REMOTE
 
-echo "[4/7] Installing and building the pinned release"
-ssh "${studio_host}" bash -s -- "${studio_release}" <<'REMOTE'
+echo "[4/8] Installing and building the pinned release"
+ssh "${studio_ssh_target}" bash -s -- "${studio_release}" <<'REMOTE'
 set -euo pipefail
 release="${1}"
 cd "${release}"
@@ -190,12 +210,18 @@ pnpm db:generate
 pnpm --filter @situation-studio/web build
 REMOTE
 
-echo "[5/7] Cutting over the three isolated processes"
+echo "[5/8] Applying additive Studio migrations and runtime grants"
+ssh "${studio_ssh_target}" env \
+  "STUDIO_RELEASE=${studio_release}" \
+  "STUDIO_PROVISION_ENV_FILE=${provision_environment}" \
+  bash "${studio_release}/ops/apply-studio-release-schema.sh"
+
+echo "[6/8] Cutting over the three isolated processes"
 studio_previous="$(
-  ssh "${studio_host}" \
+  ssh "${studio_ssh_target}" \
     "if test -L '${studio_root}/current' && test -e '${studio_root}/current'; then readlink -f '${studio_root}/current'; fi"
 )"
-ssh "${studio_host}" bash -s -- \
+ssh "${studio_ssh_target}" bash -s -- \
   "${studio_root}" \
   "${studio_release}" \
   "${web_user}" \
@@ -241,12 +267,27 @@ sudo -n env \
 sudo -n env "PATH=${PATH}" "${pm2_bin}" save
 REMOTE
 
-echo "[6/7] Verifying local application health"
-if ! ssh "${studio_host}" \
-  "for attempt in \$(seq 1 45); do if curl -fsS http://127.0.0.1:3015/health/live >/dev/null && curl -fsS http://127.0.0.1:3015/health/ready >/dev/null; then exit 0; fi; sleep 2; done; exit 1"; then
+echo "[7/8] Verifying local application health and release identity"
+if ! ssh "${studio_ssh_target}" bash -s -- \
+  "${studio_root}" \
+  "${studio_commit}" <<'REMOTE'
+set -euo pipefail
+studio_root="${1}"
+studio_commit="${2}"
+test "$(cat "${studio_root}/current/.release-commit")" = "${studio_commit}"
+for attempt in $(seq 1 45); do
+  if curl -fsS http://127.0.0.1:3015/health/live >/dev/null &&
+    curl -fsS http://127.0.0.1:3015/health/ready >/dev/null; then
+    exit 0
+  fi
+  sleep 2
+done
+exit 1
+REMOTE
+then
   echo "Studio health failed; restoring the prior release." >&2
   if [[ -n "${studio_previous}" && "${studio_previous}" != "${studio_root}/current" ]]; then
-    ssh "${studio_host}" bash -s -- \
+    ssh "${studio_ssh_target}" bash -s -- \
       "${studio_root}" \
       "${studio_previous}" \
       "${web_user}" \
@@ -293,7 +334,7 @@ REMOTE
   exit 1
 fi
 
-echo "[7/7] Verifying the approved protected public origin"
+echo "[8/8] Verifying the approved protected public origin"
 if [[ "${public_gate_mode}" == "first-deploy-deferred" ]]; then
   if [[ -n "${studio_previous}" ]]; then
     echo "Public-gate verification may be deferred only for the first Studio release." >&2

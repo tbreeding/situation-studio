@@ -992,6 +992,26 @@ approval at the appropriate implementation checkpoint.
 - [ ] All 22 required stages are represented and durable.
 - [ ] Cancelling a job makes the situation editable and fences late outputs.
 - [ ] A worker restart resumes without duplicating successful steps.
+- [ ] Only explicitly retryable provider failures receive two automatic
+      retries, with a durable not-before schedule and immutable attempt
+      history.
+- [ ] Retry backoff remains cancellable and fenced, and releases the one global
+      running slot without allowing an early post-restart claim.
+- [ ] Retry scheduling records a bounded system audit and the workspace shows
+      stage, safe class, attempt count, and scheduled time.
+- [ ] Historical terminal provider failures do not indefinitely degrade
+      readiness for a currently healthy worker.
+- [ ] An authenticated same-origin `review-status-v1` SSE stream sends a full
+      durable snapshot on connect/reconnect and changed snapshots only.
+- [ ] Heartbeats, abort cleanup, bounded lifetime, native reconnection, and
+      stale review/connection rejection do not affect worker authority.
+- [ ] The workspace advances exact stage progress without reload, refreshes
+      server data once on terminal state, and presents durable retry backoff.
+- [ ] Review motion is restrained and reduced-motion safe; exact semantic
+      progress and throttled polite announcements remain understandable
+      without animation.
+- [ ] Public review status excludes provider content, prompts, evidence, raw
+      errors, logs, secrets, and internal fencing or claim data.
 - [ ] Provider/model, effort, hashes, structured output, usage, and failure
       evidence are recorded for every run.
 - [ ] A completed review creates one immutable proposal and does not change the

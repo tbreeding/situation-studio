@@ -145,6 +145,14 @@ Only one job can be queued or running per situation and one job can be running
 globally. Queue ordering is `(queued_at, id)`. Cancellation increments the job
 fence so late provider results cannot commit.
 
+Retryable means an `AdapterFailure` explicitly carrying `retryable = true`.
+Each stage receives at most three automatic attempts: the initial attempt,
+then durable 5-second and 30-second backoffs. A queued retry stores its
+`retry_not_before` timestamp, releases the global running slot, and is
+ineligible for claim until that timestamp. Succeeded steps and all prior
+`AgentRun` rows remain unchanged. Exhaustion and every non-retryable failure
+remain terminal and retain the editor-triggered retry path.
+
 ## Publication transitions
 
 | From       | Event                                         | To                |

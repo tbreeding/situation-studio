@@ -1,6 +1,7 @@
 import {
   AdapterFailure,
   bundleWriterOutputSchema,
+  providerAttemptsMetadataSchema,
   runWithFallback,
   type AdapterResult,
   type SubscriptionCliProvider,
@@ -24,6 +25,49 @@ export type ReviewProviderConfiguration =
       claude: SubscriptionCliProvider;
     };
 
+export const REVIEW_STAGE_MAX_ATTEMPTS = 3;
+export const DEFAULT_REVIEW_RETRY_DELAYS_MS = [5_000, 30_000] as const;
+
+export type ReviewWorkerTiming = {
+  now?: () => Date;
+  retryDelaysMs?: readonly number[];
+  leaseDurationMs?: number;
+};
+
+export type ReviewProcessingOptions = {
+  timing?: ReviewWorkerTiming;
+  runStage?: typeof runWithFallback;
+};
+
+const DEFAULT_LEASE_DURATION_MS = 120_000;
+const MAX_RETRY_DELAY_MS = 5 * 60_000;
+
+function currentTime(timing?: ReviewWorkerTiming) {
+  return new Date((timing?.now ?? (() => new Date()))().getTime());
+}
+
+function leaseDurationMs(timing?: ReviewWorkerTiming) {
+  const duration = timing?.leaseDurationMs ?? DEFAULT_LEASE_DURATION_MS;
+  if (!Number.isInteger(duration) || duration <= 0)
+    throw new Error("Review lease duration must be a positive integer.");
+  return duration;
+}
+
+function retryDelayMs(attempt: number, timing?: ReviewWorkerTiming) {
+  const delays = timing?.retryDelaysMs ?? DEFAULT_REVIEW_RETRY_DELAYS_MS;
+  const delay = delays[attempt - 1];
+  if (
+    delay === undefined ||
+    !Number.isInteger(delay) ||
+    delay < 0 ||
+    delay > MAX_RETRY_DELAY_MS
+  )
+    throw new Error(
+      "Review retry delays must provide two bounded non-negative integers.",
+    );
+  return delay;
+}
+
 function failureClass(error: AdapterFailure): AgentFailureClass {
   const classes: Record<AdapterFailure["failureClass"], AgentFailureClass> = {
     CAPACITY: "PROVIDER_CAPACITY",
@@ -36,6 +80,13 @@ function failureClass(error: AdapterFailure): AgentFailureClass {
   return classes[error.failureClass];
 }
 
+function isRetryableProviderFailure(error: AdapterFailure) {
+  return (
+    error.retryable &&
+    ["CAPACITY", "TRANSIENT", "INVALID_OUTPUT"].includes(error.failureClass)
+  );
+}
+
 function rolePrompt(role: string) {
   return [
     `You are the ${role} stage in a leadership-content editorial review.`,
@@ -46,19 +97,30 @@ function rolePrompt(role: string) {
   ].join("\n");
 }
 
-export async function claimNextReview(database: DatabaseClient) {
+export async function claimNextReview(
+  database: DatabaseClient,
+  timing?: ReviewWorkerTiming,
+) {
+  const now = currentTime(timing);
   try {
     return await database.$transaction(
       async (transaction) => {
         const rows = await transaction.$queryRaw<
-          Array<{ id: string; state: "QUEUED" | "RUNNING" }>
+          Array<{
+            id: string;
+            state: "QUEUED" | "RUNNING";
+            startedAt: Date | null;
+          }>
         >`
-          SELECT id, state::text
+          SELECT id, state::text, started_at AS "startedAt"
           FROM review_jobs
-          WHERE state = 'QUEUED'
+          WHERE (
+               state = 'QUEUED'
+               AND (retry_not_before IS NULL OR retry_not_before <= ${now})
+             )
              OR (
                state = 'RUNNING'
-               AND (lease_expires_at IS NULL OR lease_expires_at < now())
+               AND (lease_expires_at IS NULL OR lease_expires_at < ${now})
              )
           ORDER BY queued_at, id
           FOR UPDATE SKIP LOCKED
@@ -74,8 +136,8 @@ export async function claimNextReview(database: DatabaseClient) {
             },
             data: {
               failureClass: "APPLICATION",
-              retryable: true,
-              finishedAt: new Date(),
+              retryable: false,
+              finishedAt: now,
             },
           });
           await transaction.reviewStep.updateMany({
@@ -88,9 +150,11 @@ export async function claimNextReview(database: DatabaseClient) {
           where: { id: selected.id },
           data: {
             state: "RUNNING",
-            ...(selected.state === "QUEUED" ? { startedAt: new Date() } : {}),
+            ...(!selected.startedAt ? { startedAt: now } : {}),
             claimToken,
-            leaseExpiresAt: new Date(Date.now() + 120_000),
+            leaseExpiresAt: new Date(now.getTime() + leaseDurationMs(timing)),
+            retryNotBefore: null,
+            failureCode: null,
           },
         });
       },
@@ -212,7 +276,9 @@ async function buildEvidence(
 async function renewReviewLease(
   database: DatabaseClient,
   input: { jobId: string; fence: bigint; claimToken: string },
+  timing?: ReviewWorkerTiming,
 ) {
+  const now = currentTime(timing);
   const renewed = await database.reviewJob.updateMany({
     where: {
       id: input.jobId,
@@ -220,7 +286,9 @@ async function renewReviewLease(
       fence: input.fence,
       claimToken: input.claimToken,
     },
-    data: { leaseExpiresAt: new Date(Date.now() + 120_000) },
+    data: {
+      leaseExpiresAt: new Date(now.getTime() + leaseDurationMs(timing)),
+    },
   });
   if (renewed.count !== 1)
     throw new AdapterFailure(
@@ -265,8 +333,10 @@ async function recordSuccess(
     claimToken: string;
     result: AdapterResult;
   },
+  timing?: ReviewWorkerTiming,
 ) {
-  await database.$transaction(async (transaction) => {
+  const now = currentTime(timing);
+  const committed = await database.$transaction(async (transaction) => {
     const job = await transaction.reviewJob.findFirst({
       where: {
         id: input.jobId,
@@ -275,7 +345,17 @@ async function recordSuccess(
         claimToken: input.claimToken,
       },
     });
-    if (!job) return;
+    if (!job) {
+      await transaction.agentRun.updateMany({
+        where: { id: input.runId, finishedAt: null },
+        data: {
+          failureClass: "CANCELLED",
+          retryable: false,
+          finishedAt: now,
+        },
+      });
+      return false;
+    }
     await transaction.agentRun.update({
       where: { id: input.runId },
       data: {
@@ -286,19 +366,23 @@ async function recordSuccess(
         inputTokens: input.result.usage.inputTokens,
         outputTokens: input.result.usage.outputTokens,
         usageEstimated: input.result.usage.estimated,
-        finishedAt: new Date(),
+        providerAttempts: providerAttemptsMetadataSchema.parse(
+          input.result.providerAttempts,
+        ) as Prisma.InputJsonValue,
+        finishedAt: now,
       },
     });
-    await transaction.reviewStep.updateMany({
+    const step = await transaction.reviewStep.updateMany({
       where: { id: input.stepId, state: "RUNNING" },
       data: {
         state: "SUCCEEDED",
         outputHash: input.result.outputHash,
-        finishedAt: new Date(),
+        finishedAt: now,
       },
     });
+    return step.count === 1;
   });
-  await readyDependents(database, input.jobId);
+  if (committed) await readyDependents(database, input.jobId);
 }
 
 async function recordFailure(
@@ -309,13 +393,27 @@ async function recordFailure(
     runId: string;
     fence: bigint;
     claimToken: string;
+    attempt: number;
     error: unknown;
   },
+  timing?: ReviewWorkerTiming,
 ) {
-  const adapterError =
-    input.error instanceof AdapterFailure
-      ? input.error
-      : new AdapterFailure("APPLICATION", "Review stage failed.", false);
+  const explicitAdapterFailure =
+    input.error instanceof AdapterFailure ? input.error : null;
+  const adapterError: AdapterFailure =
+    explicitAdapterFailure ??
+    new AdapterFailure("APPLICATION", "Review stage failed.", false);
+  const automaticallyRetry =
+    explicitAdapterFailure !== null &&
+    isRetryableProviderFailure(adapterError) &&
+    input.attempt < REVIEW_STAGE_MAX_ATTEMPTS;
+  const now = currentTime(timing);
+  const retryAt = automaticallyRetry
+    ? new Date(now.getTime() + retryDelayMs(input.attempt, timing))
+    : null;
+  const providerAttempts = providerAttemptsMetadataSchema.parse(
+    adapterError.providerAttempts,
+  ) as Prisma.InputJsonValue;
   await database.$transaction(async (transaction) => {
     const job = await transaction.reviewJob.findFirst({
       where: {
@@ -325,24 +423,86 @@ async function recordFailure(
         claimToken: input.claimToken,
       },
     });
-    if (!job) return;
+    if (!job) {
+      await transaction.agentRun.updateMany({
+        where: { id: input.runId, finishedAt: null },
+        data: {
+          failureClass: "CANCELLED",
+          retryable: false,
+          providerAttempts,
+          finishedAt: now,
+        },
+      });
+      return;
+    }
+    const step = await transaction.reviewStep.findUniqueOrThrow({
+      where: { id: input.stepId },
+      select: { ordinal: true, roleCode: true },
+    });
     await transaction.agentRun.update({
       where: { id: input.runId },
       data: {
         failureClass: failureClass(adapterError),
         retryable: adapterError.retryable,
-        finishedAt: new Date(),
+        providerAttempts,
+        finishedAt: now,
       },
     });
+    if (automaticallyRetry && retryAt) {
+      await transaction.reviewStep.update({
+        where: { id: input.stepId },
+        data: {
+          state: "READY",
+          startedAt: null,
+          finishedAt: null,
+        },
+      });
+      await transaction.reviewJob.update({
+        where: { id: input.jobId },
+        data: {
+          state: "QUEUED",
+          queuedAt: now,
+          finishedAt: null,
+          retryNotBefore: retryAt,
+          failureCode: adapterError.failureClass,
+          claimToken: null,
+          leaseExpiresAt: null,
+        },
+      });
+      await transaction.$executeRaw`
+        INSERT INTO audit_events (
+          id, actor_id, action, subject_type, subject_id, payload, occurred_at
+        )
+        VALUES (
+          ${crypto.randomUUID()}::uuid,
+          NULL,
+          'REVIEW_AUTOMATIC_RETRY_SCHEDULED',
+          'REVIEW_JOB',
+          ${input.jobId},
+          ${JSON.stringify({
+            systemActor: "review-worker",
+            stageOrdinal: step.ordinal,
+            stageRole: step.roleCode,
+            failureClass: failureClass(adapterError),
+            attempt: input.attempt,
+            maximumAttempts: REVIEW_STAGE_MAX_ATTEMPTS,
+            scheduledRetryAt: retryAt.toISOString(),
+          })}::jsonb,
+          ${now}
+        )
+      `;
+      return;
+    }
     await transaction.reviewStep.update({
       where: { id: input.stepId },
-      data: { state: "FAILED", finishedAt: new Date() },
+      data: { state: "FAILED", finishedAt: now },
     });
     await transaction.reviewJob.update({
       where: { id: input.jobId },
       data: {
         state: "FAILED",
-        finishedAt: new Date(),
+        finishedAt: now,
+        retryNotBefore: null,
         failureCode: adapterError.failureClass,
         claimToken: null,
         leaseExpiresAt: null,
@@ -359,7 +519,9 @@ async function recordApplicationFailure(
     fence: bigint;
     claimToken: string;
   },
+  timing?: ReviewWorkerTiming,
 ) {
+  const now = currentTime(timing);
   await database.$transaction(async (transaction) => {
     const active = await transaction.reviewJob.findFirst({
       where: {
@@ -372,13 +534,14 @@ async function recordApplicationFailure(
     if (!active) return;
     await transaction.reviewStep.updateMany({
       where: { id: input.stepId, state: { in: ["READY", "RUNNING"] } },
-      data: { state: "FAILED", finishedAt: new Date() },
+      data: { state: "FAILED", finishedAt: now },
     });
     await transaction.reviewJob.update({
       where: { id: input.jobId },
       data: {
         state: "FAILED",
-        finishedAt: new Date(),
+        finishedAt: now,
+        retryNotBefore: null,
         failureCode: "APPLICATION",
         claimToken: null,
         leaseExpiresAt: null,
@@ -391,7 +554,9 @@ async function materializeProposal(
   database: DatabaseClient,
   jobId: string,
   claimToken: string,
+  timing?: ReviewWorkerTiming,
 ) {
+  const now = currentTime(timing);
   const job = await database.reviewJob.findUniqueOrThrow({
     where: { id: jobId },
     include: {
@@ -455,7 +620,8 @@ async function materializeProposal(
       where: { id: job.id },
       data: {
         state: "SUCCEEDED",
-        finishedAt: new Date(),
+        finishedAt: now,
+        retryNotBefore: null,
         failureCode: null,
         claimToken: null,
         leaseExpiresAt: null,
@@ -469,7 +635,9 @@ export async function processClaimedReview(
   jobId: string,
   configuration: ReviewProviderConfiguration,
   claimToken?: string,
+  options: ReviewProcessingOptions = {},
 ) {
+  const runStage = options.runStage ?? runWithFallback;
   for (;;) {
     const job = await database.reviewJob.findUniqueOrThrow({
       where: { id: jobId },
@@ -488,15 +656,24 @@ export async function processClaimedReview(
     if (job.state !== "RUNNING") return;
     const activeClaim = claimToken ?? job.claimToken;
     if (!activeClaim || job.claimToken !== activeClaim) return;
-    await renewReviewLease(database, {
-      jobId: job.id,
-      fence: job.fence,
-      claimToken: activeClaim,
-    });
+    await renewReviewLease(
+      database,
+      {
+        jobId: job.id,
+        fence: job.fence,
+        claimToken: activeClaim,
+      },
+      options.timing,
+    );
     const ready = job.steps.find((step) => step.state === "READY");
     if (!ready) {
       if (job.steps.every((step) => step.state === "SUCCEEDED"))
-        await materializeProposal(database, job.id, activeClaim);
+        await materializeProposal(
+          database,
+          job.id,
+          activeClaim,
+          options.timing,
+        );
       return;
     }
     const attempt =
@@ -510,12 +687,16 @@ export async function processClaimedReview(
     try {
       evidence = await buildEvidence(database, job.id, ready.id);
     } catch {
-      await recordApplicationFailure(database, {
-        jobId: job.id,
-        stepId: ready.id,
-        fence: job.fence,
-        claimToken: activeClaim,
-      });
+      await recordApplicationFailure(
+        database,
+        {
+          jobId: job.id,
+          stepId: ready.id,
+          fence: job.fence,
+          claimToken: activeClaim,
+        },
+        options.timing,
+      );
       return;
     }
     const requestedProvider =
@@ -525,10 +706,21 @@ export async function processClaimedReview(
         ? "deterministic-provider-v1"
         : configuration.codex.model;
     const run = await database.$transaction(async (transaction) => {
-      await transaction.reviewStep.update({
-        where: { id: ready.id },
-        data: { state: "RUNNING", startedAt: new Date() },
+      const active = await transaction.reviewJob.findFirst({
+        where: {
+          id: job.id,
+          state: "RUNNING",
+          fence: job.fence,
+          claimToken: activeClaim,
+        },
       });
+      if (!active) return null;
+      const startedAt = currentTime(options.timing);
+      const started = await transaction.reviewStep.updateMany({
+        where: { id: ready.id, state: "READY" },
+        data: { state: "RUNNING", startedAt, finishedAt: null },
+      });
+      if (started.count !== 1) return null;
       return transaction.agentRun.create({
         data: {
           stepId: ready.id,
@@ -537,16 +729,22 @@ export async function processClaimedReview(
           requestedModel,
           reasoningEffort: "high",
           evidenceHash: sha256(evidence),
+          startedAt,
         },
       });
     });
+    if (!run) return;
     const controller = new AbortController();
     const monitor = setInterval(() => {
-      void renewReviewLease(database, {
-        jobId: job.id,
-        fence: job.fence,
-        claimToken: activeClaim,
-      }).catch(() => controller.abort());
+      void renewReviewLease(
+        database,
+        {
+          jobId: job.id,
+          fence: job.fence,
+          claimToken: activeClaim,
+        },
+        options.timing,
+      ).catch(() => controller.abort());
     }, 1_000);
     monitor.unref();
     try {
@@ -566,7 +764,7 @@ export async function processClaimedReview(
             false,
           );
       }
-      const result = await runWithFallback(
+      const result = await runStage(
         {
           role: ready.roleCode,
           effort: "high",
@@ -578,23 +776,32 @@ export async function processClaimedReview(
         },
         configuration,
       );
-      await recordSuccess(database, {
-        jobId: job.id,
-        stepId: ready.id,
-        runId: run.id,
-        fence: job.fence,
-        claimToken: activeClaim,
-        result,
-      });
+      await recordSuccess(
+        database,
+        {
+          jobId: job.id,
+          stepId: ready.id,
+          runId: run.id,
+          fence: job.fence,
+          claimToken: activeClaim,
+          result,
+        },
+        options.timing,
+      );
     } catch (error) {
-      await recordFailure(database, {
-        jobId: job.id,
-        stepId: ready.id,
-        runId: run.id,
-        fence: job.fence,
-        claimToken: activeClaim,
-        error,
-      });
+      await recordFailure(
+        database,
+        {
+          jobId: job.id,
+          stepId: ready.id,
+          runId: run.id,
+          fence: job.fence,
+          claimToken: activeClaim,
+          attempt: run.attempt,
+          error,
+        },
+        options.timing,
+      );
       return;
     } finally {
       clearInterval(monitor);
@@ -605,10 +812,17 @@ export async function processClaimedReview(
 export async function runOneReview(
   database: DatabaseClient,
   configuration: ReviewProviderConfiguration,
+  options: ReviewProcessingOptions = {},
 ) {
-  const job = await claimNextReview(database);
+  const job = await claimNextReview(database, options.timing);
   if (!job) return false;
   if (!job.claimToken) throw new Error("Claimed review has no lease token.");
-  await processClaimedReview(database, job.id, configuration, job.claimToken);
+  await processClaimedReview(
+    database,
+    job.id,
+    configuration,
+    job.claimToken,
+    options,
+  );
   return true;
 }

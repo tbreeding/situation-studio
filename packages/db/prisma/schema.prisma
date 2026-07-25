@@ -463,6 +463,7 @@ model ReviewJob {
   finishedAt         DateTime?       @map("finished_at") @db.Timestamptz(3)
   claimToken         String?         @map("claim_token") @db.Uuid
   leaseExpiresAt     DateTime?       @map("lease_expires_at") @db.Timestamptz(3)
+  retryNotBefore     DateTime?       @map("retry_not_before") @db.Timestamptz(3)
   cancelledAt        DateTime?       @map("cancelled_at") @db.Timestamptz(3)
   cancelledById      String?         @map("cancelled_by_id") @db.Uuid
   cancellationReason String?         @map("cancellation_reason") @db.VarChar(500)
@@ -473,6 +474,7 @@ model ReviewJob {
   proposal           ReviewProposal?
 
   @@index([state, queuedAt], map: "review_jobs_queue_idx")
+  @@index([state, retryNotBefore, queuedAt], map: "review_jobs_retry_schedule_idx")
   @@index([situationId, state], map: "review_jobs_situation_state_idx")
   @@map("review_jobs")
 }
@@ -511,6 +513,7 @@ model AgentRun {
   inputTokens       Int?               @map("input_tokens")
   outputTokens      Int?               @map("output_tokens")
   usageEstimated    Boolean?           @map("usage_estimated")
+  providerAttempts  Json?              @map("provider_attempts")
   failureClass      AgentFailureClass? @map("failure_class")
   retryable         Boolean?
   startedAt         DateTime           @default(now()) @map("started_at") @db.Timestamptz(3)

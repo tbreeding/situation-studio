@@ -12,6 +12,7 @@ import {
   workspaceForSlug,
 } from "@/server/workflows/situations";
 import { reconcileLeadershipRelease } from "@/server/leadership-sync";
+import { buildReviewStatusSnapshot } from "@/server/review-status";
 
 export const dynamic = "force-dynamic";
 
@@ -56,13 +57,8 @@ export default async function SituationPage({
   const review = activeReview
     ? {
         id: activeReview.id,
-        state: activeReview.state,
         queuedAt: activeReview.queuedAt.toISOString(),
-        steps: activeReview.steps.map((step) => ({
-          ordinal: step.ordinal,
-          roleCode: step.roleCode,
-          state: step.state,
-        })),
+        status: buildReviewStatusSnapshot(activeReview),
         proposal: activeReview.proposal
           ? {
               id: activeReview.proposal.id,

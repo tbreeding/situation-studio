@@ -20,6 +20,8 @@ const provisionPasswordsPath = path.join(
   root,
   "ops/provision-studio-role-passwords.sql",
 );
+const runtimeGrantsPath = path.join(root, "ops/grant-runtime-roles.sql");
+const releaseSchemaPath = path.join(root, "ops/apply-studio-release-schema.sh");
 
 function position(source: string, fragment: string) {
   const index = source.indexOf(fragment);
@@ -33,7 +35,7 @@ describe("production deployment contract", () => {
       executeFile("bash", ["-n", deployPath]),
     ).resolves.toMatchObject({ stderr: "" });
     const source = await readFile(deployPath, "utf8");
-    const firstSsh = position(source, 'ssh "${studio_host}"');
+    const firstSsh = position(source, 'ssh "${studio_ssh_target}"');
     for (const guard of [
       "SITUATION_STUDIO_APPROVED_COMMIT",
       "git branch --show-current",
@@ -44,6 +46,7 @@ describe("production deployment contract", () => {
       "SITUATION_STUDIO_PUBLIC_ORIGIN",
       "SITUATION_STUDIO_PUBLIC_HOST",
       "SITUATION_STUDIO_PUBLIC_GATE_MODE",
+      "SITUATION_STUDIO_DEPLOY_USER",
     ])
       expect(position(source, guard)).toBeLessThan(firstSsh);
   });
@@ -64,6 +67,30 @@ describe("production deployment contract", () => {
       "first-deploy-deferred",
       'if [[ -n "${studio_previous}" ]]',
       "ops/verify-public-gate.sh",
+      "ops/apply-studio-release-schema.sh",
+      ".release-commit",
+    ])
+      position(source, fragment);
+    expect(
+      position(source, "Applying additive Studio migrations"),
+    ).toBeLessThan(
+      position(source, "Cutting over the three isolated processes"),
+    );
+  });
+
+  test("release schema application is owner-scoped, fail-closed, and reapplies least-privilege grants", async () => {
+    await expect(
+      executeFile("bash", ["-n", releaseSchemaPath]),
+    ).resolves.toMatchObject({ stderr: "" });
+    const source = await readFile(releaseSchemaPath, "utf8");
+    for (const fragment of [
+      "STUDIO_OWNER_MIGRATION_PASSWORD",
+      "ALTER ROLE situation_studio_owner LOGIN PASSWORD",
+      "trap disable_owner_login EXIT",
+      "pnpm db:migrate:deploy",
+      "ALTER ROLE situation_studio_owner NOLOGIN",
+      "ops/grant-runtime-roles.sql",
+      "has_table_privilege",
     ])
       position(source, fragment);
   });
@@ -167,5 +194,15 @@ describe("production deployment contract", () => {
       "situation_studio_backup_operator",
     ])
       expect(passwordSource).toContain(`ALTER ROLE ${role} PASSWORD`);
+  });
+
+  test("the review worker can append system retry audits without broader audit mutation", async () => {
+    const grants = await readFile(runtimeGrantsPath, "utf8");
+    expect(grants).toContain(
+      "GRANT INSERT ON audit_events\n  TO situation_studio_review_worker;",
+    );
+    expect(grants).not.toContain(
+      "GRANT SELECT, INSERT, UPDATE ON audit_events\n  TO situation_studio_review_worker;",
+    );
   });
 });

@@ -7,6 +7,7 @@ import { z } from "zod";
 
 const MAX_PROVIDER_BYTES = 2 * 1024 * 1024;
 const PROVIDER_TIMEOUT_MS = 90_000;
+const MAX_PROVIDER_ATTEMPT_DURATION_MS = 10 * 60_000;
 
 export const findingSchema = z.object({
   id: z.string().min(1).max(120),
@@ -44,6 +45,32 @@ export type AdapterOutput =
   | z.infer<typeof normalizedOutputSchema>
   | z.infer<typeof bundleWriterOutputSchema>;
 
+export const providerAttemptMetadataSchema = z.object({
+  provider: z.enum(["codex", "claude", "deterministic"]),
+  model: z.string().min(1).max(120),
+  durationMs: z.number().int().min(0).max(MAX_PROVIDER_ATTEMPT_DURATION_MS),
+  outcome: z.enum(["SUCCEEDED", "FAILED", "TIMED_OUT"]),
+  failureClass: z
+    .enum([
+      "CAPACITY",
+      "TRANSIENT",
+      "AUTHENTICATION",
+      "INVALID_OUTPUT",
+      "APPLICATION",
+      "CANCELLED",
+    ])
+    .nullable(),
+  retryable: z.boolean().nullable(),
+});
+
+export const providerAttemptsMetadataSchema = z
+  .array(providerAttemptMetadataSchema)
+  .max(2);
+
+export type ProviderAttemptMetadata = z.infer<
+  typeof providerAttemptMetadataSchema
+>;
+
 export type AdapterRequest = {
   provider: "codex" | "claude" | "deterministic";
   model: string;
@@ -67,6 +94,7 @@ export type AdapterResult = {
     outputTokens: number;
     estimated: boolean;
   };
+  providerAttempts: ProviderAttemptMetadata[];
 };
 
 export type AdapterFailureClass =
@@ -82,10 +110,16 @@ export class AdapterFailure extends Error {
     readonly failureClass: AdapterFailureClass,
     message: string,
     readonly retryable: boolean,
+    readonly providerAttempts: ProviderAttemptMetadata[] = [],
   ) {
     super(message);
   }
 }
+
+export type AdapterRuntimeOptions = {
+  now?: () => number;
+  providerTimeoutMs?: number;
+};
 
 export type CliExecution = {
   command: string;
@@ -368,6 +402,7 @@ function normalizedResult(
     output,
     outputHash: sha256(JSON.stringify(output)),
     usage,
+    providerAttempts: [],
   };
 }
 
@@ -561,6 +596,16 @@ export async function runDeterministic(
     output,
     outputHash: sha256(JSON.stringify(output)),
     usage: { inputTokens: 0, outputTokens: 0, estimated: false },
+    providerAttempts: [
+      {
+        provider: "deterministic",
+        model: "deterministic-provider-v1",
+        durationMs: 0,
+        outcome: "SUCCEEDED",
+        failureClass: null,
+        retryable: null,
+      },
+    ],
   };
 }
 
@@ -572,9 +617,83 @@ function canFallBack(error: unknown, parentSignal?: AbortSignal) {
   );
 }
 
-function providerSignal(parent?: AbortSignal) {
-  const timeout = AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
+function providerSignal(parent: AbortSignal | undefined, timeoutMs: number) {
+  const timeout = AbortSignal.timeout(timeoutMs);
   return parent ? AbortSignal.any([parent, timeout]) : timeout;
+}
+
+function durationMs(startedAt: number, now: () => number) {
+  return Math.min(
+    MAX_PROVIDER_ATTEMPT_DURATION_MS,
+    Math.max(0, Math.round(now() - startedAt)),
+  );
+}
+
+function providerFailure(
+  error: unknown,
+  signal: AbortSignal,
+  parentSignal?: AbortSignal,
+) {
+  if (
+    error instanceof AdapterFailure &&
+    error.failureClass === "CANCELLED" &&
+    signal.aborted &&
+    !parentSignal?.aborted
+  )
+    return new AdapterFailure(
+      "TRANSIENT",
+      "Subscription CLI provider timed out.",
+      true,
+    );
+  return error instanceof AdapterFailure
+    ? error
+    : new AdapterFailure("APPLICATION", "Review provider failed.", false);
+}
+
+function failedProviderAttempt(
+  provider: "codex" | "claude",
+  model: string,
+  startedAt: number,
+  now: () => number,
+  error: AdapterFailure,
+  timedOut: boolean,
+): ProviderAttemptMetadata {
+  return providerAttemptMetadataSchema.parse({
+    provider,
+    model,
+    durationMs: durationMs(startedAt, now),
+    outcome: timedOut ? "TIMED_OUT" : "FAILED",
+    failureClass: error.failureClass,
+    retryable: error.retryable,
+  });
+}
+
+function successfulProviderAttempt(
+  provider: "codex" | "claude",
+  model: string,
+  startedAt: number,
+  now: () => number,
+): ProviderAttemptMetadata {
+  return providerAttemptMetadataSchema.parse({
+    provider,
+    model,
+    durationMs: durationMs(startedAt, now),
+    outcome: "SUCCEEDED",
+    failureClass: null,
+    retryable: null,
+  });
+}
+
+function failureWithAttempts(
+  error: AdapterFailure,
+  attempts: ProviderAttemptMetadata[],
+) {
+  return new AdapterFailure(
+    error.failureClass,
+    error.message,
+    error.retryable,
+    providerAttemptsMetadataSchema.parse(attempts),
+  );
 }
 
 export async function runWithFallback(
@@ -586,6 +705,7 @@ export async function runWithFallback(
         codex: SubscriptionCliProvider;
         claude: SubscriptionCliProvider;
       },
+  options: AdapterRuntimeOptions = {},
 ) {
   if (configuration.mode === "deterministic")
     return runDeterministic({
@@ -593,9 +713,13 @@ export async function runWithFallback(
       provider: "deterministic",
       model: "deterministic-provider-v1",
     });
-  const codexSignal = providerSignal(request.signal);
+  const now = options.now ?? Date.now;
+  const timeoutMs = options.providerTimeoutMs ?? PROVIDER_TIMEOUT_MS;
+  const attempts: ProviderAttemptMetadata[] = [];
+  const codexSignal = providerSignal(request.signal, timeoutMs);
+  const codexStartedAt = now();
   try {
-    return await runCodexCli(
+    const result = await runCodexCli(
       {
         ...request,
         provider: "codex",
@@ -604,30 +728,70 @@ export async function runWithFallback(
       },
       configuration.codex,
     );
+    return {
+      ...result,
+      providerAttempts: providerAttemptsMetadataSchema.parse([
+        successfulProviderAttempt(
+          "codex",
+          configuration.codex.model,
+          codexStartedAt,
+          now,
+        ),
+      ]),
+    };
   } catch (error) {
-    if (!canFallBack(error, request.signal)) throw error;
+    const timedOut = codexSignal.aborted && !request.signal?.aborted;
+    const failure = providerFailure(error, codexSignal, request.signal);
+    attempts.push(
+      failedProviderAttempt(
+        "codex",
+        configuration.codex.model,
+        codexStartedAt,
+        now,
+        failure,
+        timedOut,
+      ),
+    );
+    if (!canFallBack(failure, request.signal))
+      throw failureWithAttempts(failure, attempts);
   }
+  const claudeSignal = providerSignal(request.signal, timeoutMs);
+  const claudeStartedAt = now();
   try {
-    return await runClaudeCli(
+    const result = await runClaudeCli(
       {
         ...request,
         provider: "claude",
         model: configuration.claude.model,
-        signal: providerSignal(request.signal),
+        signal: claudeSignal,
       },
       configuration.claude,
     );
+    return {
+      ...result,
+      providerAttempts: providerAttemptsMetadataSchema.parse([
+        ...attempts,
+        successfulProviderAttempt(
+          "claude",
+          configuration.claude.model,
+          claudeStartedAt,
+          now,
+        ),
+      ]),
+    };
   } catch (error) {
-    if (
-      error instanceof AdapterFailure &&
-      error.failureClass === "CANCELLED" &&
-      !request.signal?.aborted
-    )
-      throw new AdapterFailure(
-        "TRANSIENT",
-        "Subscription CLI provider timed out.",
-        true,
-      );
-    throw error;
+    const timedOut = claudeSignal.aborted && !request.signal?.aborted;
+    const failure = providerFailure(error, claudeSignal, request.signal);
+    attempts.push(
+      failedProviderAttempt(
+        "claude",
+        configuration.claude.model,
+        claudeStartedAt,
+        now,
+        failure,
+        timedOut,
+      ),
+    );
+    throw failureWithAttempts(failure, attempts);
   }
 }

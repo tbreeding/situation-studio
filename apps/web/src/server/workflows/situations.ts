@@ -559,6 +559,16 @@ export async function forceCheckInSituation(input: {
       if (!checkout) throw new WorkflowError("No active checkout exists.", 404);
       await assertNoActivePublication(transaction, checkout.situationId);
       const now = new Date();
+      await transaction.reviewStep.updateMany({
+        where: {
+          job: {
+            situationId: input.situationId,
+            state: { in: ["QUEUED", "RUNNING"] },
+          },
+          state: { in: ["PENDING", "READY", "RUNNING"] },
+        },
+        data: { state: "CANCELLED", finishedAt: now },
+      });
       await transaction.reviewJob.updateMany({
         where: {
           situationId: input.situationId,
@@ -570,8 +580,10 @@ export async function forceCheckInSituation(input: {
           cancelledAt: now,
           cancelledById: input.adminId,
           cancellationReason: "Administrative force check-in",
+          finishedAt: now,
           claimToken: null,
           leaseExpiresAt: null,
+          retryNotBefore: null,
         },
       });
       const released = await transaction.situationCheckout.update({
@@ -783,6 +795,7 @@ export async function cancelReview(input: {
           cancellationReason: input.reason?.slice(0, 500) ?? "Editor cancelled",
           claimToken: null,
           leaseExpiresAt: null,
+          retryNotBefore: null,
         },
       });
       await transaction.auditEvent.create({
@@ -846,6 +859,7 @@ export async function retryReview(input: { actorId: string; jobId: string }) {
           queuedAt: new Date(),
           claimToken: null,
           leaseExpiresAt: null,
+          retryNotBefore: null,
         },
       });
       await transaction.auditEvent.create({
@@ -1521,7 +1535,20 @@ export async function workspaceForSlug(slug: string) {
         orderBy: { queuedAt: "desc" },
         take: 1,
         include: {
-          steps: { orderBy: { ordinal: "asc" } },
+          steps: {
+            orderBy: { ordinal: "asc" },
+            include: {
+              runs: {
+                orderBy: { attempt: "desc" },
+                take: 1,
+                select: {
+                  attempt: true,
+                  failureClass: true,
+                  retryable: true,
+                },
+              },
+            },
+          },
           proposal: { include: { changes: { orderBy: { position: "asc" } } } },
         },
       },

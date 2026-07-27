@@ -1,17 +1,22 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-25
+Last updated: 2026-07-27
 
 ## Outcome
 
-Before the 2026-07-25 follow-up deployment, Situation Studio was deployed on
-`rpi1` from the immutable release created at
-`/home/admin/projects/situation-studio/releases/20260725T124500Z`.
+Situation Studio is deployed on `rpi1` from the immutable release at
+`/home/admin/projects/situation-studio/releases/20260727T171556Z`. The deployed
+source is commit `b422f4384f1edd71e329a3524f8bff97a33b2960` on `main`. The
+authenticated production workspace is
+`https://situation-studio.timsprototypes.com`.
+
 The workbench now provides ordinary username/password authentication, durable
 exclusive checkouts, immutable drafts and history, section and raw-MDX editing,
 rendered preview and exact diff, optional durable agent review, selective
 proposal application, new-situation creation, reversible retirement,
-per-situation restoration, and one-action publication.
+per-situation restoration, and one-action publication. The rendered production
+and saved-draft comparison scrolls in sync, and the selected workspace tab is
+stored in the URL so it survives refresh and direct navigation.
 
 This release candidate includes the completed retry-provider and real-time
 review-status follow-ups described below.
@@ -22,6 +27,92 @@ runtime identities, and automatically restores the prior release if
 post-promotion verification fails. Injected process-death tests prove restart
 reconciliation after candidate persistence, pointer promotion, and runtime
 verification.
+
+## Completed: review the agent revision as a diff
+
+Implementation status: completed in this release candidate. The brief below is
+retained as the acceptance record for the immutable agent-candidate model,
+normalized finding lineage, fenced per-hunk decisions, atomic bulk acceptance,
+and the responsive Saved draft → Agent revision review surface.
+
+The previous bottom-of-page **Agent proposal** card has been removed. The
+implemented product direction is a code-review-style experience in which the
+agent produces a temporary candidate revision and the Review tab compares the
+saved draft with that agent revision.
+
+The candidate must not overwrite or otherwise mutate the authoritative saved
+draft before editorial acceptance. It should look editable in the review
+surface, but remain isolated review state until an editor accepts changes.
+
+Required editor experience:
+
+- Make the primary review comparison **Saved draft → Agent revision**, with
+  inline added, removed, and modified highlighting.
+- Attach a concise explanation to each diff hunk: why it changed, what problem
+  it addresses, which worker or finding identified the problem, which worker
+  wrote the replacement, and the relevant evidence lineage.
+- Support **Accept**, **Reject**, and **Edit suggestion** on each hunk. An
+  editor-modified suggestion must be visibly marked and the edited result—not
+  the original suggestion—must be what acceptance applies.
+- Support **Accept all** only when actionable unresolved changes exist. It
+  must display the count and apply all eligible changes atomically rather than
+  silently skipping unsupported types or partially applying a serial loop.
+- Keep the existing production comparison available as a secondary view; do
+  not conflate production-versus-draft changes with agent-versus-draft
+  suggestions.
+- Represent bundle-level changes such as metadata, relationships, scoped
+  variants, and embeds as structured diff rows in the same review experience.
+  When the agent cannot safely produce a fix, anchor an unresolved inline
+  comment to the relevant content or bundle item instead of emitting a long
+  report card.
+- Preserve checkout fences, immutable review evidence, proposal input
+  revision/hash checks, auditability, stale-draft conflict detection, and
+  publication provenance.
+- Keep explanations compact by default, with deeper rationale and evidence
+  available on demand. Preserve responsive layout, keyboard operation,
+  semantic status, and reduced-motion behavior.
+
+Worker attribution must describe actual lineage rather than inventing a single
+author. For example, an exact replacement may be “Written by Bundle Writer,
+responding to a Teaching Designer finding, supported by Coaching and Manager
+Tools reviewers.” Candidate edit records therefore need explicit links to the
+upstream finding IDs and role codes that informed them.
+
+### Current failure that motivated the redesign
+
+The latest production review for `repeatedly-misses-commitments` materialized
+proposal `43f60de2-8e58-47b7-ba5f-4a0f052668b9` with a 1,457-character
+summary, five structured findings (two blocking, two important, one note), and
+zero candidate edits.
+
+The current implementation:
+
+- stores `summary`, `findings`, and `candidateEdits` separately in
+  `apps/review-worker/src/review.ts`;
+- permits a summary of up to 12,000 characters and does not require a
+  candidate edit in `packages/ai-adapters/src/index.ts`;
+- drops `findings` from the workspace view model in
+  `apps/web/src/app/situations/[slug]/page.tsx`;
+- renders the complete summary as a heading in
+  `apps/web/src/components/workspace-editor.tsx`;
+- enables **Accept all** without checking for actionable changes; its empty
+  loop performs no mutation and only refreshes the route; and
+- compares only production and saved draft above the proposal card, so it has
+  no agent-candidate visualization even when edits exist.
+
+Current proposal application can automatically apply only `SECTION` and
+`SCOPED_VARIANT` changes. `METADATA` and `RELATIONSHIP` changes return a manual
+editorial-edit error. The redesign must either add safe typed application for
+those targets or present them explicitly as manual structured suggestions; it
+must never hide or silently skip them.
+
+Implementation should include schema/migration design, normalized worker output
+and provenance, candidate materialization, atomic and individually fenced
+decision workflows, editable suggestions, the unified diff UI, and focused
+unit/integration/browser coverage. Browser coverage should prove zero-change
+behavior, individual accept/reject, edited acceptance, atomic Accept all,
+unsupported/manual changes, stale-input conflicts, refresh persistence,
+keyboard/accessibility behavior, and narrow/desktop layouts.
 
 ## Repository boundary
 

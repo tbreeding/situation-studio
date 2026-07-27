@@ -61,20 +61,67 @@ export default async function SituationPage({
   }
   const activeReview = workspace.reviewJobs[0];
   const publicationJob = workspace.publicationJobs[0];
+  const stringArray = (value: unknown) =>
+    Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
   const review = activeReview
     ? {
         id: activeReview.id,
         queuedAt: activeReview.queuedAt.toISOString(),
         status: buildReviewStatusSnapshot(activeReview),
+        inputRevisionId: activeReview.inputRevisionId,
+        currentRevisionId: revision?.id ?? null,
+        inputBundleHash: activeReview.inputRevision.bundleHash,
+        inputBody:
+          activeReview.inputRevision.artifacts.find(
+            (artifact) => artifact.kind === "SITUATION",
+          )?.content.textBody ?? "",
         proposal: activeReview.proposal
           ? {
               id: activeReview.proposal.id,
               summary: activeReview.proposal.summary,
+              candidate: activeReview.proposal.candidate
+                ? {
+                    body: activeReview.proposal.candidate.body,
+                    bodyHash: activeReview.proposal.candidate.bodyHash,
+                    bundleHash: activeReview.proposal.candidate.bundleHash,
+                    candidateHash:
+                      activeReview.proposal.candidate.candidateHash,
+                  }
+                : null,
+              findings: activeReview.proposal.findings.map((finding) => ({
+                id: finding.id,
+                findingKey: finding.findingKey,
+                severity: finding.severity,
+                targetKind: finding.targetKind,
+                targetKey: finding.targetKey,
+                summary: finding.summary,
+                rationale: finding.rationale,
+                sourceRoleCode: finding.sourceRoleCode,
+                evidenceRoleCodes: stringArray(finding.evidenceRoleCodes),
+              })),
               changes: activeReview.proposal.changes.map((change) => ({
                 id: change.id,
                 targetKind: change.targetKind,
                 targetKey: change.targetKey,
+                applicationMode: change.applicationMode,
+                beforeHash: change.beforeHash,
+                beforeBody: change.beforeBody,
+                afterBody: change.afterBody,
+                afterHash: change.afterHash,
+                editorBody: change.editorBody,
+                editorHash: change.editorHash,
+                modified: Boolean(change.editorBody),
+                problem: change.problem,
+                explanation: change.explanation,
                 rationale: change.rationale,
+                writtenByRoleCode: change.writtenByRoleCode,
+                identifiedByRoleCodes: stringArray(
+                  change.identifiedByRoleCodes,
+                ),
+                evidenceRoleCodes: stringArray(change.evidenceRoleCodes),
+                findingIds: change.findingLinks.map((link) => link.finding.id),
                 state: change.state,
               })),
             }

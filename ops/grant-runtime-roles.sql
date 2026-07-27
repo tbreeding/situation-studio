@@ -64,7 +64,8 @@ GRANT SELECT, INSERT, UPDATE ON leadership_sync_cursors
 GRANT SELECT ON
   agent_runs, publication_attempts, publication_events,
   verification_receipts, backup_receipts, publication_candidate_snapshots,
-  process_heartbeats
+  process_heartbeats, agent_candidate_revisions, review_findings,
+  proposal_change_findings
   TO situation_studio_web;
 
 GRANT SELECT, UPDATE ON review_jobs, review_steps
@@ -72,6 +73,9 @@ GRANT SELECT, UPDATE ON review_jobs, review_steps
 GRANT SELECT, INSERT, UPDATE ON agent_runs
   TO situation_studio_review_worker;
 GRANT SELECT, INSERT ON review_proposals, proposal_changes
+  TO situation_studio_review_worker;
+GRANT SELECT, INSERT ON agent_candidate_revisions, review_findings,
+  proposal_change_findings
   TO situation_studio_review_worker;
 GRANT INSERT ON audit_events
   TO situation_studio_review_worker;
@@ -94,7 +98,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON publication_candidate_snapshots
   TO situation_studio_publisher;
 GRANT SELECT ON draft_revisions, draft_revision_artifacts, content_blobs,
   scoped_artifact_variants, review_jobs, review_steps, review_proposals,
-  proposal_changes, leadership_sync_cursors
+  proposal_changes, agent_candidate_revisions, review_findings,
+  proposal_change_findings, leadership_sync_cursors
   TO situation_studio_publisher;
 GRANT SELECT, INSERT, UPDATE ON process_heartbeats
   TO situation_studio_publisher;

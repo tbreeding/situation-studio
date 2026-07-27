@@ -93,11 +93,25 @@ enum ProposalChangeState {
   REJECTED
 }
 
+enum ProposalApplicationMode {
+  AUTOMATIC
+  MANUAL
+}
+
 enum ProposalTargetKind {
   SECTION
   METADATA
   SCOPED_VARIANT
   RELATIONSHIP
+  EMBED
+  BUNDLE
+}
+
+enum ReviewFindingSeverity {
+  NOTE
+  CONSIDER
+  IMPORTANT
+  BLOCKING
 }
 
 enum PublicationJobState {
@@ -334,6 +348,7 @@ model DraftRevision {
   actor            User                    @relation(fields: [actorId], references: [id], onDelete: Restrict)
   artifacts        DraftRevisionArtifact[]
   reviewJobs       ReviewJob[]
+  candidateReviews AgentCandidateRevision[]
   publicationJobs  PublicationJob[]
 
   @@unique([draftId, revision], map: "draft_revisions_number_key")
@@ -525,37 +540,101 @@ model AgentRun {
 }
 
 model ReviewProposal {
-  id              String           @id @default(uuid()) @db.Uuid
-  jobId           String           @unique @map("job_id") @db.Uuid
-  inputRevisionId String           @map("input_revision_id") @db.Uuid
-  summary         String           @db.Text
-  findings        Json
-  proposalHash    String           @unique @map("proposal_hash") @db.Char(64)
-  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  job             ReviewJob        @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  id              String                  @id @default(uuid()) @db.Uuid
+  jobId           String                  @unique @map("job_id") @db.Uuid
+  inputRevisionId String                  @map("input_revision_id") @db.Uuid
+  summary         String                  @db.Text
+  findingSnapshot Json                    @map("findings")
+  proposalHash    String                  @unique @map("proposal_hash") @db.Char(64)
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  job             ReviewJob               @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  candidate       AgentCandidateRevision?
+  findings        ReviewFinding[]
   changes         ProposalChange[]
 
   @@map("review_proposals")
 }
 
-model ProposalChange {
-  id                String              @id @default(uuid()) @db.Uuid
-  proposalId        String              @map("proposal_id") @db.Uuid
+model AgentCandidateRevision {
+  id              String         @id @default(uuid()) @db.Uuid
+  proposalId      String         @unique @map("proposal_id") @db.Uuid
+  inputRevisionId String         @map("input_revision_id") @db.Uuid
+  inputBundleHash String         @map("input_bundle_hash") @db.Char(64)
+  body            String         @db.Text
+  bodyHash        String         @map("body_hash") @db.Char(64)
+  bundleManifest  Json           @map("bundle_manifest")
+  bundleHash      String         @map("bundle_hash") @db.Char(64)
+  candidateHash   String         @map("candidate_hash") @db.Char(64)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  proposal        ReviewProposal @relation(fields: [proposalId], references: [id], onDelete: Restrict)
+  inputRevision   DraftRevision  @relation(fields: [inputRevisionId], references: [id], onDelete: Restrict)
+
+  @@index([candidateHash], map: "agent_candidate_revisions_candidate_hash_idx")
+  @@map("agent_candidate_revisions")
+}
+
+model ReviewFinding {
+  id                String                @id @default(uuid()) @db.Uuid
+  proposalId        String                @map("proposal_id") @db.Uuid
   position          Int
-  targetKind        ProposalTargetKind  @map("target_kind")
-  targetKey         String              @map("target_key") @db.VarChar(240)
-  beforeHash        String?             @map("before_hash") @db.Char(64)
-  afterBody         String              @map("after_body") @db.Text
-  afterHash         String              @map("after_hash") @db.Char(64)
-  rationale         String              @db.Text
-  state             ProposalChangeState @default(PENDING)
-  decidedAt         DateTime?           @map("decided_at") @db.Timestamptz(3)
-  decidedById       String?             @map("decided_by_id") @db.Uuid
-  appliedRevisionId String?             @map("applied_revision_id") @db.Uuid
-  proposal          ReviewProposal      @relation(fields: [proposalId], references: [id], onDelete: Restrict)
+  findingKey        String                @map("finding_key") @db.VarChar(240)
+  severity          ReviewFindingSeverity
+  targetKind        ProposalTargetKind    @map("target_kind")
+  targetKey         String                @map("target_key") @db.VarChar(240)
+  summary           String                @db.Text
+  rationale         String                @db.Text
+  sourceRoleCode    String                @map("source_role_code") @db.VarChar(100)
+  evidenceRoleCodes Json                  @map("evidence_role_codes")
+  proposal          ReviewProposal        @relation(fields: [proposalId], references: [id], onDelete: Restrict)
+  changeLinks       ProposalChangeFinding[]
+
+  @@unique([proposalId, position], map: "review_findings_position_key")
+  @@unique([proposalId, findingKey], map: "review_findings_key_key")
+  @@index([proposalId, targetKind, targetKey], map: "review_findings_target_idx")
+  @@map("review_findings")
+}
+
+model ProposalChange {
+  id                    String                  @id @default(uuid()) @db.Uuid
+  proposalId            String                  @map("proposal_id") @db.Uuid
+  position              Int
+  targetKind            ProposalTargetKind      @map("target_kind")
+  targetKey             String                  @map("target_key") @db.VarChar(240)
+  applicationMode       ProposalApplicationMode @default(AUTOMATIC) @map("application_mode")
+  beforeHash            String?                 @map("before_hash") @db.Char(64)
+  beforeBody            String?                 @map("before_body") @db.Text
+  afterBody             String                  @map("after_body") @db.Text
+  afterHash             String                  @map("after_hash") @db.Char(64)
+  problem               String                  @db.Text
+  explanation           String                  @db.Text
+  rationale             String                  @db.Text
+  writtenByRoleCode     String                  @map("written_by_role_code") @db.VarChar(100)
+  identifiedByRoleCodes Json                    @map("identified_by_role_codes")
+  evidenceRoleCodes     Json                    @map("evidence_role_codes")
+  editorBody            String?                 @map("editor_body") @db.Text
+  editorHash            String?                 @map("editor_hash") @db.Char(64)
+  editedAt              DateTime?               @map("edited_at") @db.Timestamptz(3)
+  editedById            String?                 @map("edited_by_id") @db.Uuid
+  state                 ProposalChangeState     @default(PENDING)
+  decidedAt             DateTime?               @map("decided_at") @db.Timestamptz(3)
+  decidedById           String?                 @map("decided_by_id") @db.Uuid
+  appliedRevisionId     String?                 @map("applied_revision_id") @db.Uuid
+  proposal              ReviewProposal          @relation(fields: [proposalId], references: [id], onDelete: Restrict)
+  findingLinks          ProposalChangeFinding[]
 
   @@unique([proposalId, position], map: "proposal_changes_position_key")
+  @@index([proposalId, state, applicationMode], map: "proposal_changes_actionable_idx")
   @@map("proposal_changes")
+}
+
+model ProposalChangeFinding {
+  changeId  String         @map("change_id") @db.Uuid
+  findingId String         @map("finding_id") @db.Uuid
+  change    ProposalChange @relation(fields: [changeId], references: [id], onDelete: Restrict)
+  finding   ReviewFinding  @relation(fields: [findingId], references: [id], onDelete: Restrict)
+
+  @@id([changeId, findingId])
+  @@map("proposal_change_findings")
 }
 
 model PublicationJob {

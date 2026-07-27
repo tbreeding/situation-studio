@@ -34,6 +34,43 @@ describe("AI adapter contracts", () => {
     expect(result.usage.estimated).toBe(false);
   });
 
+  it("requires actionable candidate edits to retain finding and worker lineage", () => {
+    const candidate = {
+      id: "82d81dd7-a6fb-4a80-9e40-a6e2877f895c",
+      targetKind: "SECTION",
+      targetKey: "The short answer",
+      applicationMode: "AUTOMATIC",
+      beforeHash: "a".repeat(64),
+      afterBody: "Name the directly observed pattern.",
+      problem: "The opening relies on an interpretation.",
+      explanation: "Makes the opening observable.",
+      rationale: "The change separates observation from judgment.",
+      upstreamFindingIds: ["critic-nvc:observable-language"],
+      writtenByRoleCode: "bundle-writer",
+      evidenceRoleCodes: ["critic-nvc", "critic-manager-tools"],
+    };
+    expect(
+      bundleWriterOutputSchema.parse({
+        ...reviewOutput("bundle-writer"),
+        candidateEdits: [candidate],
+      }).candidateEdits[0],
+    ).toMatchObject(candidate);
+    expect(() =>
+      bundleWriterOutputSchema.parse({
+        ...reviewOutput("bundle-writer"),
+        candidateEdits: [{ ...candidate, upstreamFindingIds: [] }],
+      }),
+    ).toThrow();
+    expect(() =>
+      bundleWriterOutputSchema.parse({
+        ...reviewOutput("bundle-writer"),
+        candidateEdits: [
+          { ...candidate, targetKind: "EMBED", applicationMode: "AUTOMATIC" },
+        ],
+      }),
+    ).toThrow();
+  });
+
   it("rejects evidence that resembles a secret-bearing environment", async () => {
     await expect(
       runDeterministic({

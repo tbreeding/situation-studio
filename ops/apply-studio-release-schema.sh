@@ -95,9 +95,27 @@ docker exec postgres16 psql \
           AND table_name = 'agent_runs'
           AND column_name = 'provider_attempts'
       )
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'agent_candidate_revisions'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'proposal_changes'
+          AND column_name = 'application_mode'
+      )
       AND has_table_privilege(
         'situation_studio_review_worker',
         'public.audit_events',
+        'INSERT'
+      )
+      AND has_table_privilege(
+        'situation_studio_review_worker',
+        'public.agent_candidate_revisions',
         'INSERT'
       )
     )::integer AS release_schema_guard;

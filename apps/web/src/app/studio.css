@@ -1024,8 +1024,7 @@ button {
 }
 
 .editorCard,
-.previewColumn,
-.proposalCard {
+.previewColumn {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 0.72rem;
@@ -1034,8 +1033,7 @@ button {
 }
 
 .editorCard > header,
-.previewColumn > header,
-.proposalCard > header {
+.previewColumn > header {
   min-height: 4.3rem;
   display: flex;
   align-items: center;
@@ -1049,7 +1047,6 @@ button {
 .editorCard > header h2,
 .previewColumn > header h2,
 .panelIntro h2,
-.proposalCard h2,
 .reviewSummary h2 {
   margin: 0.18rem 0 0;
   font-family: Georgia, "Times New Roman", serif;
@@ -1783,50 +1780,384 @@ button {
   color: #f3d6d1;
 }
 
-.proposalCard {
-  margin-top: 1rem;
+.agentRevisionReview {
+  display: grid;
+  gap: 1rem;
 }
 
-.proposalChanges article {
+.agentRevisionHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 2rem;
-  padding: 1rem;
-  border-bottom: 1px solid var(--soft-line);
+  gap: 1.5rem;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 0.72rem;
+  background: var(--paper);
 }
 
-.proposalChanges article:last-child {
-  border-bottom: 0;
+.agentRevisionHeader > div {
+  max-width: 52rem;
 }
 
-.proposalChanges article > div:first-child {
+.agentRevisionHeader h2 {
+  margin: 0.14rem 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.35rem;
+  letter-spacing: -0.018em;
+}
+
+.agentRevisionHeader p:not(.cardEyebrow) {
+  max-width: 70ch;
+  margin: 0.35rem 0 0;
+  color: #5d6962;
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.candidateIdentity {
+  display: block;
+  margin-top: 0.45rem;
+  color: #5f6963;
+  font:
+    0.62rem/1.4 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.staleCandidateNotice,
+.legacyCandidateNotice,
+.noCandidateEdits {
+  margin: 0;
+  padding: 0.8rem 1rem;
+  border: 1px solid #dfc69f;
+  border-radius: 0.58rem;
+  background: #fff8ed;
+  color: #71562f;
+  font-size: 0.72rem;
+}
+
+.legacyCandidateNotice {
+  border-color: #cdd8d2;
+  background: #f3f7f4;
+  color: #526159;
+}
+
+.noCandidateEdits {
   display: grid;
-  gap: 0.2rem;
+  gap: 0.15rem;
+  border-color: #ccd8d1;
+  background: #f4f8f5;
+  color: #4f5f56;
 }
 
-.proposalChanges article span {
-  color: var(--amber);
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+.agentSourceDiff {
+  margin-top: 0;
+}
+
+.reviewHunks {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.reviewHunk {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--forest);
+  border-radius: 0.68rem;
+  background: var(--paper);
+}
+
+.reviewHunk.hunk-manual {
+  border-left-color: var(--amber);
+}
+
+.reviewHunk.hunk-accepted {
+  border-left-color: #4a8c6f;
+  background: #fbfdfb;
+}
+
+.reviewHunk.hunk-rejected {
+  border-left-color: #a5aaa7;
+  opacity: 0.78;
+}
+
+.reviewHunk > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0.95rem;
+  border-bottom: 1px solid var(--soft-line);
+  background: #fafaf7;
+}
+
+.reviewHunk h3,
+.inlineFindings h3 {
+  margin: 0.15rem 0 0;
+  font-size: 0.86rem;
+}
+
+.hunkNumber {
+  color: #59635d;
+  font-size: 0.59rem;
+  font-weight: 790;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 
-.proposalChanges article strong {
-  font-size: 0.82rem;
+.hunkBadges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
 }
 
-.proposalChanges article p {
-  margin: 0.12rem 0 0;
-  color: #68726c;
+.manualBadge,
+.modifiedBadge,
+.decisionBadge,
+.findingSeverity {
+  padding: 0.23rem 0.42rem;
+  border: 1px solid #dbc69e;
+  border-radius: 999px;
+  background: #fff7e8;
+  color: #7d5d28;
+  font-size: 0.55rem;
+  font-weight: 780;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.modifiedBadge {
+  border-color: #b9d3c4;
+  background: #eef8f1;
+  color: #326549;
+}
+
+.decisionBadge {
+  border-color: #ced5d1;
+  background: #f4f6f4;
+  color: #59635d;
+}
+
+.inlineSuggestionDiff {
+  max-height: 22rem;
+  overflow: auto;
+  padding: 1rem;
+  background: #fdfdfb;
+  color: #364039;
+  font:
+    0.74rem/1.7 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.inlineDiffVisual {
+  display: contents;
+}
+
+.inlineDiffAdded {
+  border-radius: 0.18rem;
+  background: #dff2e5;
+  color: #1f6238;
+  box-shadow: 0 0 0 1px #c6e5d0;
+}
+
+.inlineDiffRemoved {
+  border-radius: 0.18rem;
+  background: #fde5e2;
+  color: #9c352d;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.hunkExplanation {
+  padding: 0.75rem 0.95rem;
+  border-top: 1px solid var(--soft-line);
+}
+
+.hunkExplanation > p,
+.hunkExplanation details > p,
+.inlineFindings p {
+  margin: 0;
+  color: #59655e;
   font-size: 0.7rem;
+  line-height: 1.55;
 }
 
-.proposalActions {
+.hunkExplanation details,
+.inlineFindings details {
+  margin-top: 0.5rem;
+}
+
+.hunkExplanation summary,
+.inlineFindings summary {
+  width: max-content;
+  color: var(--forest);
+  font-size: 0.68rem;
+  font-weight: 740;
+  cursor: pointer;
+}
+
+.hunkExplanation dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin: 0.75rem 0;
+}
+
+.hunkExplanation dl div {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--soft-line);
+  border-radius: 0.42rem;
+  background: #fafbf9;
+}
+
+.hunkExplanation dt {
+  color: #7a837d;
+  font-size: 0.56rem;
+  font-weight: 760;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.hunkExplanation dd {
+  margin: 0.18rem 0 0;
+  color: #465149;
+  font-size: 0.68rem;
+}
+
+.hunkExplanation ul {
+  margin: 0.7rem 0 0;
+  padding-left: 1.1rem;
+  color: #59655e;
+  font-size: 0.66rem;
+}
+
+.hunkActions,
+.suggestionEditor > div {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  padding: 0.7rem 0.95rem;
+  border-top: 1px solid var(--soft-line);
+  background: #fafaf7;
+}
+
+.hunkActions > span {
+  margin-right: auto;
+  color: #766344;
+  font-size: 0.66rem;
+}
+
+.suggestionEditor {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.8rem 0.95rem 0;
+}
+
+.suggestionEditor label {
+  color: #56615b;
+  font-size: 0.68rem;
+  font-weight: 720;
+}
+
+.suggestionEditor textarea {
+  width: 100%;
+  resize: vertical;
+  font:
+    0.72rem/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.suggestionEditor > div {
+  margin: 0 -0.95rem;
+}
+
+.inlineFindings {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.68rem;
+  background: var(--paper);
+}
+
+.inlineFindings > header {
+  padding: 0.85rem 0.95rem;
+  border-bottom: 1px solid var(--soft-line);
+  background: #fafaf7;
+}
+
+.inlineFindings > article {
+  padding: 0.85rem 0.95rem;
+  border-bottom: 1px solid var(--soft-line);
+}
+
+.inlineFindings > article:last-child {
+  border-bottom: 0;
+}
+
+.inlineFindings article > div {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.72rem;
+}
+
+.severity-blocking {
+  border-color: #e3afa9;
+  background: #fff0ee;
+  color: #97362e;
+}
+
+.severity-important {
+  border-color: #dbc69e;
+  background: #fff7e8;
+  color: #7d5d28;
+}
+
+.severity-consider,
+.severity-note {
+  border-color: #c8d5cf;
+  background: #f1f7f3;
+  color: #496557;
+}
+
+.inlineFindings small {
+  display: block;
+  margin-top: 0.55rem;
+  color: #748079;
+  font-size: 0.62rem;
+}
+
+.secondaryReviewComparison {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.68rem;
+  background: #f7f8f5;
+}
+
+.secondaryReviewComparison > summary {
+  padding: 0.8rem 1rem;
+  color: #4e5d54;
+  font-size: 0.72rem;
+  font-weight: 740;
+  cursor: pointer;
+}
+
+.secondaryReviewComparison > .renderedComparison {
+  padding: 0 1rem 1rem;
+}
+
+.secondaryReviewComparison > .diffDisclosure {
+  margin: 0 1rem 1rem;
 }
 
 .panelIntro {
@@ -2326,10 +2657,33 @@ button {
     grid-template-columns: 1fr;
   }
 
-  .proposalChanges article {
+  .agentRevisionHeader,
+  .reviewHunk > header,
+  .hunkActions {
     align-items: stretch;
     flex-direction: column;
     gap: 0.8rem;
+  }
+
+  .agentRevisionHeader .primaryButton {
+    width: 100%;
+  }
+
+  .hunkBadges {
+    justify-content: flex-start;
+  }
+
+  .hunkExplanation dl {
+    grid-template-columns: 1fr;
+  }
+
+  .hunkActions > span {
+    margin-right: 0;
+  }
+
+  .secondaryReviewComparison > .renderedComparison {
+    padding-right: 0.65rem;
+    padding-left: 0.65rem;
   }
 
   .contextGrid {

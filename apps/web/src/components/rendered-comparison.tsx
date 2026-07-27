@@ -57,10 +57,18 @@ export function RenderedComparison({
   production,
   draft,
   productionRevision,
+  draftRevision = "Working copy",
+  productionLabel = "Current production",
+  draftLabel = "Saved draft",
+  ariaLabel = "Synchronized rendered comparison",
 }: {
   production: string;
   draft: string;
   productionRevision: string;
+  draftRevision?: string;
+  productionLabel?: string;
+  draftLabel?: string;
+  ariaLabel?: string;
 }) {
   const productionPane = useRef<HTMLElement>(null);
   const draftPane = useRef<HTMLElement>(null);
@@ -96,10 +104,7 @@ export function RenderedComparison({
   };
 
   return (
-    <section
-      className="renderedComparison"
-      aria-label="Synchronized rendered comparison"
-    >
+    <section className="renderedComparison" aria-label={ariaLabel}>
       <div className="renderCompareToolbar">
         <span className="linkedScrollStatus">
           <span aria-hidden="true">↕</span>
@@ -124,13 +129,13 @@ export function RenderedComparison({
         <article
           ref={productionPane}
           tabIndex={0}
-          aria-label="Scrollable current production"
+          aria-label={`Scrollable ${productionLabel.toLowerCase()}`}
           onScroll={(event) =>
             synchronizeScroll(event.currentTarget, draftPane.current)
           }
         >
           <header>
-            <span>Current production</span>
+            <span>{productionLabel}</span>
             <code>{productionRevision}</code>
           </header>
           <RenderedGuidance
@@ -142,14 +147,14 @@ export function RenderedComparison({
         <article
           ref={draftPane}
           tabIndex={0}
-          aria-label="Scrollable saved draft"
+          aria-label={`Scrollable ${draftLabel.toLowerCase()}`}
           onScroll={(event) =>
             synchronizeScroll(event.currentTarget, productionPane.current)
           }
         >
           <header>
-            <span>Saved draft</span>
-            <code>Working copy</code>
+            <span>{draftLabel}</span>
+            <code>{draftRevision}</code>
           </header>
           <RenderedGuidance
             body={draft}

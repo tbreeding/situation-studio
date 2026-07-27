@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
@@ -11,13 +12,18 @@ import {
   type DatabaseClient,
 } from "@situation-studio/db";
 import {
+  canonicalJson,
   canonicalText,
+  parseSituationSections,
   reviewStages,
+  serializeSituationSections,
   sha256,
   situationBundleSchema,
 } from "@situation-studio/domain";
 import {
   AdapterFailure,
+  bundleWriterOutputSchema,
+  normalizedOutputSchema,
   runDeterministic,
   type AdapterRequest,
   type AdapterResult,
@@ -107,6 +113,69 @@ describe("checkout fencing and the complete durable review DAG", () => {
   let editorOneId: string;
   let editorTwoId: string;
   let adminId: string;
+
+  async function completeCandidateReview(
+    jobId: string,
+    input: {
+      findings: Array<{
+        id: string;
+        severity: "note" | "consider" | "important" | "blocking";
+        targetKind:
+          | "SECTION"
+          | "METADATA"
+          | "SCOPED_VARIANT"
+          | "RELATIONSHIP"
+          | "EMBED"
+          | "BUNDLE";
+        targetKey: string;
+        summary: string;
+        rationale: string;
+        evidenceRoleCodes: string[];
+      }>;
+      candidateEdits: ReturnType<
+        typeof bundleWriterOutputSchema.parse
+      >["candidateEdits"];
+    },
+  ) {
+    const claim = await claimNextReview(database);
+    expect(claim?.id).toBe(jobId);
+    if (!claim?.claimToken)
+      throw new Error("Candidate review did not receive a claim.");
+    await processClaimedReview(
+      database,
+      jobId,
+      subscriptionConfiguration,
+      claim.claimToken,
+      {
+        runStage: async (request) => {
+          const base = await successfulStage(request);
+          const output =
+            request.role === "critic-nvc"
+              ? normalizedOutputSchema.parse({
+                  role: request.role,
+                  summary: "Structured candidate findings.",
+                  findings: input.findings,
+                  provenance: "candidate-integration",
+                })
+              : request.role === "bundle-writer"
+                ? bundleWriterOutputSchema.parse({
+                    role: request.role,
+                    summary:
+                      "A concise candidate revision grounded in retained findings.",
+                    findings: [],
+                    provenance: "candidate-integration",
+                    candidateEdits: input.candidateEdits,
+                  })
+                : base.output;
+          return {
+            ...base,
+            output,
+            outputHash: sha256(JSON.stringify(output)),
+          };
+        },
+      },
+    );
+  }
 
   beforeAll(async () => {
     container = await new PostgreSqlContainer("postgres:16.12-bookworm")
@@ -332,7 +401,9 @@ describe("checkout fencing and the complete durable review DAG", () => {
       where: { id: firstJob.id },
       include: {
         steps: { orderBy: { ordinal: "asc" }, include: { runs: true } },
-        proposal: true,
+        proposal: {
+          include: { candidate: true, findings: true, changes: true },
+        },
       },
     });
     expect(completed.state).toBe("SUCCEEDED");
@@ -357,6 +428,12 @@ describe("checkout fencing and the complete durable review DAG", () => {
       expect(run.structuredOutput).toBeTruthy();
     }
     expect(completed.proposal?.inputRevisionId).toBe(firstJob.inputRevisionId);
+    expect(completed.proposal?.candidate?.inputRevisionId).toBe(
+      firstJob.inputRevisionId,
+    );
+    expect(completed.proposal?.changes).toHaveLength(0);
+    expect(completed.proposal?.findings).toHaveLength(0);
+    expect(completed.proposal?.candidate?.bodyHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(
       await database.draftRevision.count({
         where: { draftId: first.draft.id },
@@ -415,6 +492,490 @@ describe("checkout fencing and the complete durable review DAG", () => {
     expect(cancelled.steps.every((step) => step.state === "CANCELLED")).toBe(
       true,
     );
+  });
+
+  it("materializes an isolated candidate with truthful lineage and applies an editor-modified suggestion", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-agent-candidate",
+      title: "An isolated agent candidate revision scenario",
+    });
+    const workspace = await workflows.workspaceForSlug(created.situation.slug);
+    const inputRevision = workspace?.drafts[0]?.revisions[0];
+    const inputBody = inputRevision?.artifacts.find(
+      (artifact) => artifact.kind === "SITUATION",
+    )?.content.textBody;
+    if (!inputRevision || !inputBody)
+      throw new Error("Candidate fixture input is unavailable.");
+    const inputSections = parseSituationSections(inputBody);
+    const automaticId = randomUUID();
+    const manualId = randomUUID();
+    const revisionCount = await database.draftRevision.count({
+      where: { draftId: created.draft.id },
+    });
+    const job = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    await completeCandidateReview(job.id, {
+      findings: [
+        {
+          id: "observable-opening",
+          severity: "important",
+          targetKind: "SECTION",
+          targetKey: "The short answer",
+          summary: "The opening should name an observable pattern.",
+          rationale:
+            "Separating observation from judgment reduces defensiveness.",
+          evidenceRoleCodes: ["critic-manager-tools"],
+        },
+      ],
+      candidateEdits: [
+        {
+          id: automaticId,
+          targetKind: "SECTION",
+          targetKey: "The short answer",
+          applicationMode: "AUTOMATIC",
+          beforeHash: sha256(canonicalText(inputSections["The short answer"])),
+          afterBody:
+            "Name the directly observed pattern, ask for their view, and agree on one next move.",
+          problem: "The opening relies on a broad interpretation.",
+          explanation: "Makes the opening observable and specific.",
+          rationale:
+            "The replacement responds to the retained NVC finding while preserving the existing action sequence.",
+          upstreamFindingIds: ["critic-nvc:observable-opening"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-nvc", "critic-manager-tools"],
+        },
+        {
+          id: manualId,
+          targetKind: "EMBED",
+          targetKey: "supporting-example",
+          applicationMode: "MANUAL",
+          beforeHash: null,
+          afterBody: "Consider adding a context-specific supporting example.",
+          problem: "The best example depends on editorial context.",
+          explanation: "Leaves a visible manual suggestion.",
+          rationale:
+            "No safe generic embed can be generated from the pinned evidence.",
+          upstreamFindingIds: ["critic-nvc:observable-opening"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-nvc"],
+        },
+      ],
+    });
+
+    const completed = await database.reviewJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: {
+        proposal: {
+          include: {
+            candidate: true,
+            findings: true,
+            changes: {
+              orderBy: { position: "asc" },
+              include: { findingLinks: { include: { finding: true } } },
+            },
+          },
+        },
+      },
+    });
+    expect(completed.state).toBe("SUCCEEDED");
+    expect(completed.proposal?.candidate?.body).toContain(
+      "Name the directly observed pattern",
+    );
+    expect(completed.proposal?.candidate?.inputBundleHash).toBe(
+      inputRevision.bundleHash,
+    );
+    expect(completed.proposal?.findings[0]).toMatchObject({
+      findingKey: "critic-nvc:observable-opening",
+      sourceRoleCode: "critic-nvc",
+      evidenceRoleCodes: ["critic-manager-tools"],
+    });
+    expect(completed.proposal?.changes[0]).toMatchObject({
+      id: automaticId,
+      beforeBody: inputSections["The short answer"],
+      writtenByRoleCode: "bundle-writer",
+      identifiedByRoleCodes: ["critic-nvc"],
+      applicationMode: "AUTOMATIC",
+    });
+    expect(
+      completed.proposal?.changes[0]?.findingLinks[0]?.finding.findingKey,
+    ).toBe("critic-nvc:observable-opening");
+    expect(
+      await database.draftRevision.count({
+        where: { draftId: created.draft.id },
+      }),
+    ).toBe(revisionCount);
+
+    const editorReplacement =
+      "Name one directly observed pattern, ask for their view, and agree on one dated next move.";
+    await workflows.editProposalChange({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+      changeId: automaticId,
+      editedBody: editorReplacement,
+    });
+    await workflows.decideProposalChange({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+      changeId: manualId,
+      decision: "REJECT",
+    });
+    const accepted = await workflows.decideProposalChange({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+      changeId: automaticId,
+      decision: "ACCEPT",
+    });
+    const applied = await database.draftRevision.findUniqueOrThrow({
+      where: { id: accepted.revisionId! },
+      include: { artifacts: { include: { content: true } } },
+    });
+    expect(
+      applied.artifacts.find((artifact) => artifact.kind === "SITUATION")
+        ?.content.textBody,
+    ).toContain(editorReplacement);
+    expect(
+      await database.proposalChange.findUniqueOrThrow({
+        where: { id: automaticId },
+      }),
+    ).toMatchObject({
+      state: "ACCEPTED",
+      editorBody: editorReplacement,
+      appliedRevisionId: accepted.revisionId,
+    });
+    expect(
+      await database.auditEvent.findMany({
+        where: {
+          subjectId: { in: [automaticId, manualId] },
+          action: {
+            in: [
+              "PROPOSAL_CHANGE_EDITED",
+              "PROPOSAL_CHANGE_ACCEPTED",
+              "PROPOSAL_CHANGE_REJECTED",
+            ],
+          },
+        },
+      }),
+    ).toHaveLength(3);
+  });
+
+  it("atomically accepts typed bundle changes, retains manual items, and fences stale targets", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorTwoId,
+      slug: "integration-agent-atomic",
+      title: "An atomic structured candidate revision scenario",
+    });
+    const initial = await workflows.workspaceForSlug(created.situation.slug);
+    const initialRevision = initial?.drafts[0]?.revisions[0];
+    const initialBody = initialRevision?.artifacts.find(
+      (artifact) => artifact.kind === "SITUATION",
+    )?.content.textBody;
+    if (!initialRevision || !initialBody)
+      throw new Error("Atomic fixture input is unavailable.");
+    const oldContextBody = canonicalText('{"steps":["Listen first."]}');
+    const newContextBody = canonicalText(
+      '{"steps":["Name the pattern, then listen."]}',
+    );
+    const oldContextHash = sha256(oldContextBody);
+    const newContextHash = sha256(newContextBody);
+    await database.contentBlob.createMany({
+      data: [
+        {
+          hash: oldContextHash,
+          encoding: "UTF8",
+          mediaType: "application/json; charset=utf-8",
+          byteLength: new TextEncoder().encode(oldContextBody).byteLength,
+          textBody: oldContextBody,
+        },
+        {
+          hash: newContextHash,
+          encoding: "UTF8",
+          mediaType: "application/json; charset=utf-8",
+          byteLength: new TextEncoder().encode(newContextBody).byteLength,
+          textBody: newContextBody,
+        },
+      ],
+      skipDuplicates: true,
+    });
+    const baseBundle = situationBundleSchema.parse(
+      initialRevision.bundleManifest,
+    );
+    const relationship = {
+      kind: "PRACTICE",
+      logicalId: "practice:atomic-listen",
+      position: 0,
+      contentHash: oldContextHash,
+      visibility: "GLOBAL" as const,
+    };
+    const saved = await workflows.saveDraft({
+      actorId: editorTwoId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+      bundle: {
+        ...baseBundle,
+        relationships: [relationship],
+        contextHashes: [oldContextHash],
+      },
+      body: initialBody,
+      namedCheckpoint: "Atomic candidate base",
+    });
+    const savedWorkspace = await workflows.workspaceForSlug(
+      created.situation.slug,
+    );
+    const savedRevision = savedWorkspace?.drafts[0]?.revisions[0];
+    const savedBody = savedRevision?.artifacts.find(
+      (artifact) => artifact.kind === "SITUATION",
+    )?.content.textBody;
+    if (!savedRevision || !savedBody)
+      throw new Error("Atomic saved revision is unavailable.");
+    const sections = parseSituationSections(savedBody);
+    const nextTitle = "An atomically accepted structured agent revision";
+    const replacementRelationship = {
+      ...relationship,
+      contentHash: newContextHash,
+    };
+    const ids = {
+      section: randomUUID(),
+      metadata: randomUUID(),
+      relationship: randomUUID(),
+      scoped: randomUUID(),
+      manual: randomUUID(),
+    };
+    const job = await workflows.queueReview({
+      actorId: editorTwoId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    await completeCandidateReview(job.id, {
+      findings: [
+        {
+          id: "structured-bundle",
+          severity: "blocking",
+          targetKind: "BUNDLE",
+          targetKey: "candidate",
+          summary: "Several exact bundle updates should move together.",
+          rationale:
+            "The changes form one validated candidate and should be atomic.",
+          evidenceRoleCodes: ["critic-manager-tools"],
+        },
+      ],
+      candidateEdits: [
+        {
+          id: ids.section,
+          targetKind: "SECTION",
+          targetKey: "3 — Say",
+          applicationMode: "AUTOMATIC",
+          beforeHash: sha256(canonicalText(sections["3 — Say"])),
+          afterBody:
+            "Say what you observed, explain the impact, and ask what they see.",
+          problem: "The conversation opener needs a concrete sequence.",
+          explanation: "Adds an observable conversation sequence.",
+          rationale: "The sequence keeps facts, impact, and inquiry distinct.",
+          upstreamFindingIds: ["critic-nvc:structured-bundle"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-nvc"],
+        },
+        {
+          id: ids.metadata,
+          targetKind: "METADATA",
+          targetKey: "title",
+          applicationMode: "AUTOMATIC",
+          beforeHash: sha256(canonicalJson(baseBundle.metadata.title)),
+          afterBody: JSON.stringify(nextTitle),
+          problem: "The title does not describe the revised focus.",
+          explanation: "Aligns the title with the revised guidance.",
+          rationale: "The typed metadata value remains contract-valid.",
+          upstreamFindingIds: ["critic-nvc:structured-bundle"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-manager-tools"],
+        },
+        {
+          id: ids.relationship,
+          targetKind: "RELATIONSHIP",
+          targetKey: relationship.logicalId,
+          applicationMode: "AUTOMATIC",
+          beforeHash: sha256(canonicalJson(relationship)),
+          afterBody: canonicalJson(replacementRelationship),
+          problem: "The linked practice does not match the revised sequence.",
+          explanation: "Points to the retained matching practice bytes.",
+          rationale:
+            "The replacement content hash already exists in immutable content storage.",
+          upstreamFindingIds: ["critic-nvc:structured-bundle"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-manager-tools"],
+        },
+        {
+          id: ids.scoped,
+          targetKind: "SCOPED_VARIANT",
+          targetKey: relationship.logicalId,
+          applicationMode: "AUTOMATIC",
+          beforeHash: newContextHash,
+          afterBody: '{"steps":["Ask what changed, then set one follow-up."]}',
+          problem: "The shared practice needs situation-specific wording.",
+          explanation: "Creates a provenance-retaining scoped variant.",
+          rationale:
+            "The original logical ID and content hash remain attached to the fork.",
+          upstreamFindingIds: ["critic-nvc:structured-bundle"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-manager-tools"],
+        },
+        {
+          id: ids.manual,
+          targetKind: "EMBED",
+          targetKey: "contextual-example",
+          applicationMode: "MANUAL",
+          beforeHash: null,
+          afterBody: "Choose an approved contextual example in the editor.",
+          problem: "No safe generic embed is available.",
+          explanation: "Keeps the unresolved embed visible.",
+          rationale:
+            "The candidate does not invent unsupported embedded content.",
+          upstreamFindingIds: ["critic-nvc:structured-bundle"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-nvc"],
+        },
+      ],
+    });
+    const beforeAtomicCount = await database.draftRevision.count({
+      where: { draftId: created.draft.id },
+    });
+    const proposal = await database.reviewProposal.findUniqueOrThrow({
+      where: { jobId: job.id },
+    });
+    const accepted = await workflows.acceptAllProposalChanges({
+      actorId: editorTwoId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+      proposalId: proposal.id,
+    });
+    expect(accepted).toMatchObject({
+      appliedCount: 4,
+      manualRemainingCount: 1,
+    });
+    expect(
+      await database.draftRevision.count({
+        where: { draftId: created.draft.id },
+      }),
+    ).toBe(beforeAtomicCount + 1);
+    const applied = await database.draftRevision.findUniqueOrThrow({
+      where: { id: accepted.revisionId },
+      include: { artifacts: { include: { content: true } } },
+    });
+    const appliedBundle = situationBundleSchema.parse(applied.bundleManifest);
+    expect(appliedBundle.metadata.title).toBe(nextTitle);
+    expect(appliedBundle.relationships[0]).toMatchObject({
+      visibility: "SITUATION_SCOPED",
+      contentHash: sha256(
+        canonicalText(
+          '{"steps":["Ask what changed, then set one follow-up."]}',
+        ),
+      ),
+    });
+    expect(
+      applied.artifacts.find((artifact) => artifact.kind === "SITUATION")
+        ?.content.textBody,
+    ).toContain("Say what you observed");
+    expect(
+      await database.proposalChange.findUniqueOrThrow({
+        where: { id: ids.manual },
+      }),
+    ).toMatchObject({ state: "PENDING", applicationMode: "MANUAL" });
+    expect(
+      await database.proposalChange.count({
+        where: {
+          id: {
+            in: [ids.section, ids.metadata, ids.relationship, ids.scoped],
+          },
+          state: "ACCEPTED",
+          appliedRevisionId: accepted.revisionId,
+        },
+      }),
+    ).toBe(4);
+
+    const staleJob = await workflows.queueReview({
+      actorId: editorTwoId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    const currentWorkspace = await workflows.workspaceForSlug(
+      created.situation.slug,
+    );
+    const currentRevision = currentWorkspace?.drafts[0]?.revisions[0];
+    const currentBody = currentRevision?.artifacts.find(
+      (artifact) => artifact.kind === "SITUATION",
+    )?.content.textBody;
+    if (!currentRevision || !currentBody)
+      throw new Error("Stale candidate input is unavailable.");
+    const currentSections = parseSituationSections(currentBody);
+    const staleChangeId = randomUUID();
+    await completeCandidateReview(staleJob.id, {
+      findings: [
+        {
+          id: "stale-target",
+          severity: "important",
+          targetKind: "SECTION",
+          targetKey: "The short answer",
+          summary: "The opening could be more specific.",
+          rationale: "The candidate pins the exact reviewed bytes.",
+          evidenceRoleCodes: [],
+        },
+      ],
+      candidateEdits: [
+        {
+          id: staleChangeId,
+          targetKind: "SECTION",
+          targetKey: "The short answer",
+          applicationMode: "AUTOMATIC",
+          beforeHash: sha256(
+            canonicalText(currentSections["The short answer"]),
+          ),
+          afterBody: "Candidate replacement that should become stale.",
+          problem: "The reviewed opening was broad.",
+          explanation: "Proposes a more specific opening.",
+          rationale: "This must not apply after the target changes.",
+          upstreamFindingIds: ["critic-nvc:stale-target"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-nvc"],
+        },
+      ],
+    });
+    const manuallyChangedBody = serializeSituationSections({
+      ...currentSections,
+      "The short answer":
+        "The editor changed this exact target after the review.",
+    });
+    await workflows.saveDraft({
+      actorId: editorTwoId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+      bundle: {
+        ...situationBundleSchema.parse(currentRevision.bundleManifest),
+        bodyHash: sha256(canonicalText(manuallyChangedBody)),
+      },
+      body: manuallyChangedBody,
+      namedCheckpoint: "Stale target proof",
+    });
+    await expect(
+      workflows.decideProposalChange({
+        actorId: editorTwoId,
+        checkoutId: created.checkout.id,
+        fence: created.checkout.fence,
+        changeId: staleChangeId,
+        decision: "ACCEPT",
+      }),
+    ).rejects.toMatchObject({ code: "STALE_SUGGESTION" });
+    expect(
+      await database.proposalChange.findUniqueOrThrow({
+        where: { id: staleChangeId },
+      }),
+    ).toMatchObject({ state: "PENDING", appliedRevisionId: null });
+    expect(saved.bundleHash).toBe(savedRevision.bundleHash);
   });
 
   it("durably backs off after a timeout, survives restart, and preserves immutable successful-stage history", async () => {

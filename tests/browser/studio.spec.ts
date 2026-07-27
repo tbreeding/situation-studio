@@ -1,7 +1,17 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Client } from "pg";
+import {
+  bundleHash,
+  canonicalJson,
+  canonicalText,
+  parseSituationSections,
+  reviewStages,
+  serializeSituationSections,
+  sha256,
+  situationBundleSchema,
+} from "@situation-studio/domain";
 
 const databaseUrl =
   process.env.STUDIO_BROWSER_DATABASE_URL ?? process.env.STUDIO_DATABASE_URL;
@@ -12,6 +22,219 @@ if (!databaseUrl || !adminPassword)
   );
 
 const database = new Client({ connectionString: databaseUrl });
+
+type ReviewFixtureInput = {
+  situationId: string;
+  checkoutId: string;
+  checkoutFence: string;
+  revisionId: string;
+  inputBundleHash: string;
+  contractVersion: string;
+  validationPolicy: string;
+  body: string;
+  bundleManifest: unknown;
+  candidateBody: string;
+  findings: Array<{
+    key: string;
+    severity: "NOTE" | "CONSIDER" | "IMPORTANT" | "BLOCKING";
+    targetKind:
+      | "SECTION"
+      | "METADATA"
+      | "SCOPED_VARIANT"
+      | "RELATIONSHIP"
+      | "EMBED"
+      | "BUNDLE";
+    targetKey: string;
+    summary: string;
+    rationale: string;
+    sourceRoleCode: string;
+    evidenceRoleCodes: string[];
+  }>;
+  changes: Array<{
+    id: string;
+    targetKind:
+      | "SECTION"
+      | "METADATA"
+      | "SCOPED_VARIANT"
+      | "RELATIONSHIP"
+      | "EMBED"
+      | "BUNDLE";
+    targetKey: string;
+    applicationMode: "AUTOMATIC" | "MANUAL";
+    beforeHash: string | null;
+    beforeBody: string | null;
+    afterBody: string;
+    problem: string;
+    explanation: string;
+    rationale: string;
+    findingKeys: string[];
+    writtenByRoleCode: string;
+    identifiedByRoleCodes: string[];
+    evidenceRoleCodes: string[];
+  }>;
+};
+
+async function insertSucceededReviewFixture(input: ReviewFixtureInput) {
+  const jobId = randomUUID();
+  const proposalId = randomUUID();
+  const candidateId = randomUUID();
+  const candidateBundle = situationBundleSchema.parse({
+    ...situationBundleSchema.parse(input.bundleManifest),
+    bodyHash: sha256(canonicalText(input.candidateBody)),
+  });
+  const candidateBundleHash = bundleHash(candidateBundle);
+  const candidateHash = sha256(
+    canonicalJson({
+      inputRevisionId: input.revisionId,
+      inputBundleHash: input.inputBundleHash,
+      body: canonicalText(input.candidateBody),
+      bundle: candidateBundle,
+    }),
+  );
+  const findingIds = new Map(
+    input.findings.map((finding) => [finding.key, randomUUID()]),
+  );
+  await database.query("BEGIN");
+  try {
+    await database.query(
+      `INSERT INTO review_jobs (
+         id, situation_id, input_revision_id, checkout_id, checkout_fence,
+         state, context_hash, contract_version, policy_version,
+         queued_at, started_at, finished_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, 'SUCCEEDED', $6, $7, $8, now(), now(), now()
+       )`,
+      [
+        jobId,
+        input.situationId,
+        input.revisionId,
+        input.checkoutId,
+        input.checkoutFence,
+        createHash("sha256").update(jobId).digest("hex"),
+        input.contractVersion,
+        input.validationPolicy,
+      ],
+    );
+    for (const stage of reviewStages)
+      await database.query(
+        `INSERT INTO review_steps (
+           id, job_id, ordinal, role_code, dependencies, state,
+           output_hash, started_at, finished_at
+         ) VALUES ($1, $2, $3, $4, $5::jsonb, 'SUCCEEDED', $6, now(), now())`,
+        [
+          randomUUID(),
+          jobId,
+          stage.ordinal,
+          stage.role,
+          JSON.stringify(stage.dependencies),
+          createHash("sha256")
+            .update(`${jobId}:${stage.ordinal}`)
+            .digest("hex"),
+        ],
+      );
+    await database.query(
+      `INSERT INTO review_proposals (
+         id, job_id, input_revision_id, summary, findings, proposal_hash
+       ) VALUES ($1, $2, $3, $4, $5::jsonb, $6)`,
+      [
+        proposalId,
+        jobId,
+        input.revisionId,
+        input.changes.length
+          ? "A concise candidate revision with retained worker lineage."
+          : "The review found issues but did not generate a safe automatic edit.",
+        JSON.stringify(input.findings),
+        createHash("sha256").update(proposalId).digest("hex"),
+      ],
+    );
+    await database.query(
+      `INSERT INTO agent_candidate_revisions (
+         id, proposal_id, input_revision_id, input_bundle_hash, body,
+         body_hash, bundle_manifest, bundle_hash, candidate_hash
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)`,
+      [
+        candidateId,
+        proposalId,
+        input.revisionId,
+        input.inputBundleHash,
+        canonicalText(input.candidateBody),
+        candidateBundle.bodyHash,
+        JSON.stringify(candidateBundle),
+        candidateBundleHash,
+        candidateHash,
+      ],
+    );
+    for (const [position, finding] of input.findings.entries())
+      await database.query(
+        `INSERT INTO review_findings (
+           id, proposal_id, position, finding_key, severity, target_kind,
+           target_key, summary, rationale, source_role_code,
+           evidence_role_codes
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb
+         )`,
+        [
+          findingIds.get(finding.key),
+          proposalId,
+          position,
+          finding.key,
+          finding.severity,
+          finding.targetKind,
+          finding.targetKey,
+          finding.summary,
+          finding.rationale,
+          finding.sourceRoleCode,
+          JSON.stringify(finding.evidenceRoleCodes),
+        ],
+      );
+    for (const [position, change] of input.changes.entries()) {
+      await database.query(
+        `INSERT INTO proposal_changes (
+           id, proposal_id, position, target_kind, target_key,
+           application_mode, before_hash, before_body, after_body, after_hash,
+           problem, explanation, rationale, written_by_role_code,
+           identified_by_role_codes, evidence_role_codes
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+           $11, $12, $13, $14, $15::jsonb, $16::jsonb
+         )`,
+        [
+          change.id,
+          proposalId,
+          position,
+          change.targetKind,
+          change.targetKey,
+          change.applicationMode,
+          change.beforeHash,
+          change.beforeBody,
+          change.afterBody,
+          sha256(change.afterBody),
+          change.problem,
+          change.explanation,
+          change.rationale,
+          change.writtenByRoleCode,
+          JSON.stringify(change.identifiedByRoleCodes),
+          JSON.stringify(change.evidenceRoleCodes),
+        ],
+      );
+      for (const findingKey of change.findingKeys) {
+        const findingId = findingIds.get(findingKey);
+        if (!findingId)
+          throw new Error(`Browser finding ${findingKey} is unavailable.`);
+        await database.query(
+          `INSERT INTO proposal_change_findings (change_id, finding_id)
+           VALUES ($1, $2)`,
+          [change.id, findingId],
+        );
+      }
+    }
+    await database.query("COMMIT");
+  } catch (error) {
+    await database.query("ROLLBACK");
+    throw error;
+  }
+  return { jobId, proposalId, candidateHash };
+}
 
 async function signIn(
   page: Page,
@@ -109,6 +332,350 @@ test("inventory, operations, and new-situation surfaces remain accessible", asyn
   await expect(
     page.getByRole("heading", { name: "Begin with the real moment." }),
   ).toBeVisible();
+  await expectNoCriticalAccessibilityViolations(page);
+  await expectNoPageOverflow(page);
+});
+
+test("agent revisions render as accessible diffs with fenced decisions and honest no-change findings", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(90_000);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await signIn(page, "/situations/new");
+  const suffix = `${testInfo.project.name}-${Date.now()}`
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/gu, "-");
+  const title = `Browser agent revision ${suffix}`;
+  const slug = `browser-agent-revision-${suffix}`;
+  const titleInput = page.getByLabel("Working title");
+  await expect
+    .poll(() =>
+      titleInput.evaluate((element) =>
+        Object.keys(element).some((key) => key.startsWith("__reactProps$")),
+      ),
+    )
+    .toBe(true);
+  await titleInput.fill(title);
+  await page.getByLabel("Stable slug").fill(slug);
+  await expect(titleInput).toHaveValue(title);
+  await page.getByRole("button", { name: "Create and check out" }).click();
+  await expect(page).toHaveURL(new RegExp(`/situations/${slug}$`, "u"));
+
+  const fixtureResult = await database.query<{
+    situation_id: string;
+    checkout_id: string;
+    checkout_fence: string;
+    draft_id: string;
+    revision_id: string;
+    bundle_hash: string;
+    contract_version: string;
+    validation_policy: string;
+    bundle_manifest: unknown;
+    text_body: string;
+  }>(
+    `SELECT situation.id AS situation_id,
+            checkout.id AS checkout_id,
+            checkout.fence::text AS checkout_fence,
+            draft.id AS draft_id,
+            revision.id AS revision_id,
+            revision.bundle_hash,
+            revision.contract_version,
+            revision.validation_policy,
+            revision.bundle_manifest,
+            content.text_body
+       FROM situations situation
+       JOIN situation_checkouts checkout
+         ON checkout.situation_id = situation.id
+        AND checkout.released_at IS NULL
+       JOIN drafts draft ON draft.id = checkout.draft_id
+       JOIN LATERAL (
+         SELECT *
+           FROM draft_revisions candidate
+          WHERE candidate.draft_id = draft.id
+          ORDER BY candidate.revision DESC
+          LIMIT 1
+       ) revision ON true
+       JOIN draft_revision_artifacts artifact
+         ON artifact.revision_id = revision.id
+        AND artifact.kind = 'SITUATION'
+       JOIN content_blobs content ON content.hash = artifact.content_hash
+      WHERE situation.slug = $1`,
+    [slug],
+  );
+  const fixture = fixtureResult.rows[0];
+  if (!fixture) throw new Error("Browser candidate fixture is unavailable.");
+  const sections = parseSituationSections(fixture.text_body);
+  const originalShortAnswer = sections["The short answer"];
+  const agentShortAnswer =
+    "Name the directly observed pattern, ask for their view, and agree on one dated next move.";
+  const candidateBody = serializeSituationSections({
+    ...sections,
+    "The short answer": agentShortAnswer,
+  });
+  const automaticId = randomUUID();
+  const manualId = randomUUID();
+  await insertSucceededReviewFixture({
+    situationId: fixture.situation_id,
+    checkoutId: fixture.checkout_id,
+    checkoutFence: fixture.checkout_fence,
+    revisionId: fixture.revision_id,
+    inputBundleHash: fixture.bundle_hash,
+    contractVersion: fixture.contract_version,
+    validationPolicy: fixture.validation_policy,
+    body: fixture.text_body,
+    bundleManifest: fixture.bundle_manifest,
+    candidateBody,
+    findings: [
+      {
+        key: "critic-nvc:observable-opening",
+        severity: "IMPORTANT",
+        targetKind: "SECTION",
+        targetKey: "The short answer",
+        summary: "The opening should distinguish observation from judgment.",
+        rationale:
+          "Observable language makes the conversation more specific and easier to answer.",
+        sourceRoleCode: "critic-nvc",
+        evidenceRoleCodes: ["critic-manager-tools"],
+      },
+      {
+        key: "critic-coaching:contextual-example",
+        severity: "CONSIDER",
+        targetKind: "EMBED",
+        targetKey: "contextual-example",
+        summary: "A useful example depends on the editor's real context.",
+        rationale:
+          "The review cannot safely invent the people, facts, or stakes for an embed.",
+        sourceRoleCode: "critic-coaching",
+        evidenceRoleCodes: [],
+      },
+    ],
+    changes: [
+      {
+        id: automaticId,
+        targetKind: "SECTION",
+        targetKey: "The short answer",
+        applicationMode: "AUTOMATIC",
+        beforeHash: sha256(canonicalText(originalShortAnswer)),
+        beforeBody: originalShortAnswer,
+        afterBody: agentShortAnswer,
+        problem: "The opening relies on a broad interpretation.",
+        explanation: "Makes the opening observable and adds a dated next move.",
+        rationale:
+          "The Bundle Writer responded to the NVC finding with Manager Tools evidence.",
+        findingKeys: ["critic-nvc:observable-opening"],
+        writtenByRoleCode: "bundle-writer",
+        identifiedByRoleCodes: ["critic-nvc"],
+        evidenceRoleCodes: ["critic-nvc", "critic-manager-tools"],
+      },
+      {
+        id: manualId,
+        targetKind: "EMBED",
+        targetKey: "contextual-example",
+        applicationMode: "MANUAL",
+        beforeHash: null,
+        beforeBody: null,
+        afterBody: "Choose a truthful contextual example in the editor.",
+        problem: "No safe generic embed is available.",
+        explanation: "Keeps the embed as an explicit manual suggestion.",
+        rationale:
+          "The review retains the comment instead of inventing unsupported content.",
+        findingKeys: ["critic-coaching:contextual-example"],
+        writtenByRoleCode: "bundle-writer",
+        identifiedByRoleCodes: ["critic-coaching"],
+        evidenceRoleCodes: ["critic-coaching"],
+      },
+    ],
+  });
+
+  await page.goto(`/situations/${slug}?tab=review`);
+  await expect(page.getByRole("tab", { name: "Review" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("heading", { name: "Review suggested changes in context" }),
+  ).toBeVisible();
+  const primaryComparison = page.getByLabel(
+    "Saved draft and agent revision comparison",
+  );
+  await expect(
+    primaryComparison.getByText("Saved draft", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    primaryComparison.getByText("Agent revision", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Accept all 1 change" }),
+  ).toBeVisible();
+  const automaticHunk = page
+    .locator("article.reviewHunk")
+    .filter({ hasText: "The short answer" });
+  await expect(
+    automaticHunk.locator(".inlineDiffAdded").filter({ hasText: "directly" }),
+  ).toHaveCount(1);
+  await expect(
+    automaticHunk.locator(".inlineDiffAdded").filter({ hasText: "observed" }),
+  ).toHaveCount(1);
+  await expect(automaticHunk.locator(".inlineDiffRemoved")).not.toHaveCount(0);
+  await automaticHunk.getByText("View explanation").click();
+  await expect(automaticHunk).toContainText("Nonviolent Communication");
+  await expect(automaticHunk).toContainText("Bundle Writer");
+  await expect(automaticHunk).toContainText("Manager Tools");
+
+  const panes = page.locator(".agentRevisionReview .renderCompare > article");
+  expect(await panes.count()).toBe(2);
+  await panes.first().evaluate((element) => {
+    element.scrollTop = Math.max(
+      1,
+      (element.scrollHeight - element.clientHeight) * 0.7,
+    );
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await expect
+    .poll(() => panes.nth(1).evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+
+  await automaticHunk.getByRole("button", { name: "Edit suggestion" }).click();
+  await expect(
+    automaticHunk.getByLabel("Edit the proposed replacement"),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(
+    automaticHunk.getByLabel("Edit the proposed replacement"),
+  ).toHaveCount(0);
+  await automaticHunk.getByRole("button", { name: "Edit suggestion" }).click();
+  const editorReplacement =
+    "Name one directly observed pattern, ask for their view, and agree on one dated follow-up.";
+  await automaticHunk
+    .getByLabel("Edit the proposed replacement")
+    .fill(editorReplacement);
+  await automaticHunk
+    .getByRole("button", { name: "Save edited suggestion" })
+    .click();
+  await expect(automaticHunk.getByText("Modified by editor")).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("tab", { name: "Review" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page
+      .locator("article.reviewHunk")
+      .filter({ hasText: "The short answer" })
+      .getByText("Modified by editor"),
+  ).toBeVisible();
+  await expectNoCriticalAccessibilityViolations(page);
+  await expectNoPageOverflow(page);
+
+  const beforeAcceptance = await database.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM draft_revisions WHERE draft_id = $1",
+    [fixture.draft_id],
+  );
+  await page.getByRole("button", { name: "Accept all 1 change" }).click();
+  await expect(page.getByRole("button", { name: /^Accept all/u })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.locator("article.reviewHunk").filter({ hasText: "The short answer" }),
+  ).toContainText("accepted");
+  const manualHunk = page
+    .locator("article.reviewHunk")
+    .filter({ hasText: "contextual-example" });
+  await expect(manualHunk.getByText("Manual only")).toBeVisible();
+  await manualHunk.getByRole("button", { name: "Reject" }).click();
+  await expect(manualHunk).toContainText("rejected");
+  const afterAcceptance = await database.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM draft_revisions WHERE draft_id = $1",
+    [fixture.draft_id],
+  );
+  expect(Number(afterAcceptance.rows[0]?.count)).toBe(
+    Number(beforeAcceptance.rows[0]?.count) + 1,
+  );
+  const decisions = await database.query<{
+    id: string;
+    state: string;
+    editor_body: string | null;
+  }>(
+    `SELECT id, state::text, editor_body
+       FROM proposal_changes
+      WHERE id = ANY($1::uuid[])
+      ORDER BY id`,
+    [[automaticId, manualId]],
+  );
+  expect(decisions.rows).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: automaticId,
+        state: "ACCEPTED",
+        editor_body: editorReplacement,
+      }),
+      expect.objectContaining({ id: manualId, state: "REJECTED" }),
+    ]),
+  );
+
+  const latestResult = await database.query<{
+    revision_id: string;
+    bundle_hash: string;
+    contract_version: string;
+    validation_policy: string;
+    bundle_manifest: unknown;
+    text_body: string;
+  }>(
+    `SELECT revision.id AS revision_id,
+            revision.bundle_hash,
+            revision.contract_version,
+            revision.validation_policy,
+            revision.bundle_manifest,
+            content.text_body
+       FROM draft_revisions revision
+       JOIN draft_revision_artifacts artifact
+         ON artifact.revision_id = revision.id
+        AND artifact.kind = 'SITUATION'
+       JOIN content_blobs content ON content.hash = artifact.content_hash
+      WHERE revision.draft_id = $1
+      ORDER BY revision.revision DESC
+      LIMIT 1`,
+    [fixture.draft_id],
+  );
+  const latest = latestResult.rows[0];
+  if (!latest) throw new Error("Accepted browser revision is unavailable.");
+  await insertSucceededReviewFixture({
+    situationId: fixture.situation_id,
+    checkoutId: fixture.checkout_id,
+    checkoutFence: fixture.checkout_fence,
+    revisionId: latest.revision_id,
+    inputBundleHash: latest.bundle_hash,
+    contractVersion: latest.contract_version,
+    validationPolicy: latest.validation_policy,
+    body: latest.text_body,
+    bundleManifest: latest.bundle_manifest,
+    candidateBody: latest.text_body,
+    findings: [
+      {
+        key: "critic-coaching:no-safe-edit",
+        severity: "BLOCKING",
+        targetKind: "SECTION",
+        targetKey: "3 — Say",
+        summary: "The right example depends on facts not present in evidence.",
+        rationale:
+          "The editor should anchor a real example before changing the draft.",
+        sourceRoleCode: "critic-coaching",
+        evidenceRoleCodes: ["critic-nvc"],
+      },
+    ],
+    changes: [],
+  });
+  await page.reload();
+  await expect(
+    page.getByText("No safe automatic change was generated."),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Accept all/u })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByText("Findings without a safe replacement"),
+  ).toBeVisible();
+  await expect(page.locator(".inlineFindings")).toContainText("3 — Say");
   await expectNoCriticalAccessibilityViolations(page);
   await expectNoPageOverflow(page);
 });

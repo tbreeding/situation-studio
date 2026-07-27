@@ -4,15 +4,18 @@ import {
   VALIDATION_POLICY_VERSION,
   bundleHash,
   canonicalText,
+  canonicalJson,
   createScopedVariant,
   applySectionProposal,
   parseSituationSections,
   proposalChangeSchema,
+  relationshipSchema,
   requiredSituationSections,
   reviewStages,
   serializeSituationSections,
   sha256,
   situationBundleSchema,
+  situationMetadataSchema,
   validateSituationBundle,
   type SituationBundle,
   type SituationMetadata,
@@ -1343,33 +1346,13 @@ export async function decideProposalChange(input: {
 }) {
   return database().$transaction(
     async (transaction) => {
-      const checkout = await transaction.situationCheckout.findFirst({
-        where: {
-          id: input.checkoutId,
-          holderId: input.actorId,
-          fence: input.fence,
-          releasedAt: null,
-        },
-        include: {
-          draft: {
-            include: {
-              revisions: {
-                orderBy: { revision: "desc" },
-                take: 1,
-                include: { artifacts: { include: { content: true } } },
-              },
-            },
-          },
-        },
-      });
-      if (!checkout)
-        throw new WorkflowError("The checkout is no longer active.");
-      await assertNoActivePublication(transaction, checkout.situationId);
+      const checkout = await proposalCheckout(transaction, input);
       const change = await transaction.proposalChange.findFirst({
         where: {
           id: input.changeId,
           proposal: { job: { situationId: checkout.situationId } },
         },
+        include: { proposal: true },
       });
       if (!change) throw new WorkflowError("Proposal change not found.", 404);
       if (change.state !== "PENDING")
@@ -1383,53 +1366,296 @@ export async function decideProposalChange(input: {
             decidedById: input.actorId,
           },
         });
+        await transaction.auditEvent.create({
+          data: {
+            actorId: input.actorId,
+            action: "PROPOSAL_CHANGE_REJECTED",
+            subjectType: "PROPOSAL_CHANGE",
+            subjectId: change.id,
+            payload: {
+              proposalId: change.proposalId,
+              targetKind: change.targetKind,
+              targetKey: change.targetKey,
+            },
+          },
+        });
         return { state: "REJECTED" as const, revisionId: null };
       }
-      const revision = checkout.draft.revisions[0];
-      const body = revision?.artifacts.find(
-        (artifact) => artifact.kind === "SITUATION",
-      )?.content.textBody;
-      if (!revision || !body)
-        throw new WorkflowError("The current draft is unavailable.");
-      const currentBundle = situationBundleSchema.parse(
-        revision.bundleManifest,
-      );
-      if (change.targetKind === "SCOPED_VARIANT") {
-        const relationship = currentBundle.relationships.find(
-          (item) => item.logicalId === change.targetKey,
+      if (change.applicationMode !== "AUTOMATIC")
+        throw new WorkflowError(
+          "This is an explicit manual suggestion and cannot be auto-applied.",
+          422,
+          "MANUAL_SUGGESTION",
         );
-        if (!relationship)
-          throw new WorkflowError(
-            "The shared proposal target is no longer linked.",
-          );
-        if (change.beforeHash && relationship.contentHash !== change.beforeHash)
-          throw new WorkflowError("The shared proposal target changed.");
-        if (
-          ![
-            "GUIDE",
-            "PRACTICE",
-            "SOURCE",
-            "LESSON_PLAN",
-            "PREPARATION_PROMPT",
-          ].includes(relationship.kind)
-        )
-          throw new WorkflowError("The proposal target cannot be scoped.", 422);
-        const variant = createScopedVariant({
-          situationId: checkout.situationId,
-          kind: relationship.kind as
-            | "GUIDE"
-            | "PRACTICE"
-            | "SOURCE"
-            | "LESSON_PLAN"
-            | "PREPARATION_PROMPT",
-          originalLogicalId: relationship.logicalId,
-          originalContentHash: relationship.contentHash,
-          changedBody: change.afterBody,
+      const created = await applyProposalChanges(transaction, {
+        actorId: input.actorId,
+        checkout,
+        changes: [change],
+        namedCheckpoint: `Accepted agent suggestion: ${change.targetKey}`,
+      });
+      const now = new Date();
+      await transaction.proposalChange.update({
+        where: { id: change.id },
+        data: {
+          state: "ACCEPTED",
+          decidedAt: now,
+          decidedById: input.actorId,
+          appliedRevisionId: created.id,
+        },
+      });
+      await transaction.auditEvent.create({
+        data: {
+          actorId: input.actorId,
+          action: "PROPOSAL_CHANGE_ACCEPTED",
+          subjectType: "PROPOSAL_CHANGE",
+          subjectId: change.id,
+          payload: {
+            proposalId: change.proposalId,
+            inputRevisionId: change.proposal.inputRevisionId,
+            appliedRevisionId: created.id,
+            modified: Boolean(change.editorBody),
+            targetKind: change.targetKind,
+            targetKey: change.targetKey,
+          },
+        },
+      });
+      return { state: "ACCEPTED" as const, revisionId: created.id };
+    },
+    { isolationLevel: "Serializable" },
+  );
+}
+
+type ProposalCheckout = Awaited<ReturnType<typeof proposalCheckout>>;
+
+async function proposalCheckout(
+  transaction: Transaction,
+  input: { actorId: string; checkoutId: string; fence: bigint },
+) {
+  const checkout = await transaction.situationCheckout.findFirst({
+    where: {
+      id: input.checkoutId,
+      holderId: input.actorId,
+      fence: input.fence,
+      releasedAt: null,
+    },
+    include: {
+      draft: {
+        include: {
+          revisions: {
+            orderBy: { revision: "desc" },
+            take: 1,
+            include: { artifacts: { include: { content: true } } },
+          },
+        },
+      },
+    },
+  });
+  if (!checkout)
+    throw new WorkflowError(
+      "The checkout changed. Reload before reviewing suggestions.",
+      409,
+      "STALE_CHECKOUT",
+    );
+  await assertDraftMutationAllowed(transaction, checkout.situationId);
+  return checkout;
+}
+
+type ApplicableProposalChange = {
+  id: string;
+  targetKind:
+    | "SECTION"
+    | "METADATA"
+    | "SCOPED_VARIANT"
+    | "RELATIONSHIP"
+    | "EMBED"
+    | "BUNDLE";
+  targetKey: string;
+  applicationMode: "AUTOMATIC" | "MANUAL";
+  beforeHash: string | null;
+  afterBody: string;
+  editorBody: string | null;
+};
+
+function proposedBody(change: ApplicableProposalChange) {
+  return change.editorBody ?? change.afterBody;
+}
+
+function staleSuggestion(target: string): never {
+  throw new WorkflowError(
+    `${target} changed after this review. Run a new review or resolve it manually.`,
+    409,
+    "STALE_SUGGESTION",
+  );
+}
+
+async function applyProposalChanges(
+  transaction: Transaction,
+  input: {
+    actorId: string;
+    checkout: ProposalCheckout;
+    changes: ApplicableProposalChange[];
+    namedCheckpoint: string;
+  },
+) {
+  const revision = input.checkout.draft.revisions[0];
+  const initialBody = revision?.artifacts.find(
+    (artifact) => artifact.kind === "SITUATION",
+  )?.content.textBody;
+  if (!revision || !initialBody)
+    throw new WorkflowError("The current draft is unavailable.");
+  let body = initialBody;
+  let bundle = situationBundleSchema.parse(revision.bundleManifest);
+  for (const change of input.changes) {
+    if (change.applicationMode !== "AUTOMATIC")
+      throw new WorkflowError(
+        `Manual suggestion ${change.targetKey} cannot be included in automatic acceptance.`,
+        422,
+        "MANUAL_SUGGESTION",
+      );
+    const afterBody = proposedBody(change);
+    if (change.targetKind === "SECTION") {
+      const sections = parseSituationSections(body);
+      const before = sections[change.targetKey as keyof typeof sections];
+      if (
+        before === undefined ||
+        sha256(canonicalText(before)) !== change.beforeHash
+      )
+        staleSuggestion(change.targetKey);
+      const proposal = proposalChangeSchema.parse({
+        id: change.id,
+        targetKind: change.targetKind,
+        targetKey: change.targetKey,
+        beforeHash: change.beforeHash,
+        afterBody,
+        rationale: "Fenced candidate application.",
+      });
+      body = serializeSituationSections(
+        applySectionProposal(sections, proposal),
+      );
+      continue;
+    }
+    if (change.targetKind === "METADATA") {
+      if (!(change.targetKey in bundle.metadata))
+        staleSuggestion(change.targetKey);
+      const current =
+        bundle.metadata[change.targetKey as keyof typeof bundle.metadata];
+      if (sha256(canonicalJson(current)) !== change.beforeHash)
+        staleSuggestion(change.targetKey);
+      let after: unknown;
+      try {
+        after = JSON.parse(afterBody);
+      } catch {
+        throw new WorkflowError(
+          `Edited metadata suggestion ${change.targetKey} is not valid JSON.`,
+          422,
+          "INVALID_SUGGESTION",
+        );
+      }
+      const metadata = situationMetadataSchema.parse({
+        ...bundle.metadata,
+        [change.targetKey]: after,
+      });
+      bundle = situationBundleSchema.parse({ ...bundle, metadata });
+      continue;
+    }
+    if (change.targetKind === "RELATIONSHIP") {
+      const current =
+        bundle.relationships.find(
+          (relationship) => relationship.logicalId === change.targetKey,
+        ) ?? null;
+      const currentHash = current ? sha256(canonicalJson(current)) : null;
+      if (currentHash !== change.beforeHash) staleSuggestion(change.targetKey);
+      let after: unknown;
+      try {
+        after = JSON.parse(afterBody);
+      } catch {
+        throw new WorkflowError(
+          `Edited relationship suggestion ${change.targetKey} is not valid JSON.`,
+          422,
+          "INVALID_SUGGESTION",
+        );
+      }
+      const relationship =
+        after === null ? null : relationshipSchema.parse(after);
+      if (relationship && relationship.logicalId !== change.targetKey)
+        throw new WorkflowError(
+          "A relationship replacement must retain its target logical ID.",
+          422,
+          "INVALID_SUGGESTION",
+        );
+      if (
+        relationship &&
+        !(await transaction.contentBlob.findUnique({
+          where: { hash: relationship.contentHash },
+          select: { hash: true },
+        }))
+      )
+        throw new WorkflowError(
+          "The suggested relationship content is not available.",
+          422,
+          "MISSING_RELATIONSHIP_CONTENT",
+        );
+      const index = bundle.relationships.findIndex(
+        (candidate) => candidate.logicalId === change.targetKey,
+      );
+      const relationships = [...bundle.relationships];
+      if (index >= 0 && relationship) relationships[index] = relationship;
+      else if (index >= 0) relationships.splice(index, 1);
+      else if (relationship) relationships.push(relationship);
+      bundle = situationBundleSchema.parse({
+        ...bundle,
+        relationships,
+        contextHashes: relationships.map((candidate) => candidate.contentHash),
+      });
+      continue;
+    }
+    if (change.targetKind === "SCOPED_VARIANT") {
+      const relationship = bundle.relationships.find(
+        (candidate) => candidate.logicalId === change.targetKey,
+      );
+      if (!relationship || relationship.contentHash !== change.beforeHash)
+        staleSuggestion(change.targetKey);
+      if (
+        ![
+          "GUIDE",
+          "PRACTICE",
+          "SOURCE",
+          "LESSON_PLAN",
+          "PREPARATION_PROMPT",
+        ].includes(relationship.kind)
+      )
+        throw new WorkflowError(
+          "The suggested shared target cannot be safely scoped.",
+          422,
+          "INVALID_SUGGESTION",
+        );
+      const variant = createScopedVariant({
+        situationId: input.checkout.situationId,
+        kind: relationship.kind as
+          | "GUIDE"
+          | "PRACTICE"
+          | "SOURCE"
+          | "LESSON_PLAN"
+          | "PREPARATION_PROMPT",
+        originalLogicalId: relationship.logicalId,
+        originalContentHash: relationship.contentHash,
+        changedBody: afterBody,
+      });
+      await putTextBlob(
+        transaction,
+        variant.body,
+        relationship.kind === "PRACTICE" || relationship.kind === "SOURCE"
+          ? "application/json; charset=utf-8"
+          : "text/markdown; charset=utf-8",
+      );
+      const existingVariant =
+        await transaction.scopedArtifactVariant.findUnique({
+          where: { logicalId: variant.artifact.logicalId },
         });
-        await putTextBlob(transaction, variant.body);
+      if (!existingVariant)
         await transaction.scopedArtifactVariant.create({
           data: {
-            ownerSituationId: checkout.situationId,
+            ownerSituationId: input.checkout.situationId,
             logicalId: variant.artifact.logicalId,
             kind: variant.artifact.kind,
             visibility: variant.artifact.visibility,
@@ -1438,76 +1664,229 @@ export async function decideProposalChange(input: {
             contentHash: variant.artifact.contentHash,
           },
         });
-        const nextBundle = situationBundleSchema.parse({
-          ...currentBundle,
-          artifacts: [...currentBundle.artifacts, variant.artifact],
-          relationships: currentBundle.relationships.map((item) =>
-            item.logicalId === relationship.logicalId
-              ? {
-                  ...item,
-                  logicalId: variant.artifact.logicalId,
-                  contentHash: variant.artifact.contentHash,
-                  visibility: variant.artifact.visibility,
-                }
-              : item,
-          ),
-          contextHashes: currentBundle.relationships.map((item) =>
-            item.logicalId === relationship.logicalId
-              ? variant.artifact.contentHash
-              : item.contentHash,
-          ),
-        });
-        const created = await createRevision(transaction, {
-          draftId: checkout.draftId,
-          actorId: input.actorId,
-          bundle: nextBundle,
-          body,
-          namedCheckpoint: `Accepted scoped proposal: ${change.targetKey}`,
-        });
-        await transaction.proposalChange.update({
-          where: { id: change.id },
-          data: {
-            state: "ACCEPTED",
-            decidedAt: new Date(),
-            decidedById: input.actorId,
-            appliedRevisionId: created.id,
-          },
-        });
-        return { state: "ACCEPTED" as const, revisionId: created.id };
-      }
-      if (change.targetKind !== "SECTION")
+      else if (
+        existingVariant.ownerSituationId !== input.checkout.situationId ||
+        existingVariant.forkedFromLogicalId !== relationship.logicalId ||
+        existingVariant.forkedFromContentHash !== relationship.contentHash ||
+        existingVariant.contentHash !== variant.artifact.contentHash
+      )
         throw new WorkflowError(
-          "This proposal target needs a manual editorial edit.",
-          422,
+          "The scoped suggestion conflicts with a retained variant.",
+          409,
+          "SCOPED_VARIANT_CONFLICT",
         );
-      const sections = parseSituationSections(body);
-      const proposal = proposalChangeSchema.parse({
-        id: change.id,
-        targetKind: change.targetKind,
-        targetKey: change.targetKey,
-        beforeHash: change.beforeHash,
-        afterBody: change.afterBody,
-        rationale: change.rationale,
+      const relationships = bundle.relationships.map((candidate) =>
+        candidate.logicalId === relationship.logicalId
+          ? {
+              ...candidate,
+              logicalId: variant.artifact.logicalId,
+              contentHash: variant.artifact.contentHash,
+              visibility: variant.artifact.visibility,
+            }
+          : candidate,
+      );
+      bundle = situationBundleSchema.parse({
+        ...bundle,
+        artifacts: bundle.artifacts.some(
+          (artifact) => artifact.logicalId === variant.artifact.logicalId,
+        )
+          ? bundle.artifacts
+          : [...bundle.artifacts, variant.artifact],
+        relationships,
+        contextHashes: relationships.map((candidate) => candidate.contentHash),
       });
-      const nextSections = applySectionProposal(sections, proposal);
-      const nextBody = serializeSituationSections(nextSections);
-      const created = await createRevision(transaction, {
-        draftId: checkout.draftId,
-        actorId: input.actorId,
-        bundle: situationBundleSchema.parse(revision.bundleManifest),
-        body: nextBody,
-        namedCheckpoint: `Accepted proposal: ${change.targetKey}`,
+      continue;
+    }
+    throw new WorkflowError(
+      `Suggestion type ${change.targetKind} is not safely auto-applicable.`,
+      422,
+      "UNSUPPORTED_SUGGESTION",
+    );
+  }
+  bundle = situationBundleSchema.parse({
+    ...bundle,
+    bodyHash: sha256(canonicalText(body)),
+  });
+  const validation = validateSituationBundle(bundle, body);
+  if (!validation.valid)
+    throw new WorkflowError(
+      validation.errors.join(" "),
+      422,
+      "INVALID_SUGGESTION",
+    );
+  return createRevision(transaction, {
+    draftId: input.checkout.draftId,
+    actorId: input.actorId,
+    bundle,
+    body,
+    namedCheckpoint: input.namedCheckpoint,
+  });
+}
+
+export async function editProposalChange(input: {
+  actorId: string;
+  checkoutId: string;
+  fence: bigint;
+  changeId: string;
+  editedBody: string;
+}) {
+  if (
+    !input.editedBody.length ||
+    Buffer.byteLength(input.editedBody, "utf8") > 512_000
+  )
+    throw new WorkflowError(
+      "The edited suggestion must contain no more than 512 KB.",
+      422,
+      "INVALID_SUGGESTION",
+    );
+  return database().$transaction(
+    async (transaction) => {
+      const checkout = await proposalCheckout(transaction, input);
+      const change = await transaction.proposalChange.findFirst({
+        where: {
+          id: input.changeId,
+          proposal: { job: { situationId: checkout.situationId } },
+        },
       });
-      await transaction.proposalChange.update({
+      if (!change) throw new WorkflowError("Proposal change not found.", 404);
+      if (change.state !== "PENDING")
+        throw new WorkflowError("That proposal change is already decided.");
+      if (change.applicationMode !== "AUTOMATIC")
+        throw new WorkflowError(
+          "Manual suggestions must be resolved in the editor.",
+          422,
+          "MANUAL_SUGGESTION",
+        );
+      if (change.targetKind === "METADATA")
+        try {
+          JSON.parse(input.editedBody);
+        } catch {
+          throw new WorkflowError(
+            "The edited metadata value must be valid JSON.",
+            422,
+            "INVALID_SUGGESTION",
+          );
+        }
+      if (change.targetKind === "RELATIONSHIP")
+        try {
+          JSON.parse(input.editedBody);
+        } catch {
+          throw new WorkflowError(
+            "The edited relationship must be valid JSON.",
+            422,
+            "INVALID_SUGGESTION",
+          );
+        }
+      const editorHash = sha256(input.editedBody);
+      const edited = await transaction.proposalChange.update({
         where: { id: change.id },
         data: {
+          editorBody: input.editedBody,
+          editorHash,
+          editedAt: new Date(),
+          editedById: input.actorId,
+        },
+      });
+      await transaction.auditEvent.create({
+        data: {
+          actorId: input.actorId,
+          action: "PROPOSAL_CHANGE_EDITED",
+          subjectType: "PROPOSAL_CHANGE",
+          subjectId: change.id,
+          payload: {
+            proposalId: change.proposalId,
+            originalAfterHash: change.afterHash,
+            editorHash,
+            targetKind: change.targetKind,
+            targetKey: change.targetKey,
+          },
+        },
+      });
+      return { state: edited.state, modified: true, editorHash };
+    },
+    { isolationLevel: "Serializable" },
+  );
+}
+
+export async function acceptAllProposalChanges(input: {
+  actorId: string;
+  checkoutId: string;
+  fence: bigint;
+  proposalId: string;
+}) {
+  return database().$transaction(
+    async (transaction) => {
+      const checkout = await proposalCheckout(transaction, input);
+      const proposal = await transaction.reviewProposal.findFirst({
+        where: {
+          id: input.proposalId,
+          job: { situationId: checkout.situationId },
+        },
+        include: { changes: { orderBy: { position: "asc" } } },
+      });
+      if (!proposal) throw new WorkflowError("Review proposal not found.", 404);
+      const pending = proposal.changes.filter(
+        (change) => change.state === "PENDING",
+      );
+      const actionable = pending.filter(
+        (change) => change.applicationMode === "AUTOMATIC",
+      );
+      const manual = pending.filter(
+        (change) => change.applicationMode === "MANUAL",
+      );
+      if (!actionable.length)
+        throw new WorkflowError(
+          "There are no unresolved automatic suggestions to accept.",
+          422,
+          "NO_ACTIONABLE_SUGGESTIONS",
+        );
+      const created = await applyProposalChanges(transaction, {
+        actorId: input.actorId,
+        checkout,
+        changes: actionable,
+        namedCheckpoint: `Accepted all ${actionable.length} agent suggestions`,
+      });
+      const now = new Date();
+      const accepted = await transaction.proposalChange.updateMany({
+        where: {
+          id: { in: actionable.map((change) => change.id) },
+          state: "PENDING",
+          applicationMode: "AUTOMATIC",
+        },
+        data: {
           state: "ACCEPTED",
-          decidedAt: new Date(),
+          decidedAt: now,
           decidedById: input.actorId,
           appliedRevisionId: created.id,
         },
       });
-      return { state: "ACCEPTED" as const, revisionId: created.id };
+      if (accepted.count !== actionable.length)
+        throw new WorkflowError(
+          "The suggestion set changed before atomic acceptance.",
+          409,
+          "STALE_SUGGESTION_SET",
+        );
+      await transaction.auditEvent.create({
+        data: {
+          actorId: input.actorId,
+          action: "PROPOSAL_CHANGES_ACCEPTED_ALL",
+          subjectType: "REVIEW_PROPOSAL",
+          subjectId: proposal.id,
+          payload: {
+            inputRevisionId: proposal.inputRevisionId,
+            appliedRevisionId: created.id,
+            appliedCount: actionable.length,
+            manualRemainingCount: manual.length,
+            changeIds: actionable.map((change) => change.id),
+          },
+        },
+      });
+      return {
+        state: "ACCEPTED" as const,
+        revisionId: created.id,
+        appliedCount: actionable.length,
+        manualRemainingCount: manual.length,
+      };
     },
     { isolationLevel: "Serializable" },
   );
@@ -1535,6 +1914,14 @@ export async function workspaceForSlug(slug: string) {
         orderBy: { queuedAt: "desc" },
         take: 1,
         include: {
+          inputRevision: {
+            include: {
+              artifacts: {
+                where: { kind: "SITUATION" },
+                include: { content: true },
+              },
+            },
+          },
           steps: {
             orderBy: { ordinal: "asc" },
             include: {
@@ -1549,7 +1936,20 @@ export async function workspaceForSlug(slug: string) {
               },
             },
           },
-          proposal: { include: { changes: { orderBy: { position: "asc" } } } },
+          proposal: {
+            include: {
+              candidate: true,
+              findings: { orderBy: { position: "asc" } },
+              changes: {
+                orderBy: { position: "asc" },
+                include: {
+                  findingLinks: {
+                    include: { finding: true },
+                  },
+                },
+              },
+            },
+          },
         },
       },
       publicationJobs: { orderBy: { createdAt: "desc" }, take: 1 },

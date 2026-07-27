@@ -11,6 +11,10 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import {
+  AgentRevisionReview,
+  type ReviewProposalView,
+} from "@/components/agent-revision-review";
 import { RenderedGuidance } from "@/components/rendered-guidance";
 import { RenderedComparison } from "@/components/rendered-comparison";
 import { formattedRetryTime } from "@/components/review-retry-status";
@@ -95,17 +99,11 @@ type Review = {
   id: string;
   queuedAt: string;
   status: ReviewStatusSnapshot;
-  proposal: null | {
-    id: string;
-    summary: string;
-    changes: Array<{
-      id: string;
-      targetKind: string;
-      targetKey: string;
-      rationale: string;
-      state: string;
-    }>;
-  };
+  inputRevisionId: string;
+  currentRevisionId: string | null;
+  inputBundleHash: string;
+  inputBody: string;
+  proposal: ReviewProposalView | null;
 };
 
 type Publication = {
@@ -236,6 +234,7 @@ export function WorkspaceEditor({
     "saved" | "dirty" | "saving" | "error"
   >("saved");
   const [message, setMessage] = useState<string | null>(null);
+  const [proposalPending, setProposalPending] = useState(false);
   const [pending, startTransition] = useTransition();
   const [confirmSubmit, setConfirmSubmit] = useState(false);
   const [comparedHistoryId, setComparedHistoryId] = useState<string | null>(
@@ -496,39 +495,33 @@ export function WorkspaceEditor({
     markDirty();
   }
 
-  function acceptAllProposalChanges() {
-    if (!checkout || !review?.proposal) return;
+  async function proposalRequest(
+    url: string,
+    method: "POST" | "PATCH",
+    payload: Record<string, unknown>,
+  ) {
+    if (!checkout) return false;
     setMessage(null);
-    startTransition(async () => {
-      for (const change of review.proposal?.changes ?? []) {
-        if (
-          change.state !== "PENDING" ||
-          !["SECTION", "SCOPED_VARIANT"].includes(change.targetKind)
-        )
-          continue;
-        const response = await fetch(`/api/proposal-changes/${change.id}`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-csrf-token": csrfToken,
-          },
-          body: JSON.stringify({
-            checkoutId: checkout.id,
-            fence: checkout.fence,
-            decision: "ACCEPT",
-          }),
-        });
-        if (!response.ok) {
-          const payload = (await response.json()) as { error?: string };
-          setMessage(
-            payload.error ?? "A proposal change could not be applied.",
-          );
-          router.refresh();
-          return;
-        }
+    setProposalPending(true);
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken,
+        },
+        body: JSON.stringify(payload),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setMessage(result.error ?? "The agent suggestion could not be saved.");
+        return false;
       }
       router.refresh();
-    });
+      return true;
+    } finally {
+      setProposalPending(false);
+    }
   }
 
   function selectTab(next: WorkspaceTab) {
@@ -1336,8 +1329,8 @@ export function WorkspaceEditor({
                     <strong>Review complete.</strong>
                     <span>
                       {reviewStatus.proposalReady
-                        ? "Loading the complete proposal…"
-                        : "Finalizing the proposal view…"}
+                        ? "Loading the agent revision…"
+                        : "Finalizing the revision view…"}
                     </span>
                   </p>
                 ) : reviewStatus.state === "FAILED" ? (
@@ -1359,100 +1352,100 @@ export function WorkspaceEditor({
               </div>
             ) : (
               <div className="reviewJobCard quiet">
-                <strong>No agent proposal attached</strong>
+                <strong>No agent revision attached</strong>
                 <span>Manual editing and publication remain available.</span>
               </div>
             )}
           </div>
-          <RenderedComparison
-            production={productionBody}
-            draft={body}
-            productionRevision={shortHash(situation.productionBundleHash)}
-          />
-          <details className="diffDisclosure" open>
-            <summary>Exact source diff</summary>
-            <SynchronizedDiff production={productionBody} draft={body} />
-          </details>
           {review?.proposal ? (
-            <section className="proposalCard">
-              <header>
-                <div>
-                  <p className="cardEyebrow">Agent proposal</p>
-                  <h2>{review.proposal.summary}</h2>
-                </div>
-                <button
-                  className="secondaryButton"
-                  type="button"
-                  disabled={!checkout || pending || publicationLocked}
-                  onClick={acceptAllProposalChanges}
-                >
-                  Accept all
-                </button>
-              </header>
-              <div className="proposalChanges">
-                {review.proposal.changes.map((change) => (
-                  <article key={change.id}>
-                    <div>
-                      <span>{change.targetKind.replaceAll("_", " ")}</span>
-                      <strong>{change.targetKey}</strong>
-                      <p>{change.rationale}</p>
-                    </div>
-                    <div className="proposalActions">
-                      <button
-                        className="textButton"
-                        type="button"
-                        disabled={
-                          !checkout ||
-                          publicationLocked ||
-                          change.state !== "PENDING"
-                        }
-                        onClick={() =>
-                          checkout
-                            ? void mutate(
-                                `/api/proposal-changes/${change.id}`,
-                                {
-                                  checkoutId: checkout.id,
-                                  fence: checkout.fence,
-                                  decision: "REJECT",
-                                },
-                              )
-                            : undefined
-                        }
-                      >
-                        Reject
-                      </button>
-                      <button
-                        className="secondaryButton"
-                        type="button"
-                        disabled={
-                          !checkout ||
-                          publicationLocked ||
-                          change.state !== "PENDING" ||
-                          !["SECTION", "SCOPED_VARIANT"].includes(
-                            change.targetKind,
-                          )
-                        }
-                        onClick={() =>
-                          checkout
-                            ? void mutate(
-                                `/api/proposal-changes/${change.id}`,
-                                {
-                                  checkoutId: checkout.id,
-                                  fence: checkout.fence,
-                                  decision: "ACCEPT",
-                                },
-                              )
-                            : undefined
-                        }
-                      >
-                        Accept change
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-          ) : null}
+            <>
+              <AgentRevisionReview
+                proposal={review.proposal}
+                inputRevisionId={review.inputRevisionId}
+                currentRevisionId={review.currentRevisionId}
+                inputBundleHash={review.inputBundleHash}
+                inputBody={review.inputBody}
+                checkoutAvailable={Boolean(checkout)}
+                pending={pending || proposalPending}
+                publicationLocked={publicationLocked}
+                onAccept={(changeId) =>
+                  checkout
+                    ? proposalRequest(
+                        `/api/proposal-changes/${changeId}`,
+                        "POST",
+                        {
+                          checkoutId: checkout.id,
+                          fence: checkout.fence,
+                          decision: "ACCEPT",
+                        },
+                      )
+                    : Promise.resolve(false)
+                }
+                onReject={(changeId) =>
+                  checkout
+                    ? proposalRequest(
+                        `/api/proposal-changes/${changeId}`,
+                        "POST",
+                        {
+                          checkoutId: checkout.id,
+                          fence: checkout.fence,
+                          decision: "REJECT",
+                        },
+                      )
+                    : Promise.resolve(false)
+                }
+                onEdit={(changeId, editedBody) =>
+                  checkout
+                    ? proposalRequest(
+                        `/api/proposal-changes/${changeId}`,
+                        "PATCH",
+                        {
+                          checkoutId: checkout.id,
+                          fence: checkout.fence,
+                          editedBody,
+                        },
+                      )
+                    : Promise.resolve(false)
+                }
+                onAcceptAll={() =>
+                  checkout
+                    ? proposalRequest(
+                        `/api/review-proposals/${review.proposal!.id}/accept-all`,
+                        "POST",
+                        {
+                          checkoutId: checkout.id,
+                          fence: checkout.fence,
+                        },
+                      )
+                    : Promise.resolve(false)
+                }
+              />
+              <details className="secondaryReviewComparison">
+                <summary>View production → saved draft comparison</summary>
+                <RenderedComparison
+                  production={productionBody}
+                  draft={body}
+                  productionRevision={shortHash(situation.productionBundleHash)}
+                />
+                <details className="diffDisclosure">
+                  <summary>Production source diff</summary>
+                  <SynchronizedDiff production={productionBody} draft={body} />
+                </details>
+              </details>
+            </>
+          ) : (
+            <>
+              <RenderedComparison
+                production={productionBody}
+                draft={body}
+                productionRevision={shortHash(situation.productionBundleHash)}
+              />
+              <details className="diffDisclosure" open>
+                <summary>Exact source diff</summary>
+                <SynchronizedDiff production={productionBody} draft={body} />
+              </details>
+            </>
+          )}
         </section>
       ) : null}
 

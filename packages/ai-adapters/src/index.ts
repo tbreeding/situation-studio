@@ -12,27 +12,62 @@ const MAX_PROVIDER_ATTEMPT_DURATION_MS = 10 * 60_000;
 export const findingSchema = z.object({
   id: z.string().min(1).max(120),
   severity: z.enum(["note", "consider", "important", "blocking"]),
-  targetKind: z.enum(["SECTION", "METADATA", "SCOPED_VARIANT", "RELATIONSHIP"]),
+  targetKind: z.enum([
+    "SECTION",
+    "METADATA",
+    "SCOPED_VARIANT",
+    "RELATIONSHIP",
+    "EMBED",
+    "BUNDLE",
+  ]),
   targetKey: z.string().min(1).max(240),
   summary: z.string().min(1).max(4_000),
   rationale: z.string().min(1).max(12_000),
+  evidenceRoleCodes: z.array(z.string().min(1).max(100)).max(30),
 });
 
-export const candidateEditSchema = z.object({
-  id: z.uuid(),
-  targetKind: z.enum(["SECTION", "METADATA", "SCOPED_VARIANT", "RELATIONSHIP"]),
-  targetKey: z.string().min(1).max(240),
-  beforeHash: z
-    .string()
-    .regex(/^[a-f0-9]{64}$/u)
-    .nullable(),
-  afterBody: z.string().max(512_000),
-  rationale: z.string().min(1).max(12_000),
-});
+export const candidateEditSchema = z
+  .object({
+    id: z.uuid(),
+    targetKind: z.enum([
+      "SECTION",
+      "METADATA",
+      "SCOPED_VARIANT",
+      "RELATIONSHIP",
+      "EMBED",
+      "BUNDLE",
+    ]),
+    targetKey: z.string().min(1).max(240),
+    applicationMode: z.enum(["AUTOMATIC", "MANUAL"]),
+    beforeHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .nullable(),
+    afterBody: z.string().max(512_000),
+    problem: z.string().min(1).max(4_000),
+    explanation: z.string().min(1).max(4_000),
+    rationale: z.string().min(1).max(12_000),
+    upstreamFindingIds: z.array(z.string().min(1).max(240)).min(1).max(50),
+    writtenByRoleCode: z.string().min(1).max(100),
+    evidenceRoleCodes: z.array(z.string().min(1).max(100)).max(30),
+  })
+  .superRefine((change, context) => {
+    if (
+      change.applicationMode === "AUTOMATIC" &&
+      !["SECTION", "METADATA", "SCOPED_VARIANT", "RELATIONSHIP"].includes(
+        change.targetKind,
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["applicationMode"],
+        message: "This target kind must be a manual suggestion.",
+      });
+  });
 
 export const normalizedOutputSchema = z.object({
   role: z.string().min(1).max(100),
-  summary: z.string().min(1).max(12_000),
+  summary: z.string().min(1).max(2_000),
   findings: z.array(findingSchema).max(200),
   provenance: z.string().min(1).max(2_000),
 });

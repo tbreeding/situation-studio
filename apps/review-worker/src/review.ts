@@ -107,10 +107,14 @@ function rolePrompt(role: string) {
   ];
   if (role === "bundle-writer")
     common.push(
-      "Write a concise candidate revision based only on the pinned draft and retained findings.",
+      "Your job is synthesis and repair, not additional critique. Treat the adjudicator and teaching-designer outputs as authoritative.",
+      "Write the smallest complete candidate revision that resolves their retained actionable findings without changing unrelated content.",
       "Every candidate edit must link at least one upstream finding as role-code:finding-id, name bundle-writer as the writing role, and retain the evidence role codes that informed it.",
-      "Use AUTOMATIC only for a complete, typed SECTION, METADATA, SCOPED_VARIANT, or RELATIONSHIP replacement with an exact before hash. Use MANUAL for embeds, broad bundle changes, or anything that cannot be applied safely.",
-      "Do not invent an edit to satisfy the schema. A review may have findings and zero candidate edits.",
+      "Use AUTOMATIC for every complete, safely applicable SECTION, METADATA, SCOPED_VARIANT, or RELATIONSHIP replacement. The worker computes and fences before hashes; omit beforeHash rather than calculating it or downgrading an otherwise safe edit.",
+      "For SECTION edits, afterBody must contain only the section body, never its Markdown heading.",
+      "Use MANUAL only for embeds, broad bundle changes, or a concrete suggestion whose application needs editor judgment.",
+      "For every retained important or blocking finding, provide the smallest safe automatic edit, an explicit manual suggestion, or a concise unresolved finding that names the missing evidence or decision. Zero candidate edits is appropriate only when none of those findings has a concrete safe or manual replacement.",
+      "Do not repeat, amplify, or reintroduce findings rejected by adjudication.",
       "Keep the summary and default explanation concise; put deeper reasoning in rationale.",
     );
   return common.join("\n");
@@ -238,7 +242,8 @@ async function buildEvidence(
   const dependencyOutputs = job.steps
     .filter((candidate) =>
       step.roleCode === "bundle-writer"
-        ? candidate.ordinal < step.ordinal && candidate.state === "SUCCEEDED"
+        ? ["adjudicator", "teaching-designer"].includes(candidate.roleCode) &&
+          candidate.state === "SUCCEEDED"
         : dependencies.includes(candidate.roleCode),
     )
     .map((candidate) => ({
@@ -502,7 +507,17 @@ function materializeCandidateRevision(input: {
       actualBeforeHash: string | null;
     }
   > = [];
-  for (const change of input.changes) {
+  for (const rawChange of input.changes) {
+    const change =
+      rawChange.targetKind === "SECTION"
+        ? {
+            ...rawChange,
+            afterBody: normalizeSectionReplacement(
+              rawChange.targetKey,
+              rawChange.afterBody,
+            ),
+          }
+        : rawChange;
     const targetIdentity = `${change.targetKind}:${change.targetKey}`;
     if (seenTargets.has(targetIdentity))
       throw new AdapterFailure(
@@ -512,22 +527,24 @@ function materializeCandidateRevision(input: {
       );
     seenTargets.add(targetIdentity);
     const before = candidateTargetBefore(bundle, sections, change);
-    if (
-      change.applicationMode === "AUTOMATIC" &&
-      before.beforeHash !== change.beforeHash
-    )
-      throw new AdapterFailure(
-        "APPLICATION",
-        `Candidate target ${targetIdentity} has a stale before hash.`,
-        false,
-      );
-    materializedChanges.push({
+    const applicationMode =
+      change.targetKind === "SECTION" && before.beforeHash
+        ? "AUTOMATIC"
+        : change.applicationMode;
+    const materializedChange = {
       ...change,
+      applicationMode,
+    } satisfies CandidateEdit;
+    materializedChanges.push({
+      ...materializedChange,
       beforeBody: before.beforeBody,
       actualBeforeHash: before.beforeHash,
     });
-    if (change.applicationMode === "AUTOMATIC")
-      ({ bundle, sections } = applyCandidateEdit({ bundle, sections }, change));
+    if (applicationMode === "AUTOMATIC")
+      ({ bundle, sections } = applyCandidateEdit(
+        { bundle, sections },
+        materializedChange,
+      ));
   }
   const body = serializeSituationSections(sections);
   bundle = situationBundleSchema.parse({
@@ -556,6 +573,15 @@ function materializeCandidateRevision(input: {
     ),
     changes: materializedChanges,
   };
+}
+
+function normalizeSectionReplacement(targetKey: string, afterBody: string) {
+  const normalized = canonicalText(afterBody);
+  const lines = normalized.split("\n");
+  const firstLine = lines[0]?.trim() ?? "";
+  const heading = firstLine.match(/^#{1,6}\s+(.+)$/u)?.[1]?.trim();
+  if (heading !== targetKey) return normalized;
+  return canonicalText(lines.slice(1).join("\n").trimStart());
 }
 
 async function renewReviewLease(

@@ -52,9 +52,13 @@ describe("AI adapter contracts", () => {
     expect(
       bundleWriterOutputSchema.parse({
         ...reviewOutput("bundle-writer"),
-        candidateEdits: [candidate],
+        candidateEdits: [{ ...candidate, beforeHash: undefined }],
       }).candidateEdits[0],
-    ).toMatchObject(candidate);
+    ).toMatchObject({
+      id: candidate.id,
+      applicationMode: "AUTOMATIC",
+      targetKind: "SECTION",
+    });
     expect(() =>
       bundleWriterOutputSchema.parse({
         ...reviewOutput("bundle-writer"),

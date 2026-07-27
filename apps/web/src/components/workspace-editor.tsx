@@ -1208,155 +1208,160 @@ export function WorkspaceEditor({
           aria-labelledby="tab-review"
           tabIndex={-1}
         >
-          <div className="reviewSummary">
-            <div>
-              <p className="cardEyebrow">Exact comparison</p>
-              <h2>{changedSections.length} changed sections</h2>
-              <p>
-                Production and draft are rendered from their retained source
-                bytes. The source diff below is exact.
-              </p>
-            </div>
-            {review && reviewStatus ? (
-              <div
-                className={`reviewJobCard review-${reviewStatus.state.toLowerCase()} ${
-                  reviewStatus.retry ? "review-retrying" : ""
-                }`}
-              >
-                <span
-                  className={`jobState state-${
-                    reviewStatus.retry
-                      ? "retrying"
-                      : reviewStatus.state.toLowerCase()
+          {!review?.proposal ? (
+            <div className="reviewSummary">
+              <div>
+                <p className="cardEyebrow">Exact comparison</p>
+                <h2>{changedSections.length} changed sections</h2>
+                <p>
+                  Production and draft are rendered from their retained source
+                  bytes. The source diff below is exact.
+                </p>
+              </div>
+              {review && reviewStatus ? (
+                <div
+                  className={`reviewJobCard review-${reviewStatus.state.toLowerCase()} ${
+                    reviewStatus.retry ? "review-retrying" : ""
                   }`}
                 >
-                  {reviewStatus.retry ? "RETRYING" : reviewStatus.state}
-                </span>
-                <strong>22-stage agent review</strong>
-                <span className="reviewProgressText">
-                  {reviewProgressText(reviewStatus)}
-                </span>
-                <div
-                  className="reviewProgressBar"
-                  role="progressbar"
-                  aria-label="Agent review progress"
-                  aria-valuemin={0}
-                  aria-valuemax={reviewStatus.totalStages}
-                  aria-valuenow={reviewStatus.completedStages}
-                  aria-valuetext={reviewProgressText(reviewStatus)}
-                >
-                  <div className="stageRail" aria-hidden="true">
-                    {reviewStatus.stages.map((step) => (
-                      <i
-                        key={step.ordinal}
-                        className={[
-                          step.state.toLowerCase(),
-                          isActiveReviewState(reviewStatus.state) &&
-                          reviewStatus.currentStage?.ordinal === step.ordinal
-                            ? "active"
-                            : "",
-                          reviewStatus.retry?.stageOrdinal === step.ordinal
-                            ? "retrying"
-                            : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                      />
-                    ))}
+                  <span
+                    className={`jobState state-${
+                      reviewStatus.retry
+                        ? "retrying"
+                        : reviewStatus.state.toLowerCase()
+                    }`}
+                  >
+                    {reviewStatus.retry ? "RETRYING" : reviewStatus.state}
+                  </span>
+                  <strong>22-stage agent review</strong>
+                  <span className="reviewProgressText">
+                    {reviewProgressText(reviewStatus)}
+                  </span>
+                  <div
+                    className="reviewProgressBar"
+                    role="progressbar"
+                    aria-label="Agent review progress"
+                    aria-valuemin={0}
+                    aria-valuemax={reviewStatus.totalStages}
+                    aria-valuenow={reviewStatus.completedStages}
+                    aria-valuetext={reviewProgressText(reviewStatus)}
+                  >
+                    <div className="stageRail" aria-hidden="true">
+                      {reviewStatus.stages.map((step) => (
+                        <i
+                          key={step.ordinal}
+                          className={[
+                            step.state.toLowerCase(),
+                            isActiveReviewState(reviewStatus.state) &&
+                            reviewStatus.currentStage?.ordinal === step.ordinal
+                              ? "active"
+                              : "",
+                            reviewStatus.retry?.stageOrdinal === step.ordinal
+                              ? "retrying"
+                              : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                        />
+                      ))}
+                    </div>
                   </div>
-                </div>
-                {reviewStatus.currentStage ? (
-                  <p className="reviewCurrentStage">
-                    <span>
-                      {reviewStatus.state === "FAILED"
-                        ? "Stopped at"
-                        : reviewStatus.state === "CANCELLED"
-                          ? "Cancelled at"
-                          : reviewStatus.retry
-                            ? "Retrying stage"
-                            : "Current stage"}
-                    </span>
-                    <strong>{reviewStatus.currentStage.displayName}</strong>
-                    {reviewStatus.currentStage.attempt ? (
-                      <small>
-                        Attempt {reviewStatus.currentStage.attempt}
-                        {reviewStatus.retry
-                          ? ` of ${reviewStatus.retry.maximumAttempts}`
+                  {reviewStatus.currentStage ? (
+                    <p className="reviewCurrentStage">
+                      <span>
+                        {reviewStatus.state === "FAILED"
+                          ? "Stopped at"
+                          : reviewStatus.state === "CANCELLED"
+                            ? "Cancelled at"
+                            : reviewStatus.retry
+                              ? "Retrying stage"
+                              : "Current stage"}
+                      </span>
+                      <strong>{reviewStatus.currentStage.displayName}</strong>
+                      {reviewStatus.currentStage.attempt ? (
+                        <small>
+                          Attempt {reviewStatus.currentStage.attempt}
+                          {reviewStatus.retry
+                            ? ` of ${reviewStatus.retry.maximumAttempts}`
+                            : ""}
+                        </small>
+                      ) : null}
+                    </p>
+                  ) : null}
+                  {isActiveReviewState(reviewStatus.state) ? (
+                    <p className="reviewServerActivity">
+                      <i
+                        className="reviewActivityIndicator"
+                        aria-hidden="true"
+                      />
+                      <span>
+                        {liveReview.connection === "reconnecting"
+                          ? "Reconnecting… Review continues safely on the server."
+                          : liveReview.connection === "connecting"
+                            ? "Connecting to live updates… Review continues safely on the server."
+                            : "Review continues safely on the server."}
+                      </span>
+                    </p>
+                  ) : null}
+                  {reviewStatus.retry ? (
+                    <p className="reviewRetryStatus">
+                      <strong>Automatic retry scheduled</strong>
+                      <span>
+                        {
+                          SAFE_REVIEW_FAILURE_LABELS[
+                            reviewStatus.retry.failureClass
+                          ]
+                        }
+                        {" · "}
+                        attempt {reviewStatus.retry.attempt} of{" "}
+                        {reviewStatus.retry.maximumAttempts}
+                      </span>
+                      <span className="retrySchedule">
+                        {retryCountdown(
+                          reviewStatus.retry.scheduledAt,
+                          reviewClock,
+                        )}
+                        {" · "}
+                        <time dateTime={reviewStatus.retry.scheduledAt}>
+                          {formattedRetryTime(reviewStatus.retry.scheduledAt)}
+                        </time>
+                      </span>
+                    </p>
+                  ) : null}
+                  {reviewStatus.state === "SUCCEEDED" ? (
+                    <p className="reviewTerminalStatus reviewTerminalSuccess">
+                      <strong>Review complete.</strong>
+                      <span>
+                        {reviewStatus.proposalReady
+                          ? "Loading the agent revision…"
+                          : "Finalizing the revision view…"}
+                      </span>
+                    </p>
+                  ) : reviewStatus.state === "FAILED" ? (
+                    <p className="reviewTerminalStatus reviewTerminalFailure">
+                      <strong>Review stopped safely.</strong>
+                      <span>
+                        {reviewStatus.terminal?.failureClass
+                          ? `${SAFE_REVIEW_FAILURE_LABELS[reviewStatus.terminal.failureClass]}. `
                           : ""}
-                      </small>
-                    ) : null}
-                  </p>
-                ) : null}
-                {isActiveReviewState(reviewStatus.state) ? (
-                  <p className="reviewServerActivity">
-                    <i className="reviewActivityIndicator" aria-hidden="true" />
-                    <span>
-                      {liveReview.connection === "reconnecting"
-                        ? "Reconnecting… Review continues safely on the server."
-                        : liveReview.connection === "connecting"
-                          ? "Connecting to live updates… Review continues safely on the server."
-                          : "Review continues safely on the server."}
-                    </span>
-                  </p>
-                ) : null}
-                {reviewStatus.retry ? (
-                  <p className="reviewRetryStatus">
-                    <strong>Automatic retry scheduled</strong>
-                    <span>
-                      {
-                        SAFE_REVIEW_FAILURE_LABELS[
-                          reviewStatus.retry.failureClass
-                        ]
-                      }
-                      {" · "}
-                      attempt {reviewStatus.retry.attempt} of{" "}
-                      {reviewStatus.retry.maximumAttempts}
-                    </span>
-                    <span className="retrySchedule">
-                      {retryCountdown(
-                        reviewStatus.retry.scheduledAt,
-                        reviewClock,
-                      )}
-                      {" · "}
-                      <time dateTime={reviewStatus.retry.scheduledAt}>
-                        {formattedRetryTime(reviewStatus.retry.scheduledAt)}
-                      </time>
-                    </span>
-                  </p>
-                ) : null}
-                {reviewStatus.state === "SUCCEEDED" ? (
-                  <p className="reviewTerminalStatus reviewTerminalSuccess">
-                    <strong>Review complete.</strong>
-                    <span>
-                      {reviewStatus.proposalReady
-                        ? "Loading the agent revision…"
-                        : "Finalizing the revision view…"}
-                    </span>
-                  </p>
-                ) : reviewStatus.state === "FAILED" ? (
-                  <p className="reviewTerminalStatus reviewTerminalFailure">
-                    <strong>Review stopped safely.</strong>
-                    <span>
-                      {reviewStatus.terminal?.failureClass
-                        ? `${SAFE_REVIEW_FAILURE_LABELS[reviewStatus.terminal.failureClass]}. `
-                        : ""}
-                      Use Retry review when you are ready.
-                    </span>
-                  </p>
-                ) : reviewStatus.state === "CANCELLED" ? (
-                  <p className="reviewTerminalStatus">
-                    <strong>Review cancelled.</strong>
-                    <span>The workspace is editable again.</span>
-                  </p>
-                ) : null}
-              </div>
-            ) : (
-              <div className="reviewJobCard quiet">
-                <strong>No agent revision attached</strong>
-                <span>Manual editing and publication remain available.</span>
-              </div>
-            )}
-          </div>
+                        Use Retry review when you are ready.
+                      </span>
+                    </p>
+                  ) : reviewStatus.state === "CANCELLED" ? (
+                    <p className="reviewTerminalStatus">
+                      <strong>Review cancelled.</strong>
+                      <span>The workspace is editable again.</span>
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="reviewJobCard quiet">
+                  <strong>No agent revision attached</strong>
+                  <span>Manual editing and publication remain available.</span>
+                </div>
+              )}
+            </div>
+          ) : null}
           {review?.proposal ? (
             <>
               <AgentRevisionReview
@@ -1419,9 +1424,24 @@ export function WorkspaceEditor({
                       )
                     : Promise.resolve(false)
                 }
+                onRejectAll={() =>
+                  checkout
+                    ? proposalRequest(
+                        `/api/review-proposals/${review.proposal!.id}/reject-all`,
+                        "POST",
+                        {
+                          checkoutId: checkout.id,
+                          fence: checkout.fence,
+                        },
+                      )
+                    : Promise.resolve(false)
+                }
               />
               <details className="secondaryReviewComparison">
-                <summary>View production → saved draft comparison</summary>
+                <summary>
+                  Production → saved draft ({changedSections.length} changed{" "}
+                  {changedSections.length === 1 ? "section" : "sections"})
+                </summary>
                 <RenderedComparison
                   production={productionBody}
                   draft={body}

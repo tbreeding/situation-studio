@@ -495,30 +495,34 @@ test("agent revisions render as accessible diffs with fenced decisions and hones
     "true",
   );
   await expect(
-    page.getByRole("heading", { name: "Review suggested changes in context" }),
+    page.getByRole("heading", { name: "2 suggested changes" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Accept all (1)" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Reject all (2)" }),
   ).toBeVisible();
   const primaryComparison = page.getByLabel(
     "Saved draft and agent revision comparison",
   );
+  await expect(primaryComparison).not.toBeVisible();
+  await page.getByText("Preview the revised situation").click();
   await expect(
     primaryComparison.getByText("Saved draft", { exact: true }),
   ).toBeVisible();
   await expect(
     primaryComparison.getByText("Agent revision", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Accept all 1 change" }),
-  ).toBeVisible();
   const automaticHunk = page
     .locator("article.reviewHunk")
     .filter({ hasText: "The short answer" });
-  await expect(
-    automaticHunk.locator(".inlineDiffAdded").filter({ hasText: "directly" }),
-  ).toHaveCount(1);
-  await expect(
-    automaticHunk.locator(".inlineDiffAdded").filter({ hasText: "observed" }),
-  ).toHaveCount(1);
-  await expect(automaticHunk.locator(".inlineDiffRemoved")).not.toHaveCount(0);
+  await expect(automaticHunk.locator(".diffLineAdded pre")).toContainText(
+    "directly observed",
+  );
+  await expect(automaticHunk.locator(".diffLineRemoved pre")).toContainText(
+    originalShortAnswer,
+  );
   await automaticHunk.getByText("View explanation").click();
   await expect(automaticHunk).toContainText("Nonviolent Communication");
   await expect(automaticHunk).toContainText("Bundle Writer");
@@ -573,7 +577,7 @@ test("agent revisions render as accessible diffs with fenced decisions and hones
     "SELECT count(*)::text AS count FROM draft_revisions WHERE draft_id = $1",
     [fixture.draft_id],
   );
-  await page.getByRole("button", { name: "Accept all 1 change" }).click();
+  await page.getByRole("button", { name: "Accept all (1)" }).click();
   await expect(page.getByRole("button", { name: /^Accept all/u })).toHaveCount(
     0,
   );
@@ -695,9 +699,7 @@ test("agent revisions render as accessible diffs with fenced decisions and hones
   await expect(page.getByRole("button", { name: /^Accept all/u })).toHaveCount(
     0,
   );
-  await expect(
-    page.getByText("Findings without a safe replacement"),
-  ).toBeVisible();
+  await page.getByText("Other review findings (1)").click();
   await expect(page.locator(".inlineFindings")).toContainText("3 — Say");
   await expectNoCriticalAccessibilityViolations(page);
   await expectNoPageOverflow(page);

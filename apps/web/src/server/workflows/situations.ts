@@ -1381,7 +1381,7 @@ export async function decideProposalChange(input: {
         });
         return { state: "REJECTED" as const, revisionId: null };
       }
-      if (change.applicationMode !== "AUTOMATIC")
+      if (!isProposalChangeApplicable(change))
         throw new WorkflowError(
           "This is an explicit manual suggestion and cannot be auto-applied.",
           422,
@@ -1476,8 +1476,32 @@ type ApplicableProposalChange = {
   editorBody: string | null;
 };
 
+function isProposalChangeApplicable(
+  change: Pick<
+    ApplicableProposalChange,
+    "applicationMode" | "targetKind" | "beforeHash"
+  >,
+) {
+  return (
+    change.applicationMode === "AUTOMATIC" ||
+    (change.targetKind === "SECTION" && change.beforeHash !== null)
+  );
+}
+
+function normalizeSectionReplacement(targetKey: string, replacement: string) {
+  const normalized = canonicalText(replacement);
+  const lines = normalized.split("\n");
+  const firstLine = lines[0]?.trim() ?? "";
+  const heading = firstLine.match(/^#{1,6}\s+(.+)$/u)?.[1]?.trim();
+  if (heading !== targetKey) return normalized;
+  return canonicalText(lines.slice(1).join("\n").trimStart());
+}
+
 function proposedBody(change: ApplicableProposalChange) {
-  return change.editorBody ?? change.afterBody;
+  const replacement = change.editorBody ?? change.afterBody;
+  return change.targetKind === "SECTION"
+    ? normalizeSectionReplacement(change.targetKey, replacement)
+    : replacement;
 }
 
 function staleSuggestion(target: string): never {
@@ -1506,7 +1530,7 @@ async function applyProposalChanges(
   let body = initialBody;
   let bundle = situationBundleSchema.parse(revision.bundleManifest);
   for (const change of input.changes) {
-    if (change.applicationMode !== "AUTOMATIC")
+    if (!isProposalChangeApplicable(change))
       throw new WorkflowError(
         `Manual suggestion ${change.targetKey} cannot be included in automatic acceptance.`,
         422,
@@ -1751,7 +1775,7 @@ export async function editProposalChange(input: {
       if (!change) throw new WorkflowError("Proposal change not found.", 404);
       if (change.state !== "PENDING")
         throw new WorkflowError("That proposal change is already decided.");
-      if (change.applicationMode !== "AUTOMATIC")
+      if (!isProposalChangeApplicable(change))
         throw new WorkflowError(
           "Manual suggestions must be resolved in the editor.",
           422,
@@ -1828,11 +1852,11 @@ export async function acceptAllProposalChanges(input: {
       const pending = proposal.changes.filter(
         (change) => change.state === "PENDING",
       );
-      const actionable = pending.filter(
-        (change) => change.applicationMode === "AUTOMATIC",
+      const actionable = pending.filter((change) =>
+        isProposalChangeApplicable(change),
       );
       const manual = pending.filter(
-        (change) => change.applicationMode === "MANUAL",
+        (change) => !isProposalChangeApplicable(change),
       );
       if (!actionable.length)
         throw new WorkflowError(
@@ -1851,7 +1875,6 @@ export async function acceptAllProposalChanges(input: {
         where: {
           id: { in: actionable.map((change) => change.id) },
           state: "PENDING",
-          applicationMode: "AUTOMATIC",
         },
         data: {
           state: "ACCEPTED",
@@ -1886,6 +1909,71 @@ export async function acceptAllProposalChanges(input: {
         revisionId: created.id,
         appliedCount: actionable.length,
         manualRemainingCount: manual.length,
+      };
+    },
+    { isolationLevel: "Serializable" },
+  );
+}
+
+export async function rejectAllProposalChanges(input: {
+  actorId: string;
+  checkoutId: string;
+  fence: bigint;
+  proposalId: string;
+}) {
+  return database().$transaction(
+    async (transaction) => {
+      const checkout = await proposalCheckout(transaction, input);
+      const proposal = await transaction.reviewProposal.findFirst({
+        where: {
+          id: input.proposalId,
+          job: { situationId: checkout.situationId },
+        },
+        include: { changes: { orderBy: { position: "asc" } } },
+      });
+      if (!proposal) throw new WorkflowError("Review proposal not found.", 404);
+      const pending = proposal.changes.filter(
+        (change) => change.state === "PENDING",
+      );
+      if (!pending.length)
+        throw new WorkflowError(
+          "There are no unresolved suggestions to reject.",
+          422,
+          "NO_ACTIONABLE_SUGGESTIONS",
+        );
+      const now = new Date();
+      const rejected = await transaction.proposalChange.updateMany({
+        where: {
+          id: { in: pending.map((change) => change.id) },
+          state: "PENDING",
+        },
+        data: {
+          state: "REJECTED",
+          decidedAt: now,
+          decidedById: input.actorId,
+        },
+      });
+      if (rejected.count !== pending.length)
+        throw new WorkflowError(
+          "The suggestion set changed before atomic rejection.",
+          409,
+          "STALE_SUGGESTION_SET",
+        );
+      await transaction.auditEvent.create({
+        data: {
+          actorId: input.actorId,
+          action: "PROPOSAL_CHANGES_REJECTED_ALL",
+          subjectType: "REVIEW_PROPOSAL",
+          subjectId: proposal.id,
+          payload: {
+            rejectedCount: pending.length,
+            changeIds: pending.map((change) => change.id),
+          },
+        },
+      });
+      return {
+        state: "REJECTED" as const,
+        rejectedCount: pending.length,
       };
     },
     { isolationLevel: "Serializable" },

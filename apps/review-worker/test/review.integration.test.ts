@@ -536,10 +536,9 @@ describe("checkout fencing and the complete durable review DAG", () => {
           id: automaticId,
           targetKind: "SECTION",
           targetKey: "The short answer",
-          applicationMode: "AUTOMATIC",
-          beforeHash: sha256(canonicalText(inputSections["The short answer"])),
+          applicationMode: "MANUAL",
           afterBody:
-            "Name the directly observed pattern, ask for their view, and agree on one next move.",
+            "## The short answer\nName the directly observed pattern, ask for their view, and agree on one next move.",
           problem: "The opening relies on a broad interpretation.",
           explanation: "Makes the opening observable and specific.",
           rationale:
@@ -585,6 +584,9 @@ describe("checkout fencing and the complete durable review DAG", () => {
     expect(completed.proposal?.candidate?.body).toContain(
       "Name the directly observed pattern",
     );
+    expect(
+      completed.proposal?.candidate?.body.match(/^## The short answer$/gmu),
+    ).toHaveLength(1);
     expect(completed.proposal?.candidate?.inputBundleHash).toBe(
       inputRevision.bundleHash,
     );
@@ -663,6 +665,101 @@ describe("checkout fencing and the complete durable review DAG", () => {
         },
       }),
     ).toHaveLength(3);
+  });
+
+  it("atomically rejects all pending suggestions without changing the draft", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-agent-reject-all",
+      title: "An atomically rejected agent revision scenario",
+    });
+    const workspace = await workflows.workspaceForSlug(created.situation.slug);
+    const inputRevision = workspace?.drafts[0]?.revisions[0];
+    const inputBody = inputRevision?.artifacts.find(
+      (artifact) => artifact.kind === "SITUATION",
+    )?.content.textBody;
+    if (!inputRevision || !inputBody)
+      throw new Error("Reject-all fixture input is unavailable.");
+    const revisionCount = await database.draftRevision.count({
+      where: { draftId: created.draft.id },
+    });
+    const automaticId = randomUUID();
+    const manualId = randomUUID();
+    const job = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    await completeCandidateReview(job.id, {
+      findings: [
+        {
+          id: "rejectable-change-set",
+          severity: "important",
+          targetKind: "SECTION",
+          targetKey: "3 — Say",
+          summary: "The proposed change set should remain optional.",
+          rationale: "Editors retain final authority over every agent change.",
+          evidenceRoleCodes: ["critic-manager-tools"],
+        },
+      ],
+      candidateEdits: [
+        {
+          id: automaticId,
+          targetKind: "SECTION",
+          targetKey: "3 — Say",
+          applicationMode: "AUTOMATIC",
+          afterBody: "Name the observation, then ask what they see.",
+          problem: "The opening needs a clearer sequence.",
+          explanation: "Separates observation from inquiry.",
+          rationale: "The sequence keeps the conversation specific.",
+          upstreamFindingIds: ["critic-nvc:rejectable-change-set"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-nvc"],
+        },
+        {
+          id: manualId,
+          targetKind: "EMBED",
+          targetKey: "context-specific-example",
+          applicationMode: "MANUAL",
+          beforeHash: null,
+          afterBody: "Choose an example grounded in the real situation.",
+          problem: "A truthful example needs editor context.",
+          explanation: "Keeps the contextual choice explicit.",
+          rationale: "The evidence does not support inventing an example.",
+          upstreamFindingIds: ["critic-nvc:rejectable-change-set"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-nvc"],
+        },
+      ],
+    });
+    const proposal = await database.reviewProposal.findUniqueOrThrow({
+      where: { jobId: job.id },
+    });
+    const rejected = await workflows.rejectAllProposalChanges({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+      proposalId: proposal.id,
+    });
+    expect(rejected).toEqual({ state: "REJECTED", rejectedCount: 2 });
+    expect(
+      await database.proposalChange.count({
+        where: { proposalId: proposal.id, state: "REJECTED" },
+      }),
+    ).toBe(2);
+    expect(
+      await database.draftRevision.count({
+        where: { draftId: created.draft.id },
+      }),
+    ).toBe(revisionCount);
+    expect(
+      await database.auditEvent.findFirst({
+        where: {
+          action: "PROPOSAL_CHANGES_REJECTED_ALL",
+          subjectId: proposal.id,
+        },
+      }),
+    ).not.toBeNull();
   });
 
   it("atomically accepts typed bundle changes, retains manual items, and fences stale targets", async () => {
@@ -770,7 +867,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           id: ids.section,
           targetKind: "SECTION",
           targetKey: "3 — Say",
-          applicationMode: "AUTOMATIC",
+          applicationMode: "MANUAL",
           beforeHash: sha256(canonicalText(sections["3 — Say"])),
           afterBody:
             "Say what you observed, explain the impact, and ask what they see.",
@@ -881,6 +978,11 @@ describe("checkout fencing and the complete durable review DAG", () => {
       applied.artifacts.find((artifact) => artifact.kind === "SITUATION")
         ?.content.textBody,
     ).toContain("Say what you observed");
+    expect(
+      applied.artifacts
+        .find((artifact) => artifact.kind === "SITUATION")
+        ?.content.textBody.match(/^## 3 — Say$/gmu),
+    ).toHaveLength(1);
     expect(
       await database.proposalChange.findUniqueOrThrow({
         where: { id: ids.manual },

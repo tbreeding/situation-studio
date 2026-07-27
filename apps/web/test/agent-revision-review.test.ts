@@ -65,11 +65,16 @@ function proposal(changes: ReviewChangeView[]): ReviewProposalView {
 }
 
 describe("agent revision review presentation", () => {
-  it("counts only unresolved automatic suggestions for Accept all", () => {
+  it("counts safely applicable legacy section suggestions for Accept all", () => {
     expect(
       reviewSuggestionCounts(
         proposal([
           change(),
+          change({
+            id: "legacy-section",
+            applicationMode: "MANUAL",
+            targetKey: "3 — Say",
+          }),
           change({
             id: "manual",
             applicationMode: "MANUAL",
@@ -80,7 +85,7 @@ describe("agent revision review presentation", () => {
         ]),
       ),
     ).toEqual({
-      unresolvedAutomatic: 1,
+      unresolvedAutomatic: 2,
       unresolvedManual: 1,
       unlinkedFindings: 1,
     });
@@ -92,23 +97,24 @@ describe("agent revision review presentation", () => {
   });
 
   it("uses the editor-modified replacement in the inline diff", () => {
-    const pieces = inlineSuggestionPieces(
+    const replacement = inlineSuggestionPieces(
       change({
         editorBody: "Name one directly observed pattern.",
         modified: true,
       }),
     );
+    expect(replacement.after).toBe("Name one directly observed pattern.");
+    expect(replacement.before).toBe("Name the pattern clearly.");
+  });
+
+  it("removes a repeated section heading from a legacy suggestion", () => {
     expect(
-      pieces
-        .filter((piece) => piece.added)
-        .map((piece) => piece.value)
-        .join(" "),
-    ).toContain("one directly observed pattern");
-    expect(
-      pieces
-        .filter((piece) => piece.removed)
-        .map((piece) => piece.value)
-        .join(" "),
-    ).toContain("the");
+      inlineSuggestionPieces(
+        change({
+          applicationMode: "MANUAL",
+          afterBody: "## The short answer\nName one directly observed pattern.",
+        }),
+      ).after,
+    ).toBe("Name one directly observed pattern.");
   });
 });

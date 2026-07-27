@@ -1,7 +1,6 @@
 "use client";
 
-import { diffWordsWithSpace } from "diff";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { RenderedComparison } from "@/components/rendered-comparison";
 import { SynchronizedDiff } from "@/components/synchronized-diff";
 
@@ -52,6 +51,22 @@ export type ReviewProposalView = {
   changes: ReviewChangeView[];
 };
 
+export function isReviewChangeApplicable(change: ReviewChangeView) {
+  return (
+    change.applicationMode === "AUTOMATIC" ||
+    (change.targetKind === "SECTION" && change.beforeHash !== null)
+  );
+}
+
+function normalizeSectionReplacement(targetKey: string, replacement: string) {
+  const normalized = replacement.replace(/\r\n?/gu, "\n").trimEnd();
+  const lines = normalized.split("\n");
+  const firstLine = lines[0]?.trim() ?? "";
+  const heading = firstLine.match(/^#{1,6}\s+(.+)$/u)?.[1]?.trim();
+  if (heading !== targetKey) return normalized;
+  return lines.slice(1).join("\n").trimStart();
+}
+
 function roleLabel(role: string) {
   const labels: Record<string, string> = {
     "surface-mapper": "Surface Mapper",
@@ -89,12 +104,10 @@ function targetLabel(kind: string) {
 
 export function reviewSuggestionCounts(proposal: ReviewProposalView) {
   const unresolvedAutomatic = proposal.changes.filter(
-    (change) =>
-      change.state === "PENDING" && change.applicationMode === "AUTOMATIC",
+    (change) => change.state === "PENDING" && isReviewChangeApplicable(change),
   ).length;
   const unresolvedManual = proposal.changes.filter(
-    (change) =>
-      change.state === "PENDING" && change.applicationMode === "MANUAL",
+    (change) => change.state === "PENDING" && !isReviewChangeApplicable(change),
   ).length;
   const linkedFindingIds = new Set(
     proposal.changes.flatMap((change) => change.findingIds),
@@ -109,15 +122,18 @@ export function reviewSuggestionCounts(proposal: ReviewProposalView) {
 }
 
 export function inlineSuggestionPieces(change: ReviewChangeView) {
-  return diffWordsWithSpace(
-    change.beforeBody ?? "",
-    change.editorBody ?? change.afterBody,
-  );
+  const replacement = change.editorBody ?? change.afterBody;
+  return {
+    before: change.beforeBody ?? "",
+    after:
+      change.targetKind === "SECTION"
+        ? normalizeSectionReplacement(change.targetKey, replacement)
+        : replacement,
+  };
 }
 
 function InlineSuggestionDiff({ change }: { change: ReviewChangeView }) {
-  const after = change.editorBody ?? change.afterBody;
-  const pieces = useMemo(() => inlineSuggestionPieces(change), [change]);
+  const { before, after } = inlineSuggestionPieces(change);
   return (
     <div
       className="inlineSuggestionDiff"
@@ -128,28 +144,16 @@ function InlineSuggestionDiff({ change }: { change: ReviewChangeView }) {
         Before: {change.beforeBody ?? "No existing value"}. Proposed:{" "}
         {after || "No replacement text"}.
       </span>
-      <span className="inlineDiffVisual" aria-hidden="true">
-        {change.beforeBody === null ? (
-          <span className="inlineDiffAdded">
-            {after || "No replacement text"}
-          </span>
-        ) : (
-          pieces.map((piece, index) => (
-            <span
-              key={`${piece.value.slice(0, 20)}-${index}`}
-              className={
-                piece.added
-                  ? "inlineDiffAdded"
-                  : piece.removed
-                    ? "inlineDiffRemoved"
-                    : undefined
-              }
-            >
-              {piece.value}
-            </span>
-          ))
-        )}
-      </span>
+      {change.beforeBody !== null ? (
+        <div className="suggestionDiffLine diffLineRemoved" aria-hidden="true">
+          <span className="diffMarker">−</span>
+          <pre>{before || "No existing value"}</pre>
+        </div>
+      ) : null}
+      <div className="suggestionDiffLine diffLineAdded" aria-hidden="true">
+        <span className="diffMarker">+</span>
+        <pre>{after || "No replacement text"}</pre>
+      </div>
     </div>
   );
 }
@@ -167,6 +171,7 @@ export function AgentRevisionReview({
   onReject,
   onEdit,
   onAcceptAll,
+  onRejectAll,
 }: {
   proposal: ReviewProposalView;
   inputRevisionId: string;
@@ -180,17 +185,19 @@ export function AgentRevisionReview({
   onReject: (changeId: string) => Promise<boolean>;
   onEdit: (changeId: string, editedBody: string) => Promise<boolean>;
   onAcceptAll: () => Promise<boolean>;
+  onRejectAll: () => Promise<boolean>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editedBody, setEditedBody] = useState("");
   const counts = reviewSuggestionCounts(proposal);
   const unresolvedAutomatic = proposal.changes.filter(
-    (change) =>
-      change.state === "PENDING" && change.applicationMode === "AUTOMATIC",
+    (change) => change.state === "PENDING" && isReviewChangeApplicable(change),
   );
   const unresolvedManual = proposal.changes.filter(
-    (change) =>
-      change.state === "PENDING" && change.applicationMode === "MANUAL",
+    (change) => change.state === "PENDING" && !isReviewChangeApplicable(change),
+  );
+  const unresolvedChanges = proposal.changes.filter(
+    (change) => change.state === "PENDING",
   );
   const linkedFindingIds = new Set(
     proposal.changes.flatMap((change) => change.findingIds),
@@ -202,10 +209,22 @@ export function AgentRevisionReview({
     proposal.candidate?.body ??
     (proposal.changes.length === 0 ? inputBody : null);
   const controlsDisabled = !checkoutAvailable || pending || publicationLocked;
+  const narrativeChanged =
+    candidateBody !== null && candidateBody !== inputBody;
+  const reviewHeading =
+    proposal.changes.length === 0
+      ? "No suggested changes"
+      : unresolvedChanges.length > 0
+        ? `${unresolvedChanges.length} suggested ${
+            unresolvedChanges.length === 1 ? "change" : "changes"
+          }`
+        : `${proposal.changes.length} reviewed ${
+            proposal.changes.length === 1 ? "change" : "changes"
+          }`;
 
   const beginEdit = (change: ReviewChangeView) => {
     setEditingId(change.id);
-    setEditedBody(change.editorBody ?? change.afterBody);
+    setEditedBody(inlineSuggestionPieces(change).after);
   };
 
   return (
@@ -215,11 +234,11 @@ export function AgentRevisionReview({
     >
       <header className="agentRevisionHeader">
         <div>
-          <p className="cardEyebrow">Agent revision</p>
-          <h2 id="agent-review-title">Review suggested changes in context</h2>
+          <p className="cardEyebrow">Agent changes</p>
+          <h2 id="agent-review-title">{reviewHeading}</h2>
           <p>
-            Review findings and candidate edits are shown against the saved
-            draft.
+            Review each diff and its rationale. Accepted changes update the
+            saved draft.
           </p>
           <details className="overallReviewRationale">
             <summary>View overall review rationale</summary>
@@ -230,16 +249,27 @@ export function AgentRevisionReview({
             {currentRevisionId !== inputRevisionId ? " · draft has moved" : ""}
           </span>
         </div>
-        {counts.unresolvedAutomatic > 0 ? (
-          <button
-            className="primaryButton"
-            type="button"
-            disabled={controlsDisabled}
-            onClick={() => void onAcceptAll()}
-          >
-            Accept all {counts.unresolvedAutomatic}{" "}
-            {counts.unresolvedAutomatic === 1 ? "change" : "changes"}
-          </button>
+        {unresolvedChanges.length > 0 ? (
+          <div className="bulkReviewActions">
+            <button
+              className="secondaryButton"
+              type="button"
+              disabled={controlsDisabled}
+              onClick={() => void onRejectAll()}
+            >
+              Reject all ({unresolvedChanges.length})
+            </button>
+            {counts.unresolvedAutomatic > 0 ? (
+              <button
+                className="primaryButton"
+                type="button"
+                disabled={controlsDisabled}
+                onClick={() => void onAcceptAll()}
+              >
+                Accept all ({counts.unresolvedAutomatic})
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </header>
 
@@ -250,32 +280,12 @@ export function AgentRevisionReview({
         </p>
       ) : null}
 
-      {candidateBody !== null ? (
-        <>
-          <RenderedComparison
-            production={inputBody}
-            draft={candidateBody}
-            productionRevision="Review input"
-            draftRevision={
-              proposal.candidate
-                ? `${proposal.candidate.candidateHash.slice(0, 10)}…`
-                : "No materialized edit"
-            }
-            productionLabel="Saved draft"
-            draftLabel="Agent revision"
-            ariaLabel="Saved draft and agent revision comparison"
-          />
-          <details className="diffDisclosure agentSourceDiff">
-            <summary>Agent revision source diff</summary>
-            <SynchronizedDiff production={inputBody} draft={candidateBody} />
-          </details>
-        </>
-      ) : (
+      {candidateBody === null ? (
         <p className="legacyCandidateNotice">
           This retained review predates full candidate snapshots. Its structured
           suggestions remain reviewable below.
         </p>
-      )}
+      ) : null}
 
       {proposal.changes.length === 0 ? (
         <div className="noCandidateEdits">
@@ -300,10 +310,11 @@ export function AgentRevisionReview({
             change.findingIds.includes(finding.id),
           );
           const editing = editingId === change.id;
+          const applicable = isReviewChangeApplicable(change);
           return (
             <article
               className={`reviewHunk hunk-${change.state.toLowerCase()} ${
-                change.applicationMode === "MANUAL" ? "hunk-manual" : ""
+                applicable ? "" : "hunk-manual"
               }`}
               key={change.id}
             >
@@ -315,7 +326,7 @@ export function AgentRevisionReview({
                   <h3>{change.targetKey}</h3>
                 </div>
                 <div className="hunkBadges">
-                  {change.applicationMode === "MANUAL" ? (
+                  {!applicable ? (
                     <span className="manualBadge">Manual only</span>
                   ) : null}
                   {change.modified ? (
@@ -427,7 +438,7 @@ export function AgentRevisionReview({
                   >
                     Reject
                   </button>
-                  {change.applicationMode === "AUTOMATIC" ? (
+                  {applicable ? (
                     <>
                       <button
                         className="textButton"
@@ -458,45 +469,62 @@ export function AgentRevisionReview({
         })}
       </div>
 
+      {narrativeChanged && candidateBody !== null ? (
+        <details className="candidatePreviewDisclosure">
+          <summary>Preview the revised situation</summary>
+          <RenderedComparison
+            production={inputBody}
+            draft={candidateBody}
+            productionRevision="Review input"
+            draftRevision={
+              proposal.candidate
+                ? `${proposal.candidate.candidateHash.slice(0, 10)}…`
+                : "Agent revision"
+            }
+            productionLabel="Saved draft"
+            draftLabel="Agent revision"
+            ariaLabel="Saved draft and agent revision comparison"
+          />
+          <details className="diffDisclosure agentSourceDiff">
+            <summary>View complete source diff</summary>
+            <SynchronizedDiff production={inputBody} draft={candidateBody} />
+          </details>
+        </details>
+      ) : null}
+
       {unresolvedFindings.length > 0 ? (
-        <section
-          className="inlineFindings"
-          aria-labelledby="unresolved-findings-title"
-        >
-          <header>
-            <p className="cardEyebrow">Inline review comments</p>
-            <h3 id="unresolved-findings-title">
-              Findings without a safe replacement
-            </h3>
-          </header>
-          {unresolvedFindings.map((finding) => (
-            <article key={finding.id}>
-              <div>
-                <span
-                  className={`findingSeverity severity-${finding.severity.toLowerCase()}`}
-                >
-                  {finding.severity.toLowerCase()}
-                </span>
-                <strong>
-                  {targetLabel(finding.targetKind)} · {finding.targetKey}
-                </strong>
-              </div>
-              <p>{finding.summary}</p>
-              <details>
-                <summary>View finding rationale</summary>
-                <p>{finding.rationale}</p>
-                <small>
-                  Identified by {roleLabel(finding.sourceRoleCode)}
-                  {finding.evidenceRoleCodes.length
-                    ? ` · evidence from ${finding.evidenceRoleCodes
-                        .map(roleLabel)
-                        .join(", ")}`
-                    : ""}
-                </small>
-              </details>
-            </article>
-          ))}
-        </section>
+        <details className="inlineFindings">
+          <summary>Other review findings ({unresolvedFindings.length})</summary>
+          <div className="inlineFindingsBody">
+            {unresolvedFindings.map((finding) => (
+              <article key={finding.id}>
+                <div>
+                  <span
+                    className={`findingSeverity severity-${finding.severity.toLowerCase()}`}
+                  >
+                    {finding.severity.toLowerCase()}
+                  </span>
+                  <strong>
+                    {targetLabel(finding.targetKind)} · {finding.targetKey}
+                  </strong>
+                </div>
+                <p>{finding.summary}</p>
+                <details>
+                  <summary>View finding rationale</summary>
+                  <p>{finding.rationale}</p>
+                  <small>
+                    Identified by {roleLabel(finding.sourceRoleCode)}
+                    {finding.evidenceRoleCodes.length
+                      ? ` · evidence from ${finding.evidenceRoleCodes
+                          .map(roleLabel)
+                          .join(", ")}`
+                      : ""}
+                  </small>
+                </details>
+              </article>
+            ))}
+          </div>
+        </details>
       ) : null}
     </section>
   );

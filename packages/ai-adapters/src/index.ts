@@ -42,7 +42,8 @@ export const candidateEditSchema = z
     beforeHash: z
       .string()
       .regex(/^[a-f0-9]{64}$/u)
-      .nullable(),
+      .nullable()
+      .optional(),
     afterBody: z.string().max(512_000),
     problem: z.string().min(1).max(4_000),
     explanation: z.string().min(1).max(4_000),

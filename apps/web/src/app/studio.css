@@ -1815,6 +1815,13 @@ button {
   line-height: 1.55;
 }
 
+.bulkReviewActions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 0.55rem;
+}
+
 .overallReviewRationale {
   width: fit-content;
   max-width: 70ch;
@@ -1961,35 +1968,49 @@ button {
 .inlineSuggestionDiff {
   max-height: 22rem;
   overflow: auto;
-  padding: 1rem;
-  background: #fdfdfb;
-  color: #364039;
+  background: #f8faf8;
+  color: #344039;
   font:
-    0.74rem/1.7 ui-monospace,
+    0.72rem/1.6 ui-monospace,
     SFMono-Regular,
     Menlo,
     monospace;
-  white-space: pre-wrap;
+}
+
+.suggestionDiffLine {
+  display: grid;
+  grid-template-columns: 2.2rem minmax(0, 1fr);
+  border-bottom: 1px solid var(--soft-line);
+}
+
+.suggestionDiffLine:last-child {
+  border-bottom: 0;
+}
+
+.suggestionDiffLine .diffMarker {
+  display: grid;
+  place-items: start center;
+  padding-top: 0.8rem;
+  border-right: 1px solid rgb(0 0 0 / 7%);
+  font-weight: 850;
+  user-select: none;
+}
+
+.suggestionDiffLine pre {
+  margin: 0;
+  padding: 0.8rem 0.9rem;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
-.inlineDiffVisual {
-  display: contents;
+.diffLineRemoved {
+  background: #fff1ef;
+  color: #7c332d;
 }
 
-.inlineDiffAdded {
-  border-radius: 0.18rem;
-  background: #dff2e5;
-  color: #1f6238;
-  box-shadow: 0 0 0 1px #c6e5d0;
-}
-
-.inlineDiffRemoved {
-  border-radius: 0.18rem;
-  background: #fde5e2;
-  color: #9c352d;
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
+.diffLineAdded {
+  background: #edf8f0;
+  color: #245c38;
 }
 
 .hunkExplanation {
@@ -2105,18 +2126,28 @@ button {
   background: var(--paper);
 }
 
-.inlineFindings > header {
+.inlineFindings > summary,
+.candidatePreviewDisclosure > summary {
+  width: auto;
   padding: 0.85rem 0.95rem;
-  border-bottom: 1px solid var(--soft-line);
   background: #fafaf7;
+  color: #4e5d54;
+  font-size: 0.72rem;
+  font-weight: 740;
+  cursor: pointer;
 }
 
-.inlineFindings > article {
+.inlineFindings[open] > summary,
+.candidatePreviewDisclosure[open] > summary {
+  border-bottom: 1px solid var(--soft-line);
+}
+
+.inlineFindingsBody > article {
   padding: 0.85rem 0.95rem;
   border-bottom: 1px solid var(--soft-line);
 }
 
-.inlineFindings > article:last-child {
+.inlineFindingsBody > article:last-child {
   border-bottom: 0;
 }
 
@@ -2152,6 +2183,21 @@ button {
   margin-top: 0.55rem;
   color: #748079;
   font-size: 0.62rem;
+}
+
+.candidatePreviewDisclosure {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.68rem;
+  background: var(--paper);
+}
+
+.candidatePreviewDisclosure > .renderedComparison {
+  padding: 1rem;
+}
+
+.candidatePreviewDisclosure > .diffDisclosure {
+  margin: 0 1rem 1rem;
 }
 
 .secondaryReviewComparison {
@@ -2682,7 +2728,13 @@ button {
     gap: 0.8rem;
   }
 
-  .agentRevisionHeader .primaryButton {
+  .bulkReviewActions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .bulkReviewActions .primaryButton,
+  .bulkReviewActions .secondaryButton {
     width: 100%;
   }
 

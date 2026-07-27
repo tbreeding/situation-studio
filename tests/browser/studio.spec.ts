@@ -503,17 +503,9 @@ test("agent revisions render as accessible diffs with fenced decisions and hones
   await expect(
     page.getByRole("button", { name: "Reject all (2)" }),
   ).toBeVisible();
-  const primaryComparison = page.getByLabel(
-    "Saved draft and agent revision comparison",
-  );
-  await expect(primaryComparison).not.toBeVisible();
-  await page.getByText("Preview the revised situation").click();
   await expect(
-    primaryComparison.getByText("Saved draft", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    primaryComparison.getByText("Agent revision", { exact: true }),
-  ).toBeVisible();
+    page.getByLabel("Saved draft and agent revision comparison"),
+  ).toHaveCount(0);
   const automaticHunk = page
     .locator("article.reviewHunk")
     .filter({ hasText: "The short answer" });
@@ -527,19 +519,6 @@ test("agent revisions render as accessible diffs with fenced decisions and hones
   await expect(automaticHunk).toContainText("Nonviolent Communication");
   await expect(automaticHunk).toContainText("Bundle Writer");
   await expect(automaticHunk).toContainText("Manager Tools");
-
-  const panes = page.locator(".agentRevisionReview .renderCompare > article");
-  expect(await panes.count()).toBe(2);
-  await panes.first().evaluate((element) => {
-    element.scrollTop = Math.max(
-      1,
-      (element.scrollHeight - element.clientHeight) * 0.7,
-    );
-    element.dispatchEvent(new Event("scroll"));
-  });
-  await expect
-    .poll(() => panes.nth(1).evaluate((element) => element.scrollTop))
-    .toBeGreaterThan(0);
 
   await automaticHunk.getByRole("button", { name: "Edit suggestion" }).click();
   await expect(

@@ -2126,8 +2126,7 @@ button {
   background: var(--paper);
 }
 
-.inlineFindings > summary,
-.candidatePreviewDisclosure > summary {
+.inlineFindings > summary {
   width: auto;
   padding: 0.85rem 0.95rem;
   background: #fafaf7;
@@ -2137,8 +2136,7 @@ button {
   cursor: pointer;
 }
 
-.inlineFindings[open] > summary,
-.candidatePreviewDisclosure[open] > summary {
+.inlineFindings[open] > summary {
   border-bottom: 1px solid var(--soft-line);
 }
 
@@ -2183,21 +2181,6 @@ button {
   margin-top: 0.55rem;
   color: #748079;
   font-size: 0.62rem;
-}
-
-.candidatePreviewDisclosure {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 0.68rem;
-  background: var(--paper);
-}
-
-.candidatePreviewDisclosure > .renderedComparison {
-  padding: 1rem;
-}
-
-.candidatePreviewDisclosure > .diffDisclosure {
-  margin: 0 1rem 1rem;
 }
 
 .secondaryReviewComparison {

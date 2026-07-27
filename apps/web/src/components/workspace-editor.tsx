@@ -1369,7 +1369,6 @@ export function WorkspaceEditor({
                 inputRevisionId={review.inputRevisionId}
                 currentRevisionId={review.currentRevisionId}
                 inputBundleHash={review.inputBundleHash}
-                inputBody={review.inputBody}
                 checkoutAvailable={Boolean(checkout)}
                 pending={pending || proposalPending}
                 publicationLocked={publicationLocked}

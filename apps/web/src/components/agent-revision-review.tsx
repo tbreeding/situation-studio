@@ -1,8 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { RenderedComparison } from "@/components/rendered-comparison";
-import { SynchronizedDiff } from "@/components/synchronized-diff";
 
 export type ReviewFindingView = {
   id: string;
@@ -163,7 +161,6 @@ export function AgentRevisionReview({
   inputRevisionId,
   currentRevisionId,
   inputBundleHash,
-  inputBody,
   checkoutAvailable,
   pending,
   publicationLocked,
@@ -177,7 +174,6 @@ export function AgentRevisionReview({
   inputRevisionId: string;
   currentRevisionId: string | null;
   inputBundleHash: string;
-  inputBody: string;
   checkoutAvailable: boolean;
   pending: boolean;
   publicationLocked: boolean;
@@ -205,12 +201,7 @@ export function AgentRevisionReview({
   const unresolvedFindings = proposal.findings.filter(
     (finding) => !linkedFindingIds.has(finding.id),
   );
-  const candidateBody =
-    proposal.candidate?.body ??
-    (proposal.changes.length === 0 ? inputBody : null);
   const controlsDisabled = !checkoutAvailable || pending || publicationLocked;
-  const narrativeChanged =
-    candidateBody !== null && candidateBody !== inputBody;
   const reviewHeading =
     proposal.changes.length === 0
       ? "No suggested changes"
@@ -280,7 +271,7 @@ export function AgentRevisionReview({
         </p>
       ) : null}
 
-      {candidateBody === null ? (
+      {proposal.candidate === null && proposal.changes.length > 0 ? (
         <p className="legacyCandidateNotice">
           This retained review predates full candidate snapshots. Its structured
           suggestions remain reviewable below.
@@ -311,6 +302,10 @@ export function AgentRevisionReview({
           );
           const editing = editingId === change.id;
           const applicable = isReviewChangeApplicable(change);
+          const explanation =
+            applicable && change.applicationMode === "MANUAL"
+              ? "Updates this section from the exact saved-draft baseline."
+              : change.explanation;
           return (
             <article
               className={`reviewHunk hunk-${change.state.toLowerCase()} ${
@@ -384,7 +379,7 @@ export function AgentRevisionReview({
                 <InlineSuggestionDiff change={change} />
               )}
               <div className="hunkExplanation">
-                <p>{change.explanation}</p>
+                <p>{explanation}</p>
                 <details>
                   <summary>View explanation</summary>
                   <dl>
@@ -468,29 +463,6 @@ export function AgentRevisionReview({
           );
         })}
       </div>
-
-      {narrativeChanged && candidateBody !== null ? (
-        <details className="candidatePreviewDisclosure">
-          <summary>Preview the revised situation</summary>
-          <RenderedComparison
-            production={inputBody}
-            draft={candidateBody}
-            productionRevision="Review input"
-            draftRevision={
-              proposal.candidate
-                ? `${proposal.candidate.candidateHash.slice(0, 10)}…`
-                : "Agent revision"
-            }
-            productionLabel="Saved draft"
-            draftLabel="Agent revision"
-            ariaLabel="Saved draft and agent revision comparison"
-          />
-          <details className="diffDisclosure agentSourceDiff">
-            <summary>View complete source diff</summary>
-            <SynchronizedDiff production={inputBody} draft={candidateBody} />
-          </details>
-        </details>
-      ) : null}
 
       {unresolvedFindings.length > 0 ? (
         <details className="inlineFindings">

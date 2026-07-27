@@ -217,7 +217,14 @@ export function AgentRevisionReview({
         <div>
           <p className="cardEyebrow">Agent revision</p>
           <h2 id="agent-review-title">Review suggested changes in context</h2>
-          <p>{proposal.summary}</p>
+          <p>
+            Review findings and candidate edits are shown against the saved
+            draft.
+          </p>
+          <details className="overallReviewRationale">
+            <summary>View overall review rationale</summary>
+            <p>{proposal.summary}</p>
+          </details>
           <span className="candidateIdentity">
             Based on {inputBundleHash.slice(0, 10)}…
             {currentRevisionId !== inputRevisionId ? " · draft has moved" : ""}

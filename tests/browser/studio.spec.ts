@@ -34,6 +34,7 @@ type ReviewFixtureInput = {
   body: string;
   bundleManifest: unknown;
   candidateBody: string;
+  proposalSummary?: string;
   findings: Array<{
     key: string;
     severity: "NOTE" | "CONSIDER" | "IMPORTANT" | "BLOCKING";
@@ -140,9 +141,10 @@ async function insertSucceededReviewFixture(input: ReviewFixtureInput) {
         proposalId,
         jobId,
         input.revisionId,
-        input.changes.length
-          ? "A concise candidate revision with retained worker lineage."
-          : "The review found issues but did not generate a safe automatic edit.",
+        input.proposalSummary ??
+          (input.changes.length
+            ? "A concise candidate revision with retained worker lineage."
+            : "The review found issues but did not generate a safe automatic edit."),
         JSON.stringify(input.findings),
         createHash("sha256").update(proposalId).digest("hex"),
       ],
@@ -650,6 +652,8 @@ test("agent revisions render as accessible diffs with fenced decisions and hones
     body: latest.text_body,
     bundleManifest: latest.bundle_manifest,
     candidateBody: latest.text_body,
+    proposalSummary:
+      "This deliberately detailed overall rationale should stay collapsed until the editor asks to read it.",
     findings: [
       {
         key: "critic-coaching:no-safe-edit",
@@ -669,6 +673,25 @@ test("agent revisions render as accessible diffs with fenced decisions and hones
   await expect(
     page.getByText("No safe automatic change was generated."),
   ).toBeVisible();
+  const overallRationale = page.getByText("View overall review rationale");
+  await expect(
+    page.getByText(
+      "This deliberately detailed overall rationale should stay collapsed until the editor asks to read it.",
+    ),
+  ).not.toBeVisible();
+  await overallRationale.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByText(
+      "This deliberately detailed overall rationale should stay collapsed until the editor asks to read it.",
+    ),
+  ).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByText(
+      "This deliberately detailed overall rationale should stay collapsed until the editor asks to read it.",
+    ),
+  ).not.toBeVisible();
   await expect(page.getByRole("button", { name: /^Accept all/u })).toHaveCount(
     0,
   );

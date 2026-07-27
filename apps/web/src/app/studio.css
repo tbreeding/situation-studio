@@ -1815,6 +1815,23 @@ button {
   line-height: 1.55;
 }
 
+.overallReviewRationale {
+  width: fit-content;
+  max-width: 70ch;
+  margin-top: 0.45rem;
+  color: #536159;
+  font-size: 0.7rem;
+}
+
+.overallReviewRationale > summary {
+  font-weight: 720;
+  cursor: pointer;
+}
+
+.overallReviewRationale[open] {
+  width: 100%;
+}
+
 .candidateIdentity {
   display: block;
   margin-top: 0.45rem;

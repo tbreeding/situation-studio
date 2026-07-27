@@ -6,6 +6,7 @@ import {
 } from "@situation-studio/domain";
 import { AppShell } from "@/components/app-shell";
 import { WorkspaceEditor } from "@/components/workspace-editor";
+import { workspaceTabFromSearchParam } from "@/components/workspace-tabs";
 import { requireSession } from "@/server/auth/request";
 import {
   newSituationTemplate,
@@ -18,11 +19,17 @@ export const dynamic = "force-dynamic";
 
 export default async function SituationPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ tab?: string | string[] }>;
 }) {
-  const { slug } = await params;
-  const session = await requireSession(`/situations/${slug}`);
+  const [{ slug }, query] = await Promise.all([params, searchParams]);
+  const initialTab = workspaceTabFromSearchParam(query.tab);
+  const returnTo = `/situations/${slug}${
+    initialTab === "edit" ? "" : `?tab=${initialTab}`
+  }`;
+  const session = await requireSession(returnTo);
   await reconcileLeadershipRelease();
   const workspace = await workspaceForSlug(slug);
   if (!workspace) notFound();
@@ -95,6 +102,7 @@ export default async function SituationPage({
       }}
     >
       <WorkspaceEditor
+        initialTab={initialTab}
         situation={{
           id: workspace.id,
           slug: workspace.slug,

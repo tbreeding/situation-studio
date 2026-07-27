@@ -16,6 +16,11 @@ import { RenderedComparison } from "@/components/rendered-comparison";
 import { formattedRetryTime } from "@/components/review-retry-status";
 import { SynchronizedDiff } from "@/components/synchronized-diff";
 import {
+  WORKSPACE_TABS,
+  workspaceTabPath,
+  type WorkspaceTab,
+} from "@/components/workspace-tabs";
+import {
   initialLiveReviewState,
   nextReviewAnnouncement,
   reduceLiveReviewState,
@@ -158,6 +163,7 @@ function shortHash(value: string | null) {
 }
 
 export function WorkspaceEditor({
+  initialTab,
   situation,
   initialBundle,
   initialSections,
@@ -172,6 +178,7 @@ export function WorkspaceEditor({
   history,
   context,
 }: {
+  initialTab: WorkspaceTab;
   situation: {
     id: string;
     slug: string;
@@ -220,9 +227,7 @@ export function WorkspaceEditor({
   );
   const workspaceLocked = reviewLocked || publicationLocked;
   const editable = Boolean(mine && !workspaceLocked);
-  const [tab, setTab] = useState<"edit" | "review" | "history" | "context">(
-    "edit",
-  );
+  const [tab, setTab] = useState<WorkspaceTab>(initialTab);
   const [bundle, setBundle] = useState(initialBundle);
   const [sections, setSections] = useState(initialSections);
   const [rawBody, setRawBody] = useState(initialBody);
@@ -526,29 +531,35 @@ export function WorkspaceEditor({
     });
   }
 
-  function selectTab(next: typeof tab) {
+  function selectTab(next: WorkspaceTab) {
     setTab(next);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      workspaceTabPath(window.location.href, next),
+    );
   }
 
   function handleTabKeyDown(
     event: React.KeyboardEvent<HTMLButtonElement>,
-    current: typeof tab,
+    current: WorkspaceTab,
   ) {
-    const tabs = ["edit", "review", "history", "context"] as const;
-    const index = tabs.indexOf(current);
+    const index = WORKSPACE_TABS.indexOf(current);
     const next =
       event.key === "Home"
-        ? tabs[0]
+        ? WORKSPACE_TABS[0]
         : event.key === "End"
-          ? tabs.at(-1)
+          ? WORKSPACE_TABS.at(-1)
           : event.key === "ArrowRight"
-            ? tabs[(index + 1) % tabs.length]
+            ? WORKSPACE_TABS[(index + 1) % WORKSPACE_TABS.length]
             : event.key === "ArrowLeft"
-              ? tabs[(index - 1 + tabs.length) % tabs.length]
+              ? WORKSPACE_TABS[
+                  (index - 1 + WORKSPACE_TABS.length) % WORKSPACE_TABS.length
+                ]
               : undefined;
     if (!next) return;
     event.preventDefault();
-    setTab(next);
+    selectTab(next);
     requestAnimationFrame(() =>
       document.querySelector<HTMLButtonElement>(`#tab-${next}`)?.focus(),
     );

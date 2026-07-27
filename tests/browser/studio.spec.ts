@@ -161,11 +161,22 @@ test("durable checkout, autosave, preview, dialog focus, and check-in work end t
   const reviewTab = page.getByRole("tab", { name: "Review" });
   await reviewTab.click();
   await expect(reviewTab).toBeFocused();
+  await expect(page).toHaveURL(/[?&]tab=review(?:&|$)/u);
   await expect(page.getByText("Exact source diff")).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("tab", { name: "Review" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByText("Exact source diff")).toBeVisible();
+  await reviewTab.click();
   await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("tab", { name: /History/u })).toBeFocused();
+  const historyTab = page.getByRole("tab", { name: /History/u });
+  await expect(historyTab).toBeFocused();
+  await expect(page).toHaveURL(/[?&]tab=history(?:&|$)/u);
   await page.keyboard.press("ArrowLeft");
   await expect(reviewTab).toBeFocused();
+  await expect(page).toHaveURL(/[?&]tab=review(?:&|$)/u);
   await expectNoCriticalAccessibilityViolations(page);
 
   const submit = page.getByRole("button", { name: "Submit to production" });

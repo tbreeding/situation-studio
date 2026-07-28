@@ -115,7 +115,9 @@ async function convergedRuntimeIdentity(
 ) {
   const attempts = Math.max(
     1,
-    Math.floor(dependencies.runtimeVerification?.attempts ?? 8),
+    // Leadership refreshes its official-content cache every five seconds.
+    // Cover more than two complete refresh windows in production.
+    Math.floor(dependencies.runtimeVerification?.attempts ?? 24),
   );
   const intervalMs = Math.max(
     0,

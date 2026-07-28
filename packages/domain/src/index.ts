@@ -93,6 +93,10 @@ export const situationMetadataSchema = z.object({
   campaignCluster: z.string().regex(/^[a-z0-9_]+$/u),
 });
 
+export const situationMetadataKeys = Object.freeze(
+  Object.keys(situationMetadataSchema.shape),
+) as readonly (keyof z.infer<typeof situationMetadataSchema>)[];
+
 export const situationBundleSchema = z.object({
   schemaVersion: z.literal("situation-bundle-v1"),
   contractVersion: z.string().min(1).max(100),
@@ -167,6 +171,220 @@ export const requiredSituationSections = [
 
 export type SituationSectionName = (typeof requiredSituationSections)[number];
 export type SituationSections = Record<SituationSectionName, string>;
+
+export type SituationSectionTarget =
+  | {
+      kind: "SECTION";
+      section: SituationSectionName;
+    }
+  | {
+      kind: "SUBHEADING";
+      section: SituationSectionName;
+      subheading: string;
+    }
+  | {
+      kind: "NAMED_BLOCK";
+      section: SituationSectionName;
+      anchor: string;
+    };
+
+const sectionAnchorPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+
+export function parseSituationSectionTargetKey(
+  targetKey: string,
+): SituationSectionTarget | null {
+  for (const section of requiredSituationSections) {
+    if (targetKey === section) return { kind: "SECTION", section };
+    const subheadingPrefix = `${section}/`;
+    if (targetKey.startsWith(subheadingPrefix)) {
+      const subheading = targetKey.slice(subheadingPrefix.length);
+      if (
+        subheading.length > 0 &&
+        subheading === subheading.trim() &&
+        !/[/#\r\n]/u.test(subheading)
+      )
+        return { kind: "SUBHEADING", section, subheading };
+      return null;
+    }
+    const anchorPrefix = `${section}#`;
+    if (targetKey.startsWith(anchorPrefix)) {
+      const anchor = targetKey.slice(anchorPrefix.length);
+      return sectionAnchorPattern.test(anchor)
+        ? { kind: "NAMED_BLOCK", section, anchor }
+        : null;
+    }
+  }
+  return null;
+}
+
+export type ScopedVariantTarget = {
+  logicalId: string;
+  variantId: string | null;
+};
+
+export function parseScopedVariantTargetKey(
+  targetKey: string,
+): ScopedVariantTarget | null {
+  const separator = targetKey.indexOf("#");
+  const logicalId =
+    separator < 0 ? targetKey : targetKey.slice(0, separator).trim();
+  const variantId =
+    separator < 0 ? null : targetKey.slice(separator + 1).trim();
+  if (!logicalId || /[\r\n]/u.test(logicalId)) return null;
+  if (variantId !== null && !sectionAnchorPattern.test(variantId)) return null;
+  return { logicalId, variantId };
+}
+
+type ResolvedSituationSectionTarget = {
+  target: SituationSectionTarget;
+  beforeBody: string;
+  replacement: (afterBody: string) => string;
+};
+
+function normalizedStructuralLabel(value: string) {
+  return value
+    .normalize("NFKC")
+    .trim()
+    .replace(/^[ "'‘’“”]+|[ "'‘’“”]+$/gu, "")
+    .replace(/[.:;!?…]+$/u, "")
+    .trim()
+    .toLocaleLowerCase("en");
+}
+
+function namedBlockAnchor(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{Mark}/gu, "")
+    .toLocaleLowerCase("en")
+    .replace(/['’]/gu, "")
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+}
+
+function replaceSectionLines(
+  lines: string[],
+  start: number,
+  end: number,
+  afterBody: string,
+) {
+  const prefix = lines.slice(0, start).join("\n").trimEnd();
+  const replacement = canonicalText(afterBody).trim();
+  const suffix = lines.slice(end).join("\n").trimStart();
+  return [prefix, replacement, suffix].filter(Boolean).join("\n\n");
+}
+
+function resolveSituationSectionTarget(
+  sections: SituationSections,
+  targetKey: string,
+): ResolvedSituationSectionTarget {
+  const target = parseSituationSectionTargetKey(targetKey);
+  if (!target)
+    throw new Error(`Candidate section target ${targetKey} is invalid.`);
+  if (target.kind === "SECTION")
+    return {
+      target,
+      beforeBody: sections[target.section],
+      replacement: (afterBody) => canonicalText(afterBody).trim(),
+    };
+
+  const lines = canonicalText(sections[target.section]).trimEnd().split("\n");
+  if (target.kind === "SUBHEADING") {
+    const expected = normalizedStructuralLabel(target.subheading);
+    const matches = lines.flatMap((line, index) => {
+      const heading = line.match(/^(#{3,6})[ \t]+(.+?)[ \t]*$/u);
+      return heading && normalizedStructuralLabel(heading[2] ?? "") === expected
+        ? [{ index, depth: heading[1]?.length ?? 3 }]
+        : [];
+    });
+    if (matches.length !== 1)
+      throw new Error(
+        matches.length === 0
+          ? `Candidate subheading ${targetKey} does not exist.`
+          : `Candidate subheading ${targetKey} is ambiguous.`,
+      );
+    const match = matches[0]!;
+    const start = match.index + 1;
+    let end = lines.length;
+    for (let index = start; index < lines.length; index += 1) {
+      const heading = lines[index]?.match(/^(#{1,6})[ \t]+/u);
+      if (heading && (heading[1]?.length ?? 7) <= match.depth) {
+        end = index;
+        break;
+      }
+    }
+    return {
+      target,
+      beforeBody: lines.slice(start, end).join("\n").trim(),
+      replacement: (afterBody) =>
+        replaceSectionLines(lines, start, end, afterBody),
+    };
+  }
+
+  const matches = lines.flatMap((line, index) => {
+    const label = line.match(/^>[ \t]*\*\*(.+?):\*\*/u)?.[1];
+    return label && namedBlockAnchor(label) === target.anchor ? [index] : [];
+  });
+  if (matches.length !== 1)
+    throw new Error(
+      matches.length === 0
+        ? `Candidate named block ${targetKey} does not exist.`
+        : `Candidate named block ${targetKey} is ambiguous.`,
+    );
+  const start = matches[0]!;
+  let end = start + 1;
+  while (end < lines.length && /^>/u.test(lines[end] ?? "")) end += 1;
+  return {
+    target,
+    beforeBody: lines.slice(start, end).join("\n").trim(),
+    replacement: (afterBody) => {
+      const replacement = canonicalText(afterBody).trim();
+      const label = replacement.match(/^>[ \t]*\*\*(.+?):\*\*/u)?.[1];
+      if (!label || namedBlockAnchor(label) !== target.anchor)
+        throw new Error(
+          `Candidate named block ${targetKey} must retain its bold label.`,
+        );
+      return replaceSectionLines(lines, start, end, replacement);
+    },
+  };
+}
+
+export function situationSectionTargetBefore(
+  sections: SituationSections,
+  targetKey: string,
+) {
+  return resolveSituationSectionTarget(sections, targetKey).beforeBody;
+}
+
+export function applySituationSectionTarget(
+  sections: SituationSections,
+  targetKey: string,
+  afterBody: string,
+) {
+  const resolved = resolveSituationSectionTarget(sections, targetKey);
+  return {
+    ...sections,
+    [resolved.target.section]: resolved.replacement(afterBody),
+  };
+}
+
+export function situationSectionTargetsOverlap(
+  left: SituationSectionTarget,
+  right: SituationSectionTarget,
+) {
+  if (left.section !== right.section) return false;
+  if (left.kind === "SECTION" || right.kind === "SECTION") return true;
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "SUBHEADING" && right.kind === "SUBHEADING")
+    return (
+      normalizedStructuralLabel(left.subheading) ===
+      normalizedStructuralLabel(right.subheading)
+    );
+  return (
+    left.kind === "NAMED_BLOCK" &&
+    right.kind === "NAMED_BLOCK" &&
+    left.anchor === right.anchor
+  );
+}
 
 const headingPattern = /^##[ \t]+(.+?)[ \t]*$/gmu;
 

@@ -2,6 +2,7 @@ import { createDatabaseClient } from "@situation-studio/db";
 import { REVIEW_POLICY_VERSION } from "@situation-studio/review-policy";
 import {
   runOneReview,
+  type ReviewApplicationFailureEvent,
   type ReviewProviderConfiguration,
   type ReviewStageTimingEvent,
 } from "./review";
@@ -52,6 +53,10 @@ function workerStatus() {
 
 function logStageTiming(event: ReviewStageTimingEvent) {
   console.info(JSON.stringify(event));
+}
+
+function logApplicationFailure(event: ReviewApplicationFailureEvent) {
+  console.error(JSON.stringify(event));
 }
 
 async function heartbeat(status: string) {
@@ -125,6 +130,7 @@ try {
   while (!stopping) {
     await heartbeat(workerStatus());
     const worked = await runOneReview(database, providerConfiguration, {
+      onApplicationFailure: logApplicationFailure,
       onStageTiming: logStageTiming,
     });
     if (worked) {

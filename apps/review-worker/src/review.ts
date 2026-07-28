@@ -15,16 +15,24 @@ import {
 } from "@situation-studio/db";
 import {
   bundleHash,
+  applySituationSectionTarget,
   canonicalText,
   canonicalJson,
   createScopedVariant,
+  parseScopedVariantTargetKey,
   parseSituationSections,
+  parseSituationSectionTargetKey,
+  requiredSituationSections,
   relationshipSchema,
   serializeSituationSections,
   sha256,
+  situationSectionTargetBefore,
+  situationSectionTargetsOverlap,
   situationBundleSchema,
+  situationMetadataKeys,
   situationMetadataSchema,
   validateSituationBundle,
+  type SituationSectionTarget,
 } from "@situation-studio/domain";
 import {
   REVIEW_POLICY_VERSION,
@@ -62,10 +70,21 @@ export type ReviewStageTimingEvent = {
   providerAttempts: ProviderAttemptMetadata[];
 };
 
+export type ReviewApplicationFailureEvent = {
+  event: "review_application_failure";
+  jobId: string;
+  stageOrdinal: number;
+  stageRole: string;
+  phase: "BUILD_EVIDENCE" | "VALIDATE_CANDIDATE" | "MATERIALIZE_PROPOSAL";
+  failureClass: AdapterFailure["failureClass"];
+  errorMessage: string;
+};
+
 export type ReviewProcessingOptions = {
   timing?: ReviewWorkerTiming;
   runStage?: typeof runWithFallback;
   onStageTiming?: (event: ReviewStageTimingEvent) => void;
+  onApplicationFailure?: (event: ReviewApplicationFailureEvent) => void;
 };
 
 const DEFAULT_LEASE_DURATION_MS = 120_000;
@@ -81,6 +100,32 @@ function reportStageTiming(
 ) {
   try {
     reporter?.(event);
+  } catch {
+    // Observability must never change the durable review outcome.
+  }
+}
+
+function reportApplicationFailure(
+  reporter: ReviewProcessingOptions["onApplicationFailure"],
+  input: Omit<
+    ReviewApplicationFailureEvent,
+    "event" | "failureClass" | "errorMessage"
+  > & { error: unknown },
+) {
+  const { error, ...event } = input;
+  const failureClass =
+    error instanceof AdapterFailure ? error.failureClass : "APPLICATION";
+  const errorMessage =
+    error instanceof Error && error.message
+      ? error.message.slice(0, 1_000)
+      : "Review application processing failed.";
+  try {
+    reporter?.({
+      event: "review_application_failure",
+      ...event,
+      failureClass,
+      errorMessage,
+    });
   } catch {
     // Observability must never change the durable review outcome.
   }
@@ -145,7 +190,11 @@ export function rolePrompt(
       "Write the smallest complete candidate revision that resolves their retained actionable findings without changing unrelated content.",
       "Every candidate edit must link at least one upstream finding as role-code:finding-id, name bundle-writer as the writing role, and retain the evidence role codes that informed it.",
       "Use AUTOMATIC for every complete, safely applicable SECTION, METADATA, SCOPED_VARIANT, or RELATIONSHIP replacement. The worker computes and fences before hashes; return beforeHash as null rather than calculating it or downgrading an otherwise safe edit.",
-      "For SECTION edits, afterBody must contain only the section body, never its Markdown heading.",
+      `For SECTION edits, targetKey must be one of these top-level sections: ${requiredSituationSections.join(" | ")}.`,
+      "A smaller structural target may use section/subheading for the body beneath a ###-or-deeper heading, or section#named-block for a blockquote whose bold label slug matches the anchor.",
+      "For a top-level or /subheading SECTION edit, afterBody contains only the target body and never its Markdown heading. For a #named-block edit, afterBody contains the complete replacement blockquote and must retain the same bold label.",
+      "For SCOPED_VARIANT, targetKey names an existing relationship logical ID. It may append #new-variant-id when afterBody is a complete JSON artifact whose id exactly matches that suffix.",
+      `AUTOMATIC METADATA targetKey must be one of: ${situationMetadataKeys.join(" | ")}. Treat any other metadata concept, including sourceReferences, as MANUAL because Situation Studio cannot apply it safely.`,
       "Use MANUAL only for embeds, broad bundle changes, or a concrete suggestion whose application needs editor judgment.",
       "For every retained important or blocking finding, provide the smallest safe automatic edit, an explicit manual suggestion, or a concise unresolved finding that names the missing evidence or decision. Zero candidate edits is appropriate only when none of those findings has a concrete safe or manual replacement.",
       "Do not repeat, amplify, or reintroduce findings rejected by adjudication.",
@@ -342,22 +391,61 @@ type CandidateEdit = ReturnType<
   typeof bundleWriterOutputSchema.parse
 >["candidateEdits"][number];
 
+function scopedVariantRelationship(bundle: CandidateBundle, targetKey: string) {
+  const target = parseScopedVariantTargetKey(targetKey);
+  if (!target)
+    throw new AdapterFailure(
+      "APPLICATION",
+      `Candidate scoped target ${targetKey} is invalid.`,
+      false,
+    );
+  const relationship = bundle.relationships.find(
+    (candidate) => candidate.logicalId === target.logicalId,
+  );
+  if (!relationship)
+    throw new AdapterFailure(
+      "APPLICATION",
+      `Candidate scoped target ${targetKey} is not linked.`,
+      false,
+    );
+  return { relationship, target };
+}
+
+function validateScopedVariantIdentity(
+  targetKey: string,
+  variantId: string | null,
+  afterBody: string,
+) {
+  if (!variantId) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(afterBody);
+  } catch {
+    throw new AdapterFailure(
+      "APPLICATION",
+      `Candidate scoped target ${targetKey} is not valid JSON.`,
+      false,
+    );
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    (parsed as { id?: unknown }).id !== variantId
+  )
+    throw new AdapterFailure(
+      "APPLICATION",
+      `Candidate scoped target ${targetKey} must match the replacement artifact ID.`,
+      false,
+    );
+}
+
 function candidateTargetBefore(
   bundle: CandidateBundle,
   sections: ReturnType<typeof parseSituationSections>,
   change: CandidateEdit,
 ) {
   if (change.targetKind === "SECTION") {
-    const before =
-      sections[
-        change.targetKey as keyof ReturnType<typeof parseSituationSections>
-      ];
-    if (before === undefined)
-      throw new AdapterFailure(
-        "APPLICATION",
-        `Candidate section ${change.targetKey} does not exist.`,
-        false,
-      );
+    const before = situationSectionTargetBefore(sections, change.targetKey);
     return {
       beforeBody: before,
       beforeHash: sha256(canonicalText(before)),
@@ -365,26 +453,17 @@ function candidateTargetBefore(
   }
   if (change.targetKind === "METADATA") {
     if (!(change.targetKey in bundle.metadata))
-      throw new AdapterFailure(
-        "APPLICATION",
-        `Candidate metadata field ${change.targetKey} does not exist.`,
-        false,
-      );
+      return { beforeBody: null, beforeHash: null };
     const before =
       bundle.metadata[change.targetKey as keyof typeof bundle.metadata];
     const beforeBody = canonicalJson(before);
     return { beforeBody, beforeHash: sha256(beforeBody) };
   }
   if (change.targetKind === "SCOPED_VARIANT") {
-    const before = bundle.relationships.find(
-      (relationship) => relationship.logicalId === change.targetKey,
+    const { relationship: before } = scopedVariantRelationship(
+      bundle,
+      change.targetKey,
     );
-    if (!before)
-      throw new AdapterFailure(
-        "APPLICATION",
-        `Candidate scoped target ${change.targetKey} is not linked.`,
-        false,
-      );
     return {
       beforeBody: canonicalJson(before),
       beforeHash: before.contentHash,
@@ -412,10 +491,11 @@ function applyCandidateEdit(
   change: CandidateEdit,
 ) {
   if (change.targetKind === "SECTION") {
-    const nextSections = {
-      ...input.sections,
-      [change.targetKey]: change.afterBody,
-    };
+    const nextSections = applySituationSectionTarget(
+      input.sections,
+      change.targetKey,
+      change.afterBody,
+    );
     return { bundle: input.bundle, sections: nextSections };
   }
   if (change.targetKind === "METADATA") {
@@ -439,8 +519,9 @@ function applyCandidateEdit(
     };
   }
   if (change.targetKind === "SCOPED_VARIANT") {
-    const relationship = input.bundle.relationships.find(
-      (candidate) => candidate.logicalId === change.targetKey,
+    const { relationship, target } = scopedVariantRelationship(
+      input.bundle,
+      change.targetKey,
     );
     if (
       !relationship ||
@@ -457,6 +538,11 @@ function applyCandidateEdit(
         `Candidate scoped target ${change.targetKey} cannot be forked.`,
         false,
       );
+    validateScopedVariantIdentity(
+      change.targetKey,
+      target.variantId,
+      change.afterBody,
+    );
     const variant = createScopedVariant({
       situationId: input.bundle.situationId,
       kind: relationship.kind as
@@ -527,7 +613,7 @@ function applyCandidateEdit(
   );
 }
 
-function materializeCandidateRevision(input: {
+export function materializeCandidateRevision(input: {
   inputRevisionId: string;
   inputBundleHash: string;
   bundleManifest: Prisma.JsonValue;
@@ -537,6 +623,7 @@ function materializeCandidateRevision(input: {
   let bundle = situationBundleSchema.parse(input.bundleManifest);
   let sections = parseSituationSections(input.body);
   const seenTargets = new Set<string>();
+  const seenSectionTargets: SituationSectionTarget[] = [];
   const materializedChanges: Array<
     CandidateEdit & {
       beforeBody: string | null;
@@ -561,12 +648,34 @@ function materializeCandidateRevision(input: {
         `Candidate target ${targetIdentity} appears more than once.`,
         false,
       );
+    if (change.targetKind === "SECTION") {
+      const sectionTarget = parseSituationSectionTargetKey(change.targetKey);
+      if (!sectionTarget)
+        throw new AdapterFailure(
+          "APPLICATION",
+          `Candidate section target ${change.targetKey} is invalid.`,
+          false,
+        );
+      if (
+        seenSectionTargets.some((candidate) =>
+          situationSectionTargetsOverlap(candidate, sectionTarget),
+        )
+      )
+        throw new AdapterFailure(
+          "APPLICATION",
+          `Candidate section target ${change.targetKey} overlaps another candidate target.`,
+          false,
+        );
+      seenSectionTargets.push(sectionTarget);
+    }
     seenTargets.add(targetIdentity);
     const before = candidateTargetBefore(bundle, sections, change);
     const applicationMode =
       change.targetKind === "SECTION" && before.beforeHash
         ? "AUTOMATIC"
-        : change.applicationMode;
+        : change.targetKind === "METADATA" && before.beforeHash === null
+          ? "MANUAL"
+          : change.applicationMode;
     const materializedChange = {
       ...change,
       applicationMode,
@@ -1202,9 +1311,16 @@ export async function processClaimedReview(
             activeClaim,
             options.timing,
           );
-        } catch {
+        } catch (error) {
           const finalStep = job.steps.at(-1);
-          if (finalStep)
+          if (finalStep) {
+            reportApplicationFailure(options.onApplicationFailure, {
+              jobId: job.id,
+              stageOrdinal: finalStep.ordinal,
+              stageRole: finalStep.roleCode,
+              phase: "MATERIALIZE_PROPOSAL",
+              error,
+            });
             await recordApplicationFailure(
               database,
               {
@@ -1215,6 +1331,7 @@ export async function processClaimedReview(
               },
               options.timing,
             );
+          }
         }
       }
       return;
@@ -1229,7 +1346,14 @@ export async function processClaimedReview(
     let evidence: string;
     try {
       evidence = await buildEvidence(database, job.id, ready.id);
-    } catch {
+    } catch (error) {
+      reportApplicationFailure(options.onApplicationFailure, {
+        jobId: job.id,
+        stageOrdinal: ready.ordinal,
+        stageRole: ready.roleCode,
+        phase: "BUILD_EVIDENCE",
+        error,
+      });
       await recordApplicationFailure(
         database,
         {
@@ -1322,6 +1446,43 @@ export async function processClaimedReview(
         configuration,
         { providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS },
       );
+      if (ready.roleCode === "bundle-writer") {
+        try {
+          const output = bundleWriterOutputSchema.parse(result.output);
+          const body =
+            job.inputRevision.artifacts[0]?.content.textBody ??
+            (() => {
+              throw new AdapterFailure(
+                "APPLICATION",
+                "The pinned candidate input body is unavailable.",
+                false,
+              );
+            })();
+          materializeCandidateRevision({
+            inputRevisionId: job.inputRevisionId,
+            inputBundleHash: job.inputRevision.bundleHash,
+            bundleManifest: job.inputRevision.bundleManifest,
+            body,
+            changes: output.candidateEdits,
+          });
+        } catch (error) {
+          reportApplicationFailure(options.onApplicationFailure, {
+            jobId: job.id,
+            stageOrdinal: ready.ordinal,
+            stageRole: ready.roleCode,
+            phase: "VALIDATE_CANDIDATE",
+            error,
+          });
+          throw new AdapterFailure(
+            "INVALID_OUTPUT",
+            error instanceof Error
+              ? error.message
+              : "The candidate revision could not be materialized.",
+            true,
+            result.providerAttempts,
+          );
+        }
+      }
       providerCompleted = true;
       reportStageTiming(options.onStageTiming, {
         event: "review_stage_provider_timing",

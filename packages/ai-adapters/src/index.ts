@@ -2,7 +2,11 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { sha256 } from "@situation-studio/domain";
+import {
+  parseScopedVariantTargetKey,
+  parseSituationSectionTargetKey,
+  sha256,
+} from "@situation-studio/domain";
 import { z } from "zod";
 
 const MAX_PROVIDER_BYTES = 2 * 1024 * 1024;
@@ -52,6 +56,26 @@ export const candidateEditSchema = z
     evidenceRoleCodes: z.array(z.string().min(1).max(100)).max(30),
   })
   .superRefine((change, context) => {
+    if (
+      change.targetKind === "SECTION" &&
+      !parseSituationSectionTargetKey(change.targetKey)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["targetKey"],
+        message:
+          "A section target must name a top-level section, a section/subheading, or a section#named-block anchor.",
+      });
+    if (
+      change.targetKind === "SCOPED_VARIANT" &&
+      !parseScopedVariantTargetKey(change.targetKey)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["targetKey"],
+        message:
+          "A scoped-variant target must name a linked logical ID, optionally followed by #new-variant-id.",
+      });
     if (
       change.applicationMode === "AUTOMATIC" &&
       !["SECTION", "METADATA", "SCOPED_VARIANT", "RELATIONSHIP"].includes(

@@ -100,6 +100,26 @@ describe("AI adapter contracts", () => {
         ],
       }),
     ).toThrow();
+    expect(
+      bundleWriterOutputSchema.parse({
+        ...reviewOutput("bundle-writer"),
+        candidateEdits: [
+          {
+            ...candidate,
+            targetKey:
+              "If they respond with…/I don’t know what you want me to say",
+          },
+        ],
+      }).candidateEdits[0]?.targetKey,
+    ).toContain("/I don’t know");
+    expect(() =>
+      bundleWriterOutputSchema.parse({
+        ...reviewOutput("bundle-writer"),
+        candidateEdits: [
+          { ...candidate, targetKey: "Unknown section/arbitrary fragment" },
+        ],
+      }),
+    ).toThrow(/section target/u);
   });
 
   it("rejects evidence that resembles a secret-bearing environment", async () => {

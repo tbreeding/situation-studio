@@ -2,18 +2,19 @@ import { Prisma, type DatabaseClient } from "@situation-studio/db";
 import {
   CONTRACT_VERSION,
   VALIDATION_POLICY_VERSION,
+  applySituationSectionTarget,
   bundleHash,
   canonicalText,
   canonicalJson,
   createScopedVariant,
-  applySectionProposal,
+  parseScopedVariantTargetKey,
   parseSituationSections,
-  proposalChangeSchema,
   relationshipSchema,
   requiredSituationSections,
   reviewStages,
   serializeSituationSections,
   sha256,
+  situationSectionTargetBefore,
   situationBundleSchema,
   situationMetadataSchema,
   validateSituationBundle,
@@ -1541,23 +1542,25 @@ async function applyProposalChanges(
     const afterBody = proposedBody(change);
     if (change.targetKind === "SECTION") {
       const sections = parseSituationSections(body);
-      const before = sections[change.targetKey as keyof typeof sections];
-      if (
-        before === undefined ||
-        sha256(canonicalText(before)) !== change.beforeHash
-      )
+      let before: string;
+      try {
+        before = situationSectionTargetBefore(sections, change.targetKey);
+      } catch {
         staleSuggestion(change.targetKey);
-      const proposal = proposalChangeSchema.parse({
-        id: change.id,
-        targetKind: change.targetKind,
-        targetKey: change.targetKey,
-        beforeHash: change.beforeHash,
-        afterBody,
-        rationale: "Fenced candidate application.",
-      });
-      body = serializeSituationSections(
-        applySectionProposal(sections, proposal),
-      );
+      }
+      if (sha256(canonicalText(before)) !== change.beforeHash)
+        staleSuggestion(change.targetKey);
+      try {
+        body = serializeSituationSections(
+          applySituationSectionTarget(sections, change.targetKey, afterBody),
+        );
+      } catch {
+        throw new WorkflowError(
+          `Edited section suggestion ${change.targetKey} is structurally invalid.`,
+          422,
+          "INVALID_SUGGESTION",
+        );
+      }
       continue;
     }
     if (change.targetKind === "METADATA") {
@@ -1636,8 +1639,15 @@ async function applyProposalChanges(
       continue;
     }
     if (change.targetKind === "SCOPED_VARIANT") {
+      const target = parseScopedVariantTargetKey(change.targetKey);
+      if (!target)
+        throw new WorkflowError(
+          `Scoped suggestion ${change.targetKey} has an invalid target.`,
+          422,
+          "INVALID_SUGGESTION",
+        );
       const relationship = bundle.relationships.find(
-        (candidate) => candidate.logicalId === change.targetKey,
+        (candidate) => candidate.logicalId === target.logicalId,
       );
       if (!relationship || relationship.contentHash !== change.beforeHash)
         staleSuggestion(change.targetKey);
@@ -1655,6 +1665,28 @@ async function applyProposalChanges(
           422,
           "INVALID_SUGGESTION",
         );
+      if (target.variantId) {
+        let replacement: unknown;
+        try {
+          replacement = JSON.parse(afterBody);
+        } catch {
+          throw new WorkflowError(
+            `Edited scoped suggestion ${change.targetKey} is not valid JSON.`,
+            422,
+            "INVALID_SUGGESTION",
+          );
+        }
+        if (
+          !replacement ||
+          typeof replacement !== "object" ||
+          (replacement as { id?: unknown }).id !== target.variantId
+        )
+          throw new WorkflowError(
+            `Edited scoped suggestion ${change.targetKey} must retain its artifact ID.`,
+            422,
+            "INVALID_SUGGESTION",
+          );
+      }
       const variant = createScopedVariant({
         situationId: input.checkout.situationId,
         kind: relationship.kind as

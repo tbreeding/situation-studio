@@ -27,6 +27,20 @@ describe("review role prompt policy compatibility", () => {
     expect(prompt).toContain("Post-draft teaching auditor");
   });
 
+  it("defines the candidate target grammar for legacy and current jobs", () => {
+    for (const policyVersion of [
+      LEGACY_REVIEW_POLICY_VERSION,
+      REVIEW_POLICY_VERSION,
+    ]) {
+      const prompt = rolePrompt("bundle-writer", policyVersion);
+      expect(prompt).toContain("section/subheading");
+      expect(prompt).toContain("section#named-block");
+      expect(prompt).toContain("#new-variant-id");
+      expect(prompt).toContain("sourceReferences");
+      expect(prompt).toContain("MANUAL");
+    }
+  });
+
   it("continues to reject unknown policy versions", () => {
     expect(() =>
       rolePrompt("audit-teaching-alignment", "unknown-review-policy"),

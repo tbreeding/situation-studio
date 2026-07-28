@@ -33,6 +33,7 @@ import {
   claimNextReview,
   processClaimedReview,
   REVIEW_PROVIDER_TIMEOUT_MS,
+  type ReviewApplicationFailureEvent,
   type ReviewStageTimingEvent,
 } from "../src/review";
 
@@ -711,6 +712,235 @@ describe("checkout fencing and the complete durable review DAG", () => {
     ).toHaveLength(3);
   });
 
+  it("materializes granular subheading and named-block candidate targets", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-nested-candidate-targets",
+      title: "A granular candidate target scenario",
+    });
+    const workspace = await workflows.workspaceForSlug(created.situation.slug);
+    const inputRevision = workspace?.drafts[0]?.revisions[0];
+    const inputBody = inputRevision?.artifacts.find(
+      (artifact) => artifact.kind === "SITUATION",
+    )?.content.textBody;
+    if (!inputRevision || !inputBody)
+      throw new Error("Nested candidate fixture input is unavailable.");
+    const inputSections = parseSituationSections(inputBody);
+    const nestedBody = serializeSituationSections({
+      ...inputSections,
+      "When this guidance fits": [
+        "Use this for a recurring pattern.",
+        "",
+        "> **Stop and get support:** use the applicable formal process.",
+      ].join("\n"),
+      "If they respond with…": [
+        "### “Everything is fine.”",
+        "",
+        "Ask for variation, not a hidden problem.",
+        "",
+        "### “I don’t know what you want me to say.”",
+        "",
+        "Own the ambiguity.",
+        "",
+        "### “Can we skip these?”",
+        "",
+        "Ask what has made the meetings low-value.",
+      ].join("\n"),
+    });
+    await workflows.saveDraft({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+      bundle: {
+        ...situationBundleSchema.parse(inputRevision.bundleManifest),
+        bodyHash: sha256(canonicalText(nestedBody)),
+      },
+      body: nestedBody,
+      namedCheckpoint: "Nested candidate target fixture",
+    });
+    const job = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    const ids = [randomUUID(), randomUUID(), randomUUID()] as const;
+    await completeCandidateReview(job.id, {
+      findings: [
+        {
+          id: "granular-targets",
+          severity: "important",
+          targetKind: "SECTION",
+          targetKey: "If they respond with…",
+          summary: "Three granular passages need bounded repairs.",
+          rationale: "Unrelated guidance in both parent sections must remain.",
+          evidenceRoleCodes: ["critic-manager-tools"],
+        },
+      ],
+      candidateEdits: [
+        {
+          id: ids[0],
+          targetKind: "SECTION",
+          targetKey: "When this guidance fits#stop-and-get-support",
+          applicationMode: "AUTOMATIC",
+          beforeHash: null,
+          afterBody:
+            "> **Stop and get support:** explain the limits and follow the applicable process.",
+          problem: "The support boundary needs a more explicit action.",
+          explanation: "Repairs only the named support block.",
+          rationale: "The surrounding fit guidance remains unchanged.",
+          upstreamFindingIds: ["critic-nvc:granular-targets"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-nvc"],
+        },
+        {
+          id: ids[1],
+          targetKind: "SECTION",
+          targetKey:
+            "If they respond with…/I don’t know what you want me to say",
+          applicationMode: "AUTOMATIC",
+          beforeHash: null,
+          afterBody:
+            "Own the ambiguity and explain that no particular disclosure is required.",
+          problem: "The reply should clarify choice.",
+          explanation: "Repairs only the selected response.",
+          rationale: "Other response paths remain unchanged.",
+          upstreamFindingIds: ["critic-nvc:granular-targets"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-nvc"],
+        },
+        {
+          id: ids[2],
+          targetKind: "SECTION",
+          targetKey: "If they respond with…/Can we skip these?",
+          applicationMode: "AUTOMATIC",
+          beforeHash: null,
+          afterBody:
+            "Ask what has made the meetings low-value and offer legitimate alternatives.",
+          problem: "The reply should name practical alternatives.",
+          explanation: "Repairs only the selected response.",
+          rationale: "The rest of the response section remains unchanged.",
+          upstreamFindingIds: ["critic-nvc:granular-targets"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-nvc"],
+        },
+      ],
+    });
+    const completed = await database.reviewJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: {
+        proposal: {
+          include: {
+            candidate: true,
+            changes: { orderBy: { position: "asc" } },
+          },
+        },
+      },
+    });
+    expect(completed.state).toBe("SUCCEEDED");
+    expect(completed.proposal?.candidate?.body).toContain(
+      "no particular disclosure is required",
+    );
+    expect(completed.proposal?.candidate?.body).toContain(
+      "offer legitimate alternatives",
+    );
+    expect(completed.proposal?.candidate?.body).toContain(
+      "### “Everything is fine.”",
+    );
+    expect(
+      completed.proposal?.changes.map((change) => change.beforeBody),
+    ).toEqual([
+      "> **Stop and get support:** use the applicable formal process.",
+      "Own the ambiguity.",
+      "Ask what has made the meetings low-value.",
+    ]);
+    const accepted = await workflows.acceptAllProposalChanges({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+      proposalId: completed.proposal!.id,
+    });
+    const applied = await database.draftRevision.findUniqueOrThrow({
+      where: { id: accepted.revisionId },
+      include: { artifacts: { include: { content: true } } },
+    });
+    const appliedBody = applied.artifacts.find(
+      (artifact) => artifact.kind === "SITUATION",
+    )?.content.textBody;
+    expect(appliedBody).toContain("no particular disclosure is required");
+    expect(appliedBody).toContain("### “Everything is fine.”");
+  });
+
+  it("logs the safe proposal-materialization error instead of discarding it", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-materialization-error-log",
+      title: "A logged proposal materialization failure",
+    });
+    const job = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    const claim = await claimNextReview(database);
+    if (!claim?.claimToken)
+      throw new Error("Materialization logging fixture was not claimable.");
+    const events: ReviewApplicationFailureEvent[] = [];
+    await processClaimedReview(
+      database,
+      job.id,
+      subscriptionConfiguration,
+      claim.claimToken,
+      {
+        onApplicationFailure: (event) => events.push(event),
+        runStage: async (request) => {
+          const base = await successfulStage(request);
+          if (request.role !== "bundle-writer") return base;
+          const output = bundleWriterOutputSchema.parse({
+            role: request.role,
+            summary: "A candidate with intentionally broken lineage.",
+            findings: [],
+            provenance: "materialization-error-log-test",
+            candidateEdits: [
+              {
+                id: "201eb1cb-c6d6-476d-9462-aa560519596e",
+                targetKind: "SECTION",
+                targetKey: "The short answer",
+                applicationMode: "AUTOMATIC",
+                beforeHash: null,
+                afterBody: "Name the observed pattern and ask for their view.",
+                problem: "The opening needs a bounded repair.",
+                explanation: "Proposes a concise replacement.",
+                rationale: "The missing lineage is intentional in this test.",
+                upstreamFindingIds: ["adjudicator:missing-finding"],
+                writtenByRoleCode: "bundle-writer",
+                evidenceRoleCodes: ["adjudicator"],
+              },
+            ],
+          });
+          return {
+            ...base,
+            output,
+            outputHash: sha256(JSON.stringify(output)),
+          };
+        },
+      },
+    );
+    expect(
+      await database.reviewJob.findUniqueOrThrow({ where: { id: job.id } }),
+    ).toMatchObject({ state: "FAILED", failureCode: "APPLICATION" });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: "review_application_failure",
+        jobId: job.id,
+        phase: "MATERIALIZE_PROPOSAL",
+        failureClass: "APPLICATION",
+        errorMessage: expect.stringContaining(
+          "references missing finding adjudicator:missing-finding",
+        ),
+      }),
+    );
+  });
+
   it("atomically rejects all pending suggestions without changing the draft", async () => {
     const created = await workflows.createSituation({
       actorId: editorOneId,
@@ -955,10 +1185,11 @@ describe("checkout fencing and the complete durable review DAG", () => {
         {
           id: ids.scoped,
           targetKind: "SCOPED_VARIANT",
-          targetKey: relationship.logicalId,
+          targetKey: `${relationship.logicalId}#situation-follow-up`,
           applicationMode: "AUTOMATIC",
           beforeHash: newContextHash,
-          afterBody: '{"steps":["Ask what changed, then set one follow-up."]}',
+          afterBody:
+            '{"id":"situation-follow-up","steps":["Ask what changed, then set one follow-up."]}',
           problem: "The shared practice needs situation-specific wording.",
           explanation: "Creates a provenance-retaining scoped variant.",
           rationale:
@@ -1015,7 +1246,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       visibility: "SITUATION_SCOPED",
       contentHash: sha256(
         canonicalText(
-          '{"steps":["Ask what changed, then set one follow-up."]}',
+          '{"id":"situation-follow-up","steps":["Ask what changed, then set one follow-up."]}',
         ),
       ),
     });

@@ -5,7 +5,9 @@ import {
   canonicalText,
   createScopedVariant,
   deriveSituationStatus,
+  parseScopedVariantTargetKey,
   parseSituationSections,
+  parseSituationSectionTargetKey,
   publicationConflictDecision,
   requiredSituationSections,
   reviewStages,
@@ -93,6 +95,55 @@ describe("domain invariants", () => {
     const original = sections();
     const serialized = serializeSituationSections(original);
     expect(parseSituationSections(serialized)).toEqual(original);
+  });
+
+  it("defines exact, subheading, and named-block section targets", () => {
+    expect(parseSituationSectionTargetKey("3 — Say")).toEqual({
+      kind: "SECTION",
+      section: "3 — Say",
+    });
+    expect(
+      parseSituationSectionTargetKey(
+        "If they respond with…/I don’t know what you want me to say",
+      ),
+    ).toEqual({
+      kind: "SUBHEADING",
+      section: "If they respond with…",
+      subheading: "I don’t know what you want me to say",
+    });
+    expect(
+      parseSituationSectionTargetKey(
+        "When this guidance fits#stop-and-get-support",
+      ),
+    ).toEqual({
+      kind: "NAMED_BLOCK",
+      section: "When this guidance fits",
+      anchor: "stop-and-get-support",
+    });
+    expect(
+      parseSituationSectionTargetKey("Unknown section/subheading"),
+    ).toBeNull();
+    expect(
+      parseSituationSectionTargetKey("3 — Say#Not A Stable Anchor"),
+    ).toBeNull();
+  });
+
+  it("defines exact and named scoped-variant targets", () => {
+    expect(parseScopedVariantTargetKey("practice:listen-first")).toEqual({
+      logicalId: "practice:listen-first",
+      variantId: null,
+    });
+    expect(
+      parseScopedVariantTargetKey(
+        "practice:listen-first#silence-in-one-on-one",
+      ),
+    ).toEqual({
+      logicalId: "practice:listen-first",
+      variantId: "silence-in-one-on-one",
+    });
+    expect(
+      parseScopedVariantTargetKey("practice:listen-first#Invalid Variant"),
+    ).toBeNull();
   });
 
   it("applies exactly one proposal section", () => {

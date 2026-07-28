@@ -41,6 +41,13 @@ import {
   REVIEW_STATUS_EVENT_NAME,
   type ReviewStatusSnapshot,
 } from "@/review-status-contract";
+import {
+  isActivePublicationState,
+  isTerminalPublicationState,
+  publicationStatusSnapshotSchema,
+  PUBLICATION_STATUS_EVENT_NAME,
+  type PublicationStatusSnapshot,
+} from "@/publication-status-contract";
 
 type Metadata = {
   slug: string;
@@ -104,10 +111,6 @@ type Review = {
   inputBundleHash: string;
   inputBody: string;
   proposal: ReviewProposalView | null;
-};
-
-type Publication = {
-  state: string;
 };
 
 type ContextItem = {
@@ -198,7 +201,7 @@ export function WorkspaceEditor({
   currentUserId: string;
   csrfToken: string;
   review: Review | null;
-  publication: Publication | null;
+  publication: PublicationStatusSnapshot | null;
   history: HistoryItem[];
   context: ContextItem[];
 }) {
@@ -213,16 +216,27 @@ export function WorkspaceEditor({
     liveReview.reviewJobId === review?.id
       ? (liveReview.snapshot ?? serverReviewSnapshot)
       : serverReviewSnapshot;
+  const serverPublicationSnapshot = publication;
+  const [livePublication, setLivePublication] = useState<{
+    publicationJobId: string;
+    serverSnapshotId: string;
+    snapshot: PublicationStatusSnapshot;
+  } | null>(null);
+  const publicationStatus =
+    livePublication &&
+    serverPublicationSnapshot &&
+    livePublication.publicationJobId ===
+      serverPublicationSnapshot.publicationJobId &&
+    livePublication.serverSnapshotId === serverPublicationSnapshot.snapshotId
+      ? livePublication.snapshot
+      : serverPublicationSnapshot;
   const mine = checkout?.holderId === currentUserId;
   const reviewLocked = reviewStatus
     ? isActiveReviewState(reviewStatus.state)
     : false;
-  const publicationLocked = Boolean(
-    publication &&
-    ["REQUESTED", "ASSEMBLING", "PROMOTING", "VERIFYING"].includes(
-      publication.state,
-    ),
-  );
+  const publicationLocked = publicationStatus
+    ? isActivePublicationState(publicationStatus.state)
+    : false;
   const workspaceLocked = reviewLocked || publicationLocked;
   const editable = Boolean(mine && !workspaceLocked);
   const [tab, setTab] = useState<WorkspaceTab>(initialTab);
@@ -245,12 +259,19 @@ export function WorkspaceEditor({
   const submitButton = useRef<HTMLButtonElement>(null);
   const submitDialog = useRef<HTMLDivElement>(null);
   const reviewConnectionGeneration = useRef(0);
+  const publicationConnectionGeneration = useRef(0);
   const refreshedTerminalSnapshot = useRef<string | null>(
     serverReviewSnapshot && isTerminalReviewState(serverReviewSnapshot.state)
       ? serverReviewSnapshot.snapshotId
       : null,
   );
   const previousAnnouncedSnapshot = useRef<ReviewStatusSnapshot | null>(null);
+  const refreshedPublicationTerminal = useRef<string | null>(
+    serverPublicationSnapshot &&
+      isTerminalPublicationState(serverPublicationSnapshot.state)
+      ? serverPublicationSnapshot.snapshotId
+      : null,
+  );
   const announcementState = useRef<ReviewAnnouncementState>({
     message: "",
     lastAnnouncedAt: Number.NEGATIVE_INFINITY,
@@ -258,6 +279,46 @@ export function WorkspaceEditor({
   });
   const [reviewAnnouncement, setReviewAnnouncement] = useState("");
   const [reviewClock, setReviewClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    const generation = ++publicationConnectionGeneration.current;
+    if (
+      !serverPublicationSnapshot ||
+      !isActivePublicationState(serverPublicationSnapshot.state)
+    )
+      return;
+
+    const publicationJobId = serverPublicationSnapshot.publicationJobId;
+    const source = new EventSource(
+      `/api/publications/${publicationJobId}/events`,
+    );
+    const receiveSnapshot = (rawEvent: Event) => {
+      if (generation !== publicationConnectionGeneration.current) return;
+      const event = rawEvent as MessageEvent<string>;
+      try {
+        const snapshot = publicationStatusSnapshotSchema.parse(
+          JSON.parse(event.data) as unknown,
+        );
+        setLivePublication({
+          publicationJobId,
+          serverSnapshotId: serverPublicationSnapshot.snapshotId,
+          snapshot,
+        });
+        if (isTerminalPublicationState(snapshot.state)) source.close();
+      } catch {
+        // Native EventSource reconnection or the next valid durable snapshot
+        // recovers malformed or interrupted public input.
+      }
+    };
+    source.addEventListener(PUBLICATION_STATUS_EVENT_NAME, receiveSnapshot);
+    return () => {
+      source.removeEventListener(
+        PUBLICATION_STATUS_EVENT_NAME,
+        receiveSnapshot,
+      );
+      source.close();
+    };
+  }, [serverPublicationSnapshot]);
 
   useEffect(() => {
     const generation = ++reviewConnectionGeneration.current;
@@ -349,6 +410,21 @@ export function WorkspaceEditor({
     const timer = window.setTimeout(() => router.refresh(), delay);
     return () => window.clearTimeout(timer);
   }, [reviewStatus, router]);
+
+  useEffect(() => {
+    if (
+      !publicationStatus ||
+      !isTerminalPublicationState(publicationStatus.state)
+    ) {
+      refreshedPublicationTerminal.current = null;
+      return;
+    }
+    if (refreshedPublicationTerminal.current === publicationStatus.snapshotId)
+      return;
+    refreshedPublicationTerminal.current = publicationStatus.snapshotId;
+    const timer = window.setTimeout(() => router.refresh(), 250);
+    return () => window.clearTimeout(timer);
+  }, [publicationStatus, router]);
 
   const body = useMemo(
     () =>
@@ -606,7 +682,12 @@ export function WorkspaceEditor({
               </span>
             ) : null}
             {publicationLocked ? (
-              <span className="activityLabel">Publishing</span>
+              <span className="activityLabel">
+                Publishing
+                {publicationStatus?.currentStage
+                  ? ` · ${publicationStatus.currentStage.displayName}`
+                  : ""}
+              </span>
             ) : null}
           </div>
         </div>
@@ -767,6 +848,65 @@ export function WorkspaceEditor({
         </div>
       </header>
 
+      {publicationLocked && publicationStatus?.currentStage ? (
+        <section
+          className="publicationProgress"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <div className="publicationProgressCurrent">
+            <div>
+              <p className="cardEyebrow">Publishing to production</p>
+              <strong>{publicationStatus.currentStage.displayName}</strong>
+              <p>{publicationStatus.currentStage.description}</p>
+            </div>
+            <span>
+              {publicationStatus.completedStages} of{" "}
+              {publicationStatus.totalStages} steps complete
+            </span>
+          </div>
+          <progress
+            value={publicationStatus.completedStages}
+            max={publicationStatus.totalStages}
+            aria-label={`${publicationStatus.completedStages} of ${publicationStatus.totalStages} publication steps complete`}
+          />
+          <details>
+            <summary>What happens during publishing?</summary>
+            <ol>
+              {publicationStatus.stages.map((stage) => (
+                <li
+                  key={stage.key}
+                  className={`publicationStage publicationStage-${stage.state.toLowerCase()}`}
+                >
+                  <i aria-hidden="true">
+                    {stage.state === "COMPLETE"
+                      ? "✓"
+                      : stage.state === "ACTIVE"
+                        ? "•"
+                        : stage.ordinal}
+                  </i>
+                  <span>
+                    <strong>{stage.displayName}</strong>
+                    <small>{stage.description}</small>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </details>
+        </section>
+      ) : publicationStatus?.terminal &&
+        publicationStatus.terminal.state !== "SUCCEEDED" &&
+        checkout ? (
+        <section
+          className={`publicationOutcome publicationOutcome-${publicationStatus.terminal.tone.toLowerCase()}`}
+          role="alert"
+        >
+          <strong>{publicationStatus.terminal.title}</strong>
+          <span>{publicationStatus.terminal.message}</span>
+        </section>
+      ) : null}
+
       <nav
         className="workspaceTabs"
         aria-label="Situation workspace"
@@ -814,8 +954,13 @@ export function WorkspaceEditor({
             </div>
           ) : publicationLocked ? (
             <div className="readOnlyBanner">
-              <strong>Publication in progress.</strong> This workspace remains
-              read-only until Leadership verification completes.
+              <strong>
+                {publicationStatus?.currentStage?.displayName ??
+                  "Publication in progress"}
+                .
+              </strong>{" "}
+              {publicationStatus?.currentStage?.description} Editing returns
+              when Leadership verification completes.
             </div>
           ) : reviewLocked ? (
             <div className="readOnlyBanner">

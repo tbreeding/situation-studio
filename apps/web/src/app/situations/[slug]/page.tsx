@@ -13,6 +13,7 @@ import {
   workspaceForSlug,
 } from "@/server/workflows/situations";
 import { reconcileLeadershipRelease } from "@/server/leadership-sync";
+import { buildPublicationStatusSnapshot } from "@/server/publication-status";
 import { buildReviewStatusSnapshot } from "@/server/review-status";
 
 export const dynamic = "force-dynamic";
@@ -175,7 +176,9 @@ export default async function SituationPage({
         currentUserId={session.userId}
         csrfToken={session.csrfToken}
         review={review}
-        publication={publicationJob ? { state: publicationJob.state } : null}
+        publication={
+          publicationJob ? buildPublicationStatusSnapshot(publicationJob) : null
+        }
         history={workspace.productionVersions.map((version) => ({
           id: version.id,
           bundleHash: version.bundleHash,

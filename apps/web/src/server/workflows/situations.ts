@@ -2040,7 +2040,20 @@ export async function workspaceForSlug(slug: string) {
           },
         },
       },
-      publicationJobs: { orderBy: { createdAt: "desc" }, take: 1 },
+      publicationJobs: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        include: {
+          events: {
+            orderBy: { sequence: "asc" },
+            select: {
+              sequence: true,
+              kind: true,
+              createdAt: true,
+            },
+          },
+        },
+      },
       productionVersions: {
         orderBy: { productionAt: "desc" },
         include: {

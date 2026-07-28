@@ -30,9 +30,10 @@ import {
 } from "@situation-studio/ai-adapters";
 import { REVIEW_POLICY_VERSION } from "@situation-studio/review-policy";
 import {
-  BUNDLE_WRITER_PROVIDER_TIMEOUT_MS,
   claimNextReview,
   processClaimedReview,
+  REVIEW_PROVIDER_TIMEOUT_MS,
+  type ReviewStageTimingEvent,
 } from "../src/review";
 
 const executeFile = promisify(execFile);
@@ -142,6 +143,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       >["candidateEdits"];
     },
   ) {
+    const timingEvents: ReviewStageTimingEvent[] = [];
     const claim = await claimNextReview(database);
     expect(claim?.id).toBe(jobId);
     if (!claim?.claimToken)
@@ -159,9 +161,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           if (request.role === "audit-page-language")
             expect(request.system).toContain("FIRST_ACTION_IN_30_SECONDS");
           expect(runtimeOptions?.providerTimeoutMs).toBe(
-            request.role === "bundle-writer"
-              ? BUNDLE_WRITER_PROVIDER_TIMEOUT_MS
-              : undefined,
+            REVIEW_PROVIDER_TIMEOUT_MS,
           );
           const base = await successfulStage(request);
           const output =
@@ -188,7 +188,32 @@ describe("checkout fencing and the complete durable review DAG", () => {
             outputHash: sha256(JSON.stringify(output)),
           };
         },
+        onStageTiming: (event) => timingEvents.push(event),
       },
+    );
+    expect(timingEvents).toHaveLength(reviewStages.length);
+    expect(timingEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: "review_stage_provider_timing",
+          stageRole: "surface-mapper",
+          stageOutcome: "SUCCEEDED",
+          providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
+          providerAttempts: [
+            expect.objectContaining({
+              provider: "codex",
+              outcome: "SUCCEEDED",
+              durationMs: 250,
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          event: "review_stage_provider_timing",
+          stageRole: "audit-teaching-alignment",
+          stageOutcome: "SUCCEEDED",
+          providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
+        }),
+      ]),
     );
   }
 
@@ -1116,6 +1141,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       now: () => now,
       retryDelaysMs: [1_000, 2_000],
     };
+    const timingEvents: ReviewStageTimingEvent[] = [];
     let criticAttempts = 0;
     const runStage = async (
       request: Omit<AdapterRequest, "provider" | "model">,
@@ -1136,7 +1162,11 @@ describe("checkout fencing and the complete durable review DAG", () => {
       queued.id,
       subscriptionConfiguration,
       firstClaim.claimToken,
-      { timing, runStage },
+      {
+        timing,
+        runStage,
+        onStageTiming: (event) => timingEvents.push(event),
+      },
     );
 
     const backingOff = await database.reviewJob.findUniqueOrThrow({
@@ -1183,6 +1213,16 @@ describe("checkout fencing and the complete durable review DAG", () => {
         retryable: true,
       },
     ]);
+    expect(timingEvents).toContainEqual(
+      expect.objectContaining({
+        event: "review_stage_provider_timing",
+        stageRole: "critic-nvc",
+        stageAttempt: 1,
+        stageOutcome: "FAILED",
+        providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
+        providerAttempts: failedRun?.providerAttempts,
+      }),
+    );
 
     expect(await claimNextReview(database, timing)).toBeNull();
     now = new Date(now.getTime() + 1_000);

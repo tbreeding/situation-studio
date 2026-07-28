@@ -1,6 +1,10 @@
 import { createDatabaseClient } from "@situation-studio/db";
 import { REVIEW_POLICY_VERSION } from "@situation-studio/review-policy";
-import { runOneReview, type ReviewProviderConfiguration } from "./review";
+import {
+  runOneReview,
+  type ReviewProviderConfiguration,
+  type ReviewStageTimingEvent,
+} from "./review";
 import { reviewWorkerIdleStatus } from "./status";
 
 const databaseUrl = process.env.STUDIO_REVIEW_DATABASE_URL;
@@ -44,6 +48,10 @@ let latestFinishedReview: {
 
 function workerStatus() {
   return reviewWorkerIdleStatus(latestFinishedReview);
+}
+
+function logStageTiming(event: ReviewStageTimingEvent) {
+  console.info(JSON.stringify(event));
 }
 
 async function heartbeat(status: string) {
@@ -116,7 +124,9 @@ heartbeatMonitor.unref();
 try {
   while (!stopping) {
     await heartbeat(workerStatus());
-    const worked = await runOneReview(database, providerConfiguration);
+    const worked = await runOneReview(database, providerConfiguration, {
+      onStageTiming: logStageTiming,
+    });
     if (worked) {
       await refreshWorkerStatus();
       await heartbeat(workerStatus());

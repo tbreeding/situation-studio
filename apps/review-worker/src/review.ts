@@ -4,6 +4,7 @@ import {
   normalizedOutputSchema,
   providerAttemptsMetadataSchema,
   runWithFallback,
+  type ProviderAttemptMetadata,
   type AdapterResult,
   type SubscriptionCliProvider,
 } from "@situation-studio/ai-adapters";
@@ -40,7 +41,7 @@ export type ReviewProviderConfiguration =
 
 export const REVIEW_STAGE_MAX_ATTEMPTS = 3;
 export const DEFAULT_REVIEW_RETRY_DELAYS_MS = [5_000, 30_000] as const;
-export const BUNDLE_WRITER_PROVIDER_TIMEOUT_MS = 5 * 60_000;
+export const REVIEW_PROVIDER_TIMEOUT_MS = 60 * 60_000;
 export const LEGACY_REVIEW_POLICY_VERSION = "situation-bundle-policy-v1";
 
 export type ReviewWorkerTiming = {
@@ -49,9 +50,22 @@ export type ReviewWorkerTiming = {
   leaseDurationMs?: number;
 };
 
+export type ReviewStageTimingEvent = {
+  event: "review_stage_provider_timing";
+  jobId: string;
+  stageOrdinal: number;
+  stageRole: string;
+  stageAttempt: number;
+  stageOutcome: "SUCCEEDED" | "FAILED";
+  stageDurationMs: number;
+  providerTimeoutMs: number;
+  providerAttempts: ProviderAttemptMetadata[];
+};
+
 export type ReviewProcessingOptions = {
   timing?: ReviewWorkerTiming;
   runStage?: typeof runWithFallback;
+  onStageTiming?: (event: ReviewStageTimingEvent) => void;
 };
 
 const DEFAULT_LEASE_DURATION_MS = 120_000;
@@ -59,6 +73,17 @@ const MAX_RETRY_DELAY_MS = 5 * 60_000;
 
 function currentTime(timing?: ReviewWorkerTiming) {
   return new Date((timing?.now ?? (() => new Date()))().getTime());
+}
+
+function reportStageTiming(
+  reporter: ReviewProcessingOptions["onStageTiming"],
+  event: ReviewStageTimingEvent,
+) {
+  try {
+    reporter?.(event);
+  } catch {
+    // Observability must never change the durable review outcome.
+  }
 }
 
 function leaseDurationMs(timing?: ReviewWorkerTiming) {
@@ -1252,6 +1277,8 @@ export async function processClaimedReview(
       });
     });
     if (!run) return;
+    const stageStartedAt = Date.now();
+    let providerCompleted = false;
     const controller = new AbortController();
     const monitor = setInterval(() => {
       void renewReviewLease(
@@ -1293,10 +1320,22 @@ export async function processClaimedReview(
           signal: controller.signal,
         },
         configuration,
-        ready.roleCode === "bundle-writer"
-          ? { providerTimeoutMs: BUNDLE_WRITER_PROVIDER_TIMEOUT_MS }
-          : undefined,
+        { providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS },
       );
+      providerCompleted = true;
+      reportStageTiming(options.onStageTiming, {
+        event: "review_stage_provider_timing",
+        jobId: job.id,
+        stageOrdinal: ready.ordinal,
+        stageRole: ready.roleCode,
+        stageAttempt: run.attempt,
+        stageOutcome: "SUCCEEDED",
+        stageDurationMs: Date.now() - stageStartedAt,
+        providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
+        providerAttempts: providerAttemptsMetadataSchema.parse(
+          result.providerAttempts,
+        ),
+      });
       await recordSuccess(
         database,
         {
@@ -1310,6 +1349,21 @@ export async function processClaimedReview(
         options.timing,
       );
     } catch (error) {
+      if (!providerCompleted)
+        reportStageTiming(options.onStageTiming, {
+          event: "review_stage_provider_timing",
+          jobId: job.id,
+          stageOrdinal: ready.ordinal,
+          stageRole: ready.roleCode,
+          stageAttempt: run.attempt,
+          stageOutcome: "FAILED",
+          stageDurationMs: Date.now() - stageStartedAt,
+          providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
+          providerAttempts:
+            error instanceof AdapterFailure
+              ? providerAttemptsMetadataSchema.parse(error.providerAttempts)
+              : [],
+        });
       await recordFailure(
         database,
         {

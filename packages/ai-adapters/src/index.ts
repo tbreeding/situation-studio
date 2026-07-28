@@ -7,7 +7,7 @@ import { z } from "zod";
 
 const MAX_PROVIDER_BYTES = 2 * 1024 * 1024;
 const PROVIDER_TIMEOUT_MS = 90_000;
-const MAX_PROVIDER_ATTEMPT_DURATION_MS = 10 * 60_000;
+const MAX_PROVIDER_ATTEMPT_DURATION_MS = 2 * 60 * 60_000;
 
 export const findingSchema = z.object({
   id: z.string().min(1).max(120),

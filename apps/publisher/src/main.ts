@@ -25,6 +25,9 @@ const dependencies = {
   studio,
   leadershipPublisherUrl,
   runtimeIdentity: () => runtimeIdentityFromHealth(leadershipHealthUrl),
+  onFailure: (error: unknown) => {
+    console.error("Publication attempt failed.", error);
+  },
 };
 
 async function heartbeat(status: string) {

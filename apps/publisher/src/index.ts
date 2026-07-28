@@ -2436,6 +2436,8 @@ export async function processPublicationJob(
             leadershipManifestHash: null,
             expectedPointerGeneration: null,
             observedReleaseId: null,
+            claimToken: null,
+            leaseExpiresAt: null,
           },
         });
         await studio.publicationAttempt.update({

@@ -884,6 +884,81 @@ describe("durable cross-database publisher", () => {
     });
   });
 
+  it("releases its claim before durably rebasing a pointer race", async () => {
+    const job = await requestChangedPublication(
+      "Publisher durable rebase checkpoint.",
+    );
+    const firstClaim = await claimPublicationJob(studio);
+    expect(firstClaim?.id).toBe(job.id);
+    let shifted = false;
+    await processPublicationJob(
+      {
+        studio,
+        leadershipPublisherUrl,
+        runtimeIdentity: async () => {
+          const identity = await leadershipIdentity(leadershipUrl);
+          return {
+            releaseId: identity.releaseId,
+            manifestHash: identity.manifestHash,
+          };
+        },
+        afterBoundary: async (boundary) => {
+          if (shifted || boundary !== "CANDIDATE_PERSISTED") return;
+          shifted = true;
+          const client = new Client({ connectionString: leadershipUrl });
+          await client.connect();
+          try {
+            await client.query(`
+              UPDATE current_release
+                 SET generation = generation + 1,
+                     updated_at = now(),
+                     reason = 'Publisher integration pointer race'
+               WHERE id = 'official'
+            `);
+          } finally {
+            await client.end();
+          }
+        },
+      },
+      job.id,
+      firstClaim?.claimToken,
+    );
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        select: { state: true, claimToken: true, leaseExpiresAt: true },
+      }),
+    ).resolves.toEqual({
+      state: "ASSEMBLING",
+      claimToken: null,
+      leaseExpiresAt: null,
+    });
+
+    const rebasedClaim = await claimPublicationJob(studio);
+    expect(rebasedClaim?.id).toBe(job.id);
+    await processPublicationJob(
+      {
+        studio,
+        leadershipPublisherUrl,
+        runtimeIdentity: async () => {
+          const identity = await leadershipIdentity(leadershipUrl);
+          return {
+            releaseId: identity.releaseId,
+            manifestHash: identity.manifestHash,
+          };
+        },
+      },
+      job.id,
+      rebasedClaim?.claimToken,
+    );
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        select: { state: true },
+      }),
+    ).resolves.toEqual({ state: "SUCCEEDED" });
+  });
+
   it("reconciles an exact completed restoration and unblocks the queued retry", async () => {
     const prior = await leadershipIdentity(leadershipUrl);
     const recovery = await requestChangedPublication(

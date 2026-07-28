@@ -89,11 +89,49 @@ type PublisherDependencies = {
   studio: DatabaseClient;
   leadershipPublisherUrl: string;
   runtimeIdentity: () => Promise<RuntimeIdentity>;
+  runtimeVerification?: {
+    attempts?: number;
+    intervalMs?: number;
+  };
   afterBoundary?: (boundary: PublisherBoundary) => Promise<void>;
   onFailure?: (error: unknown) => void;
 };
 
 type ClaimedJob = Awaited<ReturnType<typeof loadJob>>;
+
+function identityMatches(identity: RuntimeIdentity, expected: RuntimeIdentity) {
+  return (
+    identity.releaseId === expected.releaseId &&
+    identity.manifestHash === expected.manifestHash
+  );
+}
+
+async function convergedRuntimeIdentity(
+  dependencies: Pick<
+    PublisherDependencies,
+    "runtimeIdentity" | "runtimeVerification"
+  >,
+  expected: RuntimeIdentity,
+) {
+  const attempts = Math.max(
+    1,
+    Math.floor(dependencies.runtimeVerification?.attempts ?? 8),
+  );
+  const intervalMs = Math.max(
+    0,
+    Math.floor(dependencies.runtimeVerification?.intervalMs ?? 500),
+  );
+  let identity = await dependencies.runtimeIdentity();
+  for (
+    let attempt = 1;
+    attempt < attempts && !identityMatches(identity, expected);
+    attempt += 1
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    identity = await dependencies.runtimeIdentity();
+  }
+  return identity;
+}
 
 async function assertPublicationFence(
   studio: DatabaseClient,
@@ -1900,6 +1938,106 @@ async function databaseIdentity(client: Client) {
   };
 }
 
+export async function reconcilePublicationRecovery(
+  dependencies: PublisherDependencies,
+) {
+  const recoveries = await dependencies.studio.publicationJob.findMany({
+    where: { state: "RECOVERY_REQUIRED" },
+    orderBy: { createdAt: "asc" },
+    include: {
+      candidateSnapshot: true,
+      targetRevision: { select: { actorId: true } },
+    },
+  });
+  if (!recoveries.length) return 0;
+  const leadership = new Client({
+    connectionString: dependencies.leadershipPublisherUrl,
+    application_name: "situation-studio-publisher-recovery-reconciler",
+    statement_timeout: 30_000,
+  });
+  try {
+    await leadership.connect();
+  } catch {
+    return 0;
+  }
+  let reconciled = 0;
+  try {
+    for (const recovery of recoveries) {
+      const snapshot = recovery.candidateSnapshot;
+      if (!snapshot) continue;
+      const restored = await databaseIdentity(leadership);
+      if (restored.releaseId !== snapshot.parentReleaseId) continue;
+      let runtime: RuntimeIdentity;
+      try {
+        runtime = await convergedRuntimeIdentity(dependencies, {
+          releaseId: restored.releaseId,
+          manifestHash: restored.manifestHash,
+        });
+      } catch {
+        continue;
+      }
+      if (
+        !identityMatches(runtime, {
+          releaseId: restored.releaseId,
+          manifestHash: restored.manifestHash,
+        })
+      )
+        continue;
+      const changed = await dependencies.studio.$transaction(
+        async (transaction) => {
+          const updated = await transaction.publicationJob.updateMany({
+            where: { id: recovery.id, state: "RECOVERY_REQUIRED" },
+            data: {
+              state: "RESTORED",
+              finishedAt: new Date(),
+              failureCode: "VERIFICATION_FAILED_RESTORED",
+              claimToken: null,
+              leaseExpiresAt: null,
+            },
+          });
+          if (updated.count !== 1) return false;
+          const aggregate = await transaction.publicationEvent.aggregate({
+            where: { jobId: recovery.id },
+            _max: { sequence: true },
+          });
+          await transaction.publicationEvent.create({
+            data: {
+              jobId: recovery.id,
+              sequence: (aggregate._max.sequence ?? 0) + 1,
+              kind: "RESTORED",
+              payload: jsonInput({
+                releaseId: restored.releaseId,
+                manifestHash: restored.manifestHash,
+                generation: restored.generation.toString(),
+                reconciledAfterRuntimeConvergence: true,
+              }),
+            },
+          });
+          await transaction.auditEvent.create({
+            data: {
+              actorId: recovery.targetRevision.actorId,
+              action: "PUBLICATION_RECOVERY_RECONCILED",
+              subjectType: "PUBLICATION_JOB",
+              subjectId: recovery.id,
+              payload: {
+                releaseId: restored.releaseId,
+                manifestHash: restored.manifestHash,
+                pointerGeneration: restored.generation.toString(),
+              },
+            },
+          });
+          return true;
+        },
+        { isolationLevel: "Serializable" },
+      );
+      if (changed) reconciled += 1;
+    }
+  } finally {
+    await leadership.end();
+  }
+  return reconciled;
+}
+
 async function restorePrevious(
   client: Client,
   candidate: CandidateSnapshot,
@@ -2215,7 +2353,7 @@ export async function processPublicationJob(
   jobId: string,
   claimToken?: string,
 ) {
-  const { studio, leadershipPublisherUrl, runtimeIdentity } = dependencies;
+  const { studio, leadershipPublisherUrl } = dependencies;
   await renewPublicationLease(studio, jobId, claimToken);
   let job = await loadJob(studio, jobId);
   const lastAttempt = job.attempts[0]?.attempt ?? 0;
@@ -2333,7 +2471,10 @@ export async function processPublicationJob(
       manifestHash: promotedIdentity.manifestHash,
       generation: promotedIdentity.generation.toString(),
     });
-    const runtime = await runtimeIdentity();
+    const runtime = await convergedRuntimeIdentity(dependencies, {
+      releaseId: candidate.releaseId,
+      manifestHash: candidate.manifestHash,
+    });
     if (
       runtime.releaseId !== candidate.releaseId ||
       runtime.manifestHash !== candidate.manifestHash
@@ -2381,7 +2522,10 @@ export async function processPublicationJob(
           throw new Error("Candidate disappeared during recovery.");
         await restorePrevious(leadership, candidate, current.generation);
         const restored = await databaseIdentity(leadership);
-        const runtime = await runtimeIdentity();
+        const runtime = await convergedRuntimeIdentity(dependencies, {
+          releaseId: restored.releaseId,
+          manifestHash: restored.manifestHash,
+        });
         if (
           restored.releaseId !== candidate.parentReleaseId ||
           runtime.releaseId !== candidate.parentReleaseId ||

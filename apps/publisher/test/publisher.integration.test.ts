@@ -23,8 +23,10 @@ import {
   situationBundleSchema,
 } from "@situation-studio/domain";
 import {
+  claimPublicationJob,
   processPublicationJob,
   PublisherCrashInjectionError,
+  reconcilePublicationRecovery,
   type PublisherBoundary,
 } from "../src/index";
 
@@ -791,6 +793,44 @@ describe("durable cross-database publisher", () => {
     }
   });
 
+  it("waits for the runtime identity to converge after promotion", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const job = await requestChangedPublication(
+      "Publisher runtime convergence checkpoint.",
+    );
+    let healthCalls = 0;
+    await processPublicationJob(
+      {
+        studio,
+        leadershipPublisherUrl,
+        runtimeVerification: { attempts: 3, intervalMs: 0 },
+        runtimeIdentity: async () => {
+          healthCalls += 1;
+          if (healthCalls === 1)
+            return {
+              releaseId: prior.releaseId,
+              manifestHash: prior.manifestHash,
+            };
+          const identity = await leadershipIdentity(leadershipUrl);
+          return {
+            releaseId: identity.releaseId,
+            manifestHash: identity.manifestHash,
+          };
+        },
+      },
+      job.id,
+    );
+    const persisted = await studio.publicationJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: { receipt: true },
+    });
+    expect(healthCalls).toBe(2);
+    expect(persisted.state).toBe("SUCCEEDED");
+    expect(persisted.receipt?.observedRuntimeReleaseId).toBe(
+      persisted.leadershipReleaseId,
+    );
+  });
+
   it("restores and verifies the prior official release after runtime verification fails", async () => {
     const prior = await leadershipIdentity(leadershipUrl);
     const job = await requestChangedPublication(
@@ -801,6 +841,7 @@ describe("durable cross-database publisher", () => {
       {
         studio,
         leadershipPublisherUrl,
+        runtimeVerification: { attempts: 1, intervalMs: 0 },
         runtimeIdentity: async () => {
           healthCalls += 1;
           if (healthCalls === 1)
@@ -833,6 +874,93 @@ describe("durable cross-database publisher", () => {
         where: { id: job.checkoutId, releasedAt: null },
       }),
     ).resolves.toBe(1);
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    await workflows.checkInSituation({
+      actorId: user.id,
+      checkoutId: job.checkoutId,
+      fence: job.checkoutFence,
+    });
+  });
+
+  it("reconciles an exact completed restoration and unblocks the queued retry", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const recovery = await requestChangedPublication(
+      "Publisher recovery reconciliation checkpoint.",
+    );
+    await processPublicationJob(
+      {
+        studio,
+        leadershipPublisherUrl,
+        runtimeVerification: { attempts: 1, intervalMs: 0 },
+        runtimeIdentity: async () => ({
+          releaseId: crypto.randomUUID(),
+          manifestHash: "f".repeat(64),
+        }),
+      },
+      recovery.id,
+    );
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: recovery.id },
+        select: { state: true },
+      }),
+    ).resolves.toEqual({ state: "RECOVERY_REQUIRED" });
+    await expect(leadershipIdentity(leadershipUrl)).resolves.toMatchObject({
+      releaseId: prior.releaseId,
+      manifestHash: prior.manifestHash,
+      generation: prior.generation + 2n,
+    });
+
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    const retry = await workflows.requestPublication({
+      actorId: user.id,
+      checkoutId: recovery.checkoutId,
+      fence: recovery.checkoutFence,
+    });
+    await expect(claimPublicationJob(studio)).resolves.toBeNull();
+
+    await expect(
+      reconcilePublicationRecovery({
+        studio,
+        leadershipPublisherUrl,
+        runtimeVerification: { attempts: 1, intervalMs: 0 },
+        runtimeIdentity: async () => {
+          const identity = await leadershipIdentity(leadershipUrl);
+          return {
+            releaseId: identity.releaseId,
+            manifestHash: identity.manifestHash,
+          };
+        },
+      }),
+    ).resolves.toBe(1);
+    const reconciled = await studio.publicationJob.findUniqueOrThrow({
+      where: { id: recovery.id },
+      include: {
+        events: { orderBy: { sequence: "asc" } },
+      },
+    });
+    expect(reconciled.state).toBe("RESTORED");
+    expect(reconciled.failureCode).toBe("VERIFICATION_FAILED_RESTORED");
+    expect(reconciled.events.at(-1)).toMatchObject({
+      kind: "RESTORED",
+      payload: expect.objectContaining({
+        reconciledAfterRuntimeConvergence: true,
+      }),
+    });
+
+    const claim = await claimPublicationJob(studio);
+    expect(claim?.id).toBe(retry.id);
+    await processAgainstCurrentRuntime(retry.id);
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: retry.id },
+        select: { state: true },
+      }),
+    ).resolves.toEqual({ state: "SUCCEEDED" });
   });
 
   it("enumerates and imports every formerly official Leadership release", async () => {

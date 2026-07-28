@@ -2,6 +2,7 @@ import { createDatabaseClient } from "@situation-studio/db";
 import {
   claimPublicationJob,
   processPublicationJob,
+  reconcilePublicationRecovery,
   runtimeIdentityFromHealth,
 } from "./index.js";
 
@@ -20,6 +21,11 @@ const leadershipHealthUrl = requiredEnvironment(
 );
 
 const studio = createDatabaseClient(studioDatabaseUrl, 4);
+const dependencies = {
+  studio,
+  leadershipPublisherUrl,
+  runtimeIdentity: () => runtimeIdentityFromHealth(leadershipHealthUrl),
+};
 
 async function heartbeat(status: string) {
   const recoveryRequired = await studio.publicationJob.count({
@@ -43,6 +49,8 @@ async function heartbeat(status: string) {
 
 async function run() {
   for (;;) {
+    await heartbeat("CHECKING_RECOVERY");
+    await reconcilePublicationRecovery(dependencies);
     await heartbeat("CHECKING_QUEUE");
     const claim = await claimPublicationJob(studio);
     if (!claim) {
@@ -51,15 +59,7 @@ async function run() {
       continue;
     }
     await heartbeat("WORKING");
-    await processPublicationJob(
-      {
-        studio,
-        leadershipPublisherUrl,
-        runtimeIdentity: () => runtimeIdentityFromHealth(leadershipHealthUrl),
-      },
-      claim.id,
-      claim.claimToken,
-    );
+    await processPublicationJob(dependencies, claim.id, claim.claimToken);
     await heartbeat("IDLE");
   }
 }

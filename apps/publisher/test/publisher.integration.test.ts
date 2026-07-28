@@ -402,6 +402,24 @@ describe("durable cross-database publisher", () => {
     expect(edgeKeys).toEqual(
       [...edgeKeys].sort((left, right) => left.localeCompare(right)),
     );
+    const targetEdges = (candidateManifest.edges ?? []).filter(
+      (edge) => edge.source === "situation:repeatedly-misses-deadlines",
+    );
+    expect(targetEdges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          target: "author:catalog",
+          type: "LINKS_TO",
+        }),
+        expect.objectContaining({
+          target: "source:catalog",
+          type: "CITES_SOURCE",
+        }),
+        expect.objectContaining({
+          type: "EMBEDS_PRACTICE",
+        }),
+      ]),
+    );
     expect(persisted.backups).toHaveLength(1);
     const releaseCounts = await new Client({
       connectionString: leadershipUrl,

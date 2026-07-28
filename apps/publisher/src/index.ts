@@ -305,21 +305,6 @@ function bundleForPublication(bundle: SituationBundle, sourceKind: string) {
   });
 }
 
-function edgeType(kind: string) {
-  switch (kind) {
-    case "PRACTICE":
-      return "EMBEDS_PRACTICE";
-    case "LESSON_PLAN":
-      return "TAUGHT_BY_LESSON";
-    case "PREPARATION_PROMPT":
-      return "PREPARES_WITH";
-    case "SOURCE":
-      return "CITES_SOURCE";
-    default:
-      return "LINKS_TO";
-  }
-}
-
 function yamlScalar(value: unknown) {
   return JSON.stringify(value);
 }
@@ -706,16 +691,45 @@ async function buildCandidate(
       }),
     ].sort((left, right) => left.path.localeCompare(right.path));
     const carriedEdges = manifest.edges.filter(
-      (edge) =>
-        edge.source !== targetLogicalId &&
-        !(bundle.visibility === "RETIRED" && edge.target === targetLogicalId),
+      (edge) => edge.source !== targetLogicalId,
     );
-    const additionalEdges = bundle.relationships.map((relationship) => ({
-      source: targetLogicalId,
-      target: relationship.logicalId,
-      type: edgeType(relationship.kind),
-      evidence: `Situation Studio bundle ${job.targetBundleHash}`,
-    }));
+    const situationEvidence = `content/situations/${job.situation.slug}.mdx`;
+    const additionalEdges = [
+      {
+        source: targetLogicalId,
+        target: `practice:${projection.practice_id}`,
+        type: "EMBEDS_PRACTICE",
+        evidence: `${situationEvidence}:practiceId`,
+      },
+      ...projection.related_situation_ids.map((relatedSlug) => ({
+        source: targetLogicalId,
+        target: `situation:${relatedSlug}`,
+        type: "LINKS_TO",
+        evidence: `${situationEvidence}:relatedSituationIds`,
+      })),
+      {
+        source: targetLogicalId,
+        target: "source:catalog",
+        type: "CITES_SOURCE",
+        evidence: `${situationEvidence}:sourceReferences=${projection.source_references.join(",")}`,
+      },
+      {
+        source: targetLogicalId,
+        target: "author:catalog",
+        type: "LINKS_TO",
+        evidence: `${situationEvidence}:author,reviewer`,
+      },
+      ...(projection.source_references.includes("one-on-one-lesson")
+        ? [
+            {
+              source: targetLogicalId,
+              target: "lesson-plan:003-manager-tools-the-trinity-and-1on1s",
+              type: "TAUGHT_BY_LESSON",
+              evidence: "sourceReferences:one-on-one-lesson",
+            },
+          ]
+        : []),
+    ];
     const edges = [...carriedEdges, ...additionalEdges].sort(
       (left, right) =>
         left.source.localeCompare(right.source) ||

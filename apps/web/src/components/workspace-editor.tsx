@@ -25,6 +25,7 @@ import {
   type WorkspaceTab,
 } from "@/components/workspace-tabs";
 import {
+  displayedReviewSnapshot,
   initialLiveReviewState,
   nextReviewAnnouncement,
   reduceLiveReviewState,
@@ -212,10 +213,10 @@ export function WorkspaceEditor({
     serverReviewSnapshot,
     initialLiveReviewState,
   );
-  const reviewStatus =
-    liveReview.reviewJobId === review?.id
-      ? (liveReview.snapshot ?? serverReviewSnapshot)
-      : serverReviewSnapshot;
+  const reviewStatus = displayedReviewSnapshot(
+    liveReview,
+    serverReviewSnapshot,
+  );
   const serverPublicationSnapshot = publication;
   const [livePublication, setLivePublication] = useState<{
     publicationJobId: string;

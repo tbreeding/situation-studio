@@ -8,6 +8,7 @@ export type ReviewConnectionPhase =
 
 export type LiveReviewState = {
   reviewJobId: string | null;
+  serverSnapshotId: string | null;
   generation: number;
   connection: ReviewConnectionPhase;
   snapshot: ReviewStatusSnapshot | null;
@@ -47,10 +48,24 @@ export function initialLiveReviewState(
 ): LiveReviewState {
   return {
     reviewJobId: snapshot?.reviewJobId ?? null,
+    serverSnapshotId: snapshot?.snapshotId ?? null,
     generation: 0,
     connection: "idle",
     snapshot,
   };
+}
+
+export function displayedReviewSnapshot(
+  state: LiveReviewState,
+  serverSnapshot: ReviewStatusSnapshot | null,
+) {
+  if (!serverSnapshot) return null;
+  if (
+    state.reviewJobId !== serverSnapshot.reviewJobId ||
+    state.serverSnapshotId !== serverSnapshot.snapshotId
+  )
+    return serverSnapshot;
+  return state.snapshot ?? serverSnapshot;
 }
 
 function matchesCurrentConnection(
@@ -70,6 +85,7 @@ export function reduceLiveReviewState(
   if (action.type === "sync")
     return {
       reviewJobId: action.snapshot?.reviewJobId ?? null,
+      serverSnapshotId: action.snapshot?.snapshotId ?? null,
       generation: action.generation,
       connection: action.snapshot ? "closed" : "idle",
       snapshot: action.snapshot,
@@ -77,6 +93,7 @@ export function reduceLiveReviewState(
   if (action.type === "start")
     return {
       reviewJobId: action.reviewJobId,
+      serverSnapshotId: action.snapshot.snapshotId,
       generation: action.generation,
       connection: "connecting",
       snapshot: action.snapshot,

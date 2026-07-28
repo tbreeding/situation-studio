@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  displayedReviewSnapshot,
   initialLiveReviewState,
   nextReviewAnnouncement,
   reduceLiveReviewState,
@@ -162,6 +163,57 @@ describe("live review client state", () => {
       }),
     });
     expect(oldReview).toBe(state);
+  });
+
+  it("does not let a retained failed snapshot mask a newer successful server snapshot", () => {
+    const failed = snapshot({
+      snapshotCharacter: "8",
+      state: "FAILED",
+      completedStages: REVIEW_STAGE_TOTAL - 1,
+      currentOrdinal: REVIEW_STAGE_TOTAL,
+    });
+    const retainedFailure = reduceLiveReviewState(
+      initialLiveReviewState(failed),
+      {
+        type: "sync",
+        generation: 1,
+        snapshot: failed,
+      },
+    );
+    const succeeded = snapshot({
+      snapshotCharacter: "9",
+      state: "SUCCEEDED",
+      completedStages: REVIEW_STAGE_TOTAL,
+      currentOrdinal: null,
+      proposalReady: true,
+    });
+
+    expect(displayedReviewSnapshot(retainedFailure, succeeded)).toEqual(
+      succeeded,
+    );
+  });
+
+  it("continues to display live progress while its server snapshot is current", () => {
+    const server = snapshot({ snapshotCharacter: "a" });
+    let state = reduceLiveReviewState(initialLiveReviewState(server), {
+      type: "start",
+      reviewJobId: firstJobId,
+      generation: 1,
+      snapshot: server,
+    });
+    const live = snapshot({
+      snapshotCharacter: "b",
+      completedStages: 1,
+      currentOrdinal: 2,
+    });
+    state = reduceLiveReviewState(state, {
+      type: "snapshot",
+      reviewJobId: firstJobId,
+      generation: 1,
+      snapshot: live,
+    });
+
+    expect(displayedReviewSnapshot(state, server)).toEqual(live);
   });
 
   it.each([

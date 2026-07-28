@@ -206,4 +206,17 @@ describe("production deployment contract", () => {
       "GRANT SELECT, INSERT, UPDATE ON audit_events\n  TO situation_studio_review_worker;",
     );
   });
+
+  test("the web runtime can create the initial publication event", async () => {
+    const [grants, releaseSchema] = await Promise.all([
+      readFile(runtimeGrantsPath, "utf8"),
+      readFile(releaseSchemaPath, "utf8"),
+    ]);
+    expect(grants).toContain(
+      "GRANT SELECT, INSERT ON publication_events\n  TO situation_studio_web;",
+    );
+    expect(releaseSchema).toContain(
+      "'situation_studio_web',\n        'public.publication_events',\n        'INSERT'",
+    );
+  });
 });

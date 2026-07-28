@@ -766,6 +766,21 @@ test("durable checkout, autosave, preview, dialog focus, and check-in work end t
   await expect(dialog).toHaveCount(0);
   await expect(submit).toBeFocused();
 
+  await page.route("**/api/checkouts/*/publish", async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: "text/html",
+      body: "<h1>Unexpected server failure</h1>",
+    });
+  });
+  await submit.click();
+  await dialog.getByRole("button", { name: "Confirm submission" }).click();
+  await expect(page.locator(".actionError")).toContainText(
+    "The action could not be completed.",
+  );
+  await expect(page.getByRole("heading", { name: changedTitle })).toBeVisible();
+  await page.unroute("**/api/checkouts/*/publish");
+
   await page.getByRole("button", { name: "Check in" }).click();
   await expect(page).toHaveURL("http://localhost:3015/");
   await expect(

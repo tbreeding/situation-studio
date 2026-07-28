@@ -118,6 +118,11 @@ docker exec postgres16 psql \
         'public.agent_candidate_revisions',
         'INSERT'
       )
+      AND has_table_privilege(
+        'situation_studio_web',
+        'public.publication_events',
+        'INSERT'
+      )
     )::integer AS release_schema_guard;
   " >/dev/null
 

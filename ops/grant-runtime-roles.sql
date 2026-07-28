@@ -61,8 +61,10 @@ GRANT SELECT, INSERT ON leadership_release_observations,
   TO situation_studio_web;
 GRANT SELECT, INSERT, UPDATE ON leadership_sync_cursors
   TO situation_studio_web;
+GRANT SELECT, INSERT ON publication_events
+  TO situation_studio_web;
 GRANT SELECT ON
-  agent_runs, publication_attempts, publication_events,
+  agent_runs, publication_attempts,
   verification_receipts, backup_receipts, publication_candidate_snapshots,
   process_heartbeats, agent_candidate_revisions, review_findings,
   proposal_change_findings

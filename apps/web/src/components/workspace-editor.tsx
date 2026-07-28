@@ -466,21 +466,29 @@ export function WorkspaceEditor({
     setMessage(null);
     if (options.saveFirst && !(await save("Action checkpoint"))) return;
     startTransition(async () => {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-csrf-token": csrfToken,
-        },
-        body: JSON.stringify(payload),
-      });
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        setMessage(result.error ?? "The action could not be completed.");
-        return;
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-csrf-token": csrfToken,
+          },
+          body: JSON.stringify(payload),
+        });
+        const result = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        if (!response.ok) {
+          setMessage(result.error ?? "The action could not be completed.");
+          return;
+        }
+        if (options.redirectHome) router.push("/");
+        router.refresh();
+      } catch {
+        setMessage(
+          "The action could not be completed. Check your connection and try again.",
+        );
       }
-      if (options.redirectHome) router.push("/");
-      router.refresh();
     });
   }
 

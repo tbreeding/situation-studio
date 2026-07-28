@@ -807,6 +807,8 @@ describe("durable cross-database publisher", () => {
         runtimeIdentity: async () => {
           healthCalls += 1;
           if (healthCalls === 1)
+            throw new Error("Leadership runtime is still loading.");
+          if (healthCalls === 2)
             return {
               releaseId: prior.releaseId,
               manifestHash: prior.manifestHash,
@@ -824,7 +826,7 @@ describe("durable cross-database publisher", () => {
       where: { id: job.id },
       include: { receipt: true },
     });
-    expect(healthCalls).toBe(2);
+    expect(healthCalls).toBe(3);
     expect(persisted.state).toBe("SUCCEEDED");
     expect(persisted.receipt?.observedRuntimeReleaseId).toBe(
       persisted.leadershipReleaseId,

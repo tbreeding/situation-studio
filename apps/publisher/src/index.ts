@@ -123,16 +123,21 @@ async function convergedRuntimeIdentity(
     0,
     Math.floor(dependencies.runtimeVerification?.intervalMs ?? 500),
   );
-  let identity = await dependencies.runtimeIdentity();
-  for (
-    let attempt = 1;
-    attempt < attempts && !identityMatches(identity, expected);
-    attempt += 1
-  ) {
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    identity = await dependencies.runtimeIdentity();
+  let lastIdentity: RuntimeIdentity | undefined;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      lastIdentity = await dependencies.runtimeIdentity();
+      lastError = undefined;
+      if (identityMatches(lastIdentity, expected)) return lastIdentity;
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt + 1 < attempts)
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  return identity;
+  if (lastIdentity) return lastIdentity;
+  throw lastError ?? new Error("Runtime identity remained unavailable.");
 }
 
 async function assertPublicationFence(

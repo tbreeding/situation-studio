@@ -36,6 +36,7 @@ export type ReviewProviderConfiguration =
 
 export const REVIEW_STAGE_MAX_ATTEMPTS = 3;
 export const DEFAULT_REVIEW_RETRY_DELAYS_MS = [5_000, 30_000] as const;
+export const BUNDLE_WRITER_PROVIDER_TIMEOUT_MS = 5 * 60_000;
 
 export type ReviewWorkerTiming = {
   now?: () => Date;
@@ -1282,6 +1283,9 @@ export async function processClaimedReview(
           signal: controller.signal,
         },
         configuration,
+        ready.roleCode === "bundle-writer"
+          ? { providerTimeoutMs: BUNDLE_WRITER_PROVIDER_TIMEOUT_MS }
+          : undefined,
       );
       await recordSuccess(
         database,

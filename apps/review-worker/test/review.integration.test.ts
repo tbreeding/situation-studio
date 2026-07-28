@@ -28,7 +28,11 @@ import {
   type AdapterRequest,
   type AdapterResult,
 } from "@situation-studio/ai-adapters";
-import { claimNextReview, processClaimedReview } from "../src/review";
+import {
+  BUNDLE_WRITER_PROVIDER_TIMEOUT_MS,
+  claimNextReview,
+  processClaimedReview,
+} from "../src/review";
 
 const executeFile = promisify(execFile);
 const studioRoot = path.resolve(import.meta.dirname, "../../..");
@@ -147,7 +151,12 @@ describe("checkout fencing and the complete durable review DAG", () => {
       subscriptionConfiguration,
       claim.claimToken,
       {
-        runStage: async (request) => {
+        runStage: async (request, _configuration, runtimeOptions) => {
+          expect(runtimeOptions?.providerTimeoutMs).toBe(
+            request.role === "bundle-writer"
+              ? BUNDLE_WRITER_PROVIDER_TIMEOUT_MS
+              : undefined,
+          );
           const base = await successfulStage(request);
           const output =
             request.role === "critic-nvc"

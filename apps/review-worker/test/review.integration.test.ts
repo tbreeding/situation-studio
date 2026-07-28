@@ -537,6 +537,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           targetKind: "SECTION",
           targetKey: "The short answer",
           applicationMode: "MANUAL",
+          beforeHash: null,
           afterBody:
             "## The short answer\nName the directly observed pattern, ask for their view, and agree on one next move.",
           problem: "The opening relies on a broad interpretation.",
@@ -708,6 +709,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           targetKind: "SECTION",
           targetKey: "3 — Say",
           applicationMode: "AUTOMATIC",
+          beforeHash: null,
           afterBody: "Name the observation, then ask what they see.",
           problem: "The opening needs a clearer sequence.",
           explanation: "Separates observation from inquiry.",

@@ -110,7 +110,7 @@ function rolePrompt(role: string) {
       "Your job is synthesis and repair, not additional critique. Treat the adjudicator and teaching-designer outputs as authoritative.",
       "Write the smallest complete candidate revision that resolves their retained actionable findings without changing unrelated content.",
       "Every candidate edit must link at least one upstream finding as role-code:finding-id, name bundle-writer as the writing role, and retain the evidence role codes that informed it.",
-      "Use AUTOMATIC for every complete, safely applicable SECTION, METADATA, SCOPED_VARIANT, or RELATIONSHIP replacement. The worker computes and fences before hashes; omit beforeHash rather than calculating it or downgrading an otherwise safe edit.",
+      "Use AUTOMATIC for every complete, safely applicable SECTION, METADATA, SCOPED_VARIANT, or RELATIONSHIP replacement. The worker computes and fences before hashes; return beforeHash as null rather than calculating it or downgrading an otherwise safe edit.",
       "For SECTION edits, afterBody must contain only the section body, never its Markdown heading.",
       "Use MANUAL only for embeds, broad bundle changes, or a concrete suggestion whose application needs editor judgment.",
       "For every retained important or blocking finding, provide the smallest safe automatic edit, an explicit manual suggestion, or a concise unresolved finding that names the missing evidence or decision. Zero candidate edits is appropriate only when none of those findings has a concrete safe or manual replacement.",

@@ -391,6 +391,17 @@ describe("durable cross-database publisher", () => {
       expectedManifestHash: after.manifestHash,
     });
     expect(persisted.candidateSnapshot?.artifactCount).toBe(32);
+    const candidateManifest = JSON.parse(
+      persisted.candidateSnapshot?.manifestBody ?? "{}",
+    ) as {
+      edges?: Array<{ source: string; type: string; target: string }>;
+    };
+    const edgeKeys = (candidateManifest.edges ?? []).map(
+      (edge) => `${edge.source}\0${edge.type}\0${edge.target}`,
+    );
+    expect(edgeKeys).toEqual(
+      [...edgeKeys].sort((left, right) => left.localeCompare(right)),
+    );
     expect(persisted.backups).toHaveLength(1);
     const releaseCounts = await new Client({
       connectionString: leadershipUrl,

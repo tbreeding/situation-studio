@@ -719,8 +719,8 @@ async function buildCandidate(
     const edges = [...carriedEdges, ...additionalEdges].sort(
       (left, right) =>
         left.source.localeCompare(right.source) ||
-        left.target.localeCompare(right.target) ||
         left.type.localeCompare(right.type) ||
+        left.target.localeCompare(right.target) ||
         left.evidence.localeCompare(right.evidence),
     );
     const candidateManifest: ReleaseManifest = {
@@ -837,6 +837,14 @@ export function validateCandidate(candidate: CandidateSnapshot) {
     manifest.edges.length !== candidate.edgeCount
   )
     throw new Error("Candidate release count metadata differs.");
+  const edgeKeys = manifest.edges.map(
+    (edge) => `${edge.source}\0${edge.type}\0${edge.target}`,
+  );
+  const sortedEdgeKeys = [...edgeKeys].sort((left, right) =>
+    left.localeCompare(right),
+  );
+  if (edgeKeys.some((key, index) => key !== sortedEdgeKeys[index]))
+    throw new Error("Candidate edges are not sorted canonically.");
   const logicalIds = new Set<string>();
   for (const artifact of manifest.artifacts) {
     if (logicalIds.has(artifact.logicalId))

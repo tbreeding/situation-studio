@@ -18,6 +18,7 @@ const REVIEW_STAGE_DISPLAY_NAMES: Record<string, string> = {
   "critic-radical-candor": "Radical Candor critique",
   "critic-change-systems": "Change-systems critique",
   "critic-manager-tools": "Manager Tools critique",
+  "issue-register": "Combining the independent critiques",
   "rebuttal-nvc": "Nonviolent communication rebuttal",
   "rebuttal-negotiation": "Negotiation rebuttal",
   "rebuttal-coaching": "Coaching rebuttal",
@@ -31,6 +32,7 @@ const REVIEW_STAGE_DISPLAY_NAMES: Record<string, string> = {
   "audit-semantic": "Auditing semantic integrity",
   "audit-teaching-alignment": "Auditing teaching alignment",
   "audit-repository-integrity": "Auditing repository integrity",
+  "audit-page-language": "Auditing page language and cognitive load",
   "deterministic-validator": "Validating the proposal",
 };
 
@@ -127,7 +129,7 @@ export function buildReviewStatusSnapshot(
     reviewJobId: record.id,
     state: record.state,
     completedStages: steps.filter((step) => step.state === "SUCCEEDED").length,
-    totalStages: REVIEW_STAGE_TOTAL,
+    totalStages: steps.length,
     stages: steps.map((step) => ({
       ordinal: step.ordinal,
       state: step.state,

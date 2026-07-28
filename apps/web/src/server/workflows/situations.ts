@@ -21,6 +21,7 @@ import {
   type SituationMetadata,
   type SituationSections,
 } from "@situation-studio/domain";
+import { REVIEW_POLICY_VERSION } from "@situation-studio/review-policy";
 import { database } from "@/server/database";
 import { reconcileLeadershipRelease } from "@/server/leadership-sync";
 
@@ -712,10 +713,11 @@ export async function queueReview(input: {
               JSON.stringify({
                 bundleHash: revision.bundleHash,
                 contractVersion: revision.contractVersion,
+                reviewPolicyVersion: REVIEW_POLICY_VERSION,
               }),
             ),
             contractVersion: revision.contractVersion,
-            policyVersion: revision.validationPolicy,
+            policyVersion: REVIEW_POLICY_VERSION,
             steps: {
               create: reviewStages.map((stage) => ({
                 ordinal: stage.ordinal,

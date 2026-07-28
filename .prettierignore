@@ -2,6 +2,7 @@
 node_modules/
 packages/db/generated/
 packages/db/prisma/schema.prisma
+packages/review-policy/policy/
 playwright-report/
 test-results/
 vendor/

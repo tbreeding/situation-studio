@@ -1,8 +1,9 @@
 import { z } from "zod";
 
-export const REVIEW_STATUS_SCHEMA_VERSION = "review-status-v1" as const;
+export const REVIEW_STATUS_SCHEMA_VERSION = "review-status-v2" as const;
 export const REVIEW_STATUS_EVENT_NAME = "review-status" as const;
-export const REVIEW_STAGE_TOTAL = 22 as const;
+export const REVIEW_STAGE_TOTAL = 24 as const;
+export const LEGACY_REVIEW_STAGE_TOTAL = 22 as const;
 
 export const reviewJobStateSchema = z.enum([
   "QUEUED",
@@ -69,8 +70,14 @@ export const reviewStatusSnapshotSchema = z
     reviewJobId: z.uuid(),
     state: reviewJobStateSchema,
     completedStages: z.number().int().min(0).max(REVIEW_STAGE_TOTAL),
-    totalStages: z.literal(REVIEW_STAGE_TOTAL),
-    stages: z.array(publicStageSnapshotSchema).length(REVIEW_STAGE_TOTAL),
+    totalStages: z.union([
+      z.literal(LEGACY_REVIEW_STAGE_TOTAL),
+      z.literal(REVIEW_STAGE_TOTAL),
+    ]),
+    stages: z
+      .array(publicStageSnapshotSchema)
+      .min(LEGACY_REVIEW_STAGE_TOTAL)
+      .max(REVIEW_STAGE_TOTAL),
     currentStage: publicCurrentStageSchema.nullable(),
     retry: publicRetrySnapshotSchema.nullable(),
     terminal: publicTerminalSnapshotSchema.nullable(),
@@ -79,10 +86,14 @@ export const reviewStatusSnapshotSchema = z
   })
   .superRefine((snapshot, context) => {
     const ordinals = new Set(snapshot.stages.map((stage) => stage.ordinal));
-    if (ordinals.size !== REVIEW_STAGE_TOTAL)
+    if (
+      ordinals.size !== snapshot.totalStages ||
+      snapshot.stages.length !== snapshot.totalStages
+    )
       context.addIssue({
         code: "custom",
-        message: "Review stages must have unique ordinals.",
+        message:
+          "Review stages must match the declared total and have unique ordinals.",
         path: ["stages"],
       });
     const completed = snapshot.stages.filter(

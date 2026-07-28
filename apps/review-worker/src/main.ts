@@ -1,4 +1,5 @@
 import { createDatabaseClient } from "@situation-studio/db";
+import { REVIEW_POLICY_VERSION } from "@situation-studio/review-policy";
 import { runOneReview, type ReviewProviderConfiguration } from "./review";
 import { reviewWorkerIdleStatus } from "./status";
 
@@ -53,6 +54,7 @@ async function heartbeat(status: string) {
       status,
       details: {
         providerMode: providerConfiguration.mode,
+        reviewPolicyVersion: REVIEW_POLICY_VERSION,
         providerPreference:
           providerConfiguration.mode === "subscription-cli"
             ? ["codex", "claude"]
@@ -71,6 +73,7 @@ async function heartbeat(status: string) {
       status,
       details: {
         providerMode: providerConfiguration.mode,
+        reviewPolicyVersion: REVIEW_POLICY_VERSION,
         providerPreference:
           providerConfiguration.mode === "subscription-cli"
             ? ["codex", "claude"]

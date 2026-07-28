@@ -942,10 +942,10 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
   });
   await expect(progress).toHaveAttribute(
     "aria-valuetext",
-    "1 of 22 stages complete",
+    "1 of 24 stages complete",
   );
   await expect(
-    page.getByText("1 of 22 stages complete", { exact: true }),
+    page.getByText("1 of 24 stages complete", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText("Nonviolent communication critique", { exact: true }),

@@ -7,7 +7,7 @@ Leadership situations.
 
 An authenticated editor must be able to check out one situation, continue a
 saved draft or start from the current production version, edit it manually,
-optionally run the complete 22-stage agent review workflow, selectively apply
+optionally run the complete 24-stage agent review workflow, selectively apply
 the resulting proposal, inspect an accurate rendered preview and diff, and use
 one deliberate action to make the result production.
 
@@ -112,7 +112,7 @@ implemented only inside Studio without breaking the isolation requirement.
 - A competing production change to the same situation blocks submission.
 - Failed post-publication verification automatically restores the prior
   official release when possible.
-- The former 22-stage review logic is retained as a durable server-side job.
+- The review logic is retained and extended as a durable 24-stage server-side job.
 - Only one full agent review runs globally; additional reviews queue FIFO.
 - A queued or running review pins its draft revision and temporarily makes that
   situation read-only.
@@ -173,7 +173,7 @@ not a publication candidate or approval state.
 - Port narrowly useful, verified implementations where appropriate:
   - password hashing, session, CSRF, and throttle behavior;
   - provider adapters and structured-output parsing;
-  - the 22 review-role definitions;
+  - the review-role definitions;
   - content diffing;
   - deterministic content and graph validation;
   - idempotent job and fencing patterns.
@@ -478,16 +478,18 @@ part of this pass.
 
 ### 9. Preserve the complete agent-review workflow as proposals
 
-Rebuild the former 22-stage workflow:
+Rebuild and extend the former workflow as 24 durable stages:
 
 1. map connected learning surfaces;
 2. run seven independent critics;
-3. run seven rebuttals;
-4. adjudicate;
-5. perform teaching design;
-6. write one consolidated bundle proposal;
-7. run semantic, teaching-alignment, and repository-integrity audits;
-8. run deterministic repository/content validation.
+3. combine their findings into one mediated issue register;
+4. run seven rebuttals against that shared conflict map;
+5. adjudicate;
+6. perform teaching design;
+7. write one consolidated bundle proposal;
+8. run semantic, teaching-alignment, repository-integrity, and page-language
+   audits;
+9. run deterministic repository/content validation.
 
 The workflow runs in the separate review worker. By explicit production
 decision on 2026-07-24, provider execution uses the user's existing
@@ -989,7 +991,7 @@ approval at the appropriate implementation checkpoint.
 - [ ] A review pins one immutable draft revision and complete context hash.
 - [ ] The situation is read-only while its review is queued or running.
 - [ ] Only one full review runs globally; later jobs remain FIFO.
-- [ ] All 22 required stages are represented and durable.
+- [ ] All 24 required stages are represented and durable.
 - [ ] Cancelling a job makes the situation editable and fences late outputs.
 - [ ] A worker restart resumes without duplicating successful steps.
 - [ ] Only explicitly retryable provider failures receive two automatic
@@ -1001,7 +1003,7 @@ approval at the appropriate implementation checkpoint.
       stage, safe class, attempt count, and scheduled time.
 - [ ] Historical terminal provider failures do not indefinitely degrade
       readiness for a currently healthy worker.
-- [ ] An authenticated same-origin `review-status-v1` SSE stream sends a full
+- [ ] An authenticated same-origin `review-status-v2` SSE stream sends a full
       durable snapshot on connect/reconnect and changed snapshots only.
 - [ ] Heartbeats, abort cleanup, bounded lifetime, native reconnection, and
       stale review/connection rejection do not affect worker authority.
@@ -1155,7 +1157,7 @@ Add:
   autosave, review queue, proposal selection, preview/diff, submission,
   history, restoration, creation, retirement, and recovery states;
 - crash-injection tests around every external publication boundary;
-- deterministic fake-provider tests for the complete 22-stage DAG;
+- deterministic fake-provider tests for the complete 24-stage DAG;
 - separately invoked live-provider qualification that is never required for
   ordinary deterministic CI;
 - backup/restore tests into a disposable database;
@@ -1249,7 +1251,7 @@ block deployment.
 
 ### Checkpoint 4 — Review worker and proposals
 
-- Implement the global queue, complete 22-stage durable DAG, cancellation,
+- Implement the global queue, complete 24-stage durable DAG, cancellation,
   retry, proposal display, selective acceptance, and scoped-variant creation in
   Studio.
 - Verify with deterministic providers and separately qualify the configured

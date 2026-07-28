@@ -15,7 +15,7 @@ function snapshot(
   const currentOrdinal =
     completedStages === REVIEW_STAGE_TOTAL ? null : completedStages + 1;
   return reviewStatusSnapshotSchema.parse({
-    schemaVersion: "review-status-v1",
+    schemaVersion: "review-status-v2",
     reviewJobId,
     state: completedStages === REVIEW_STAGE_TOTAL ? "SUCCEEDED" : "RUNNING",
     completedStages,

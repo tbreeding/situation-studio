@@ -140,12 +140,28 @@ describe("domain invariants", () => {
     ).toBe("NEEDS_REFRESH");
   });
 
-  it("defines the complete durable 22-stage review DAG", () => {
-    expect(reviewStages).toHaveLength(22);
+  it("defines the complete durable 24-stage review DAG", () => {
+    expect(reviewStages).toHaveLength(24);
     expect(reviewStages[0]).toMatchObject({
       role: "surface-mapper",
       dependencies: [],
     });
-    expect(reviewStages.at(-1)?.dependencies).toHaveLength(3);
+    expect(
+      reviewStages.find((stage) => stage.role === "issue-register"),
+    ).toMatchObject({
+      dependencies: [
+        "critic-nvc",
+        "critic-negotiation",
+        "critic-coaching",
+        "critic-team-health",
+        "critic-radical-candor",
+        "critic-change-systems",
+        "critic-manager-tools",
+      ],
+    });
+    expect(
+      reviewStages.find((stage) => stage.role === "rebuttal-nvc")?.dependencies,
+    ).toEqual(["issue-register", "critic-nvc"]);
+    expect(reviewStages.at(-1)?.dependencies).toHaveLength(4);
   });
 });

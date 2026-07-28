@@ -75,6 +75,7 @@ function roleLabel(role: string) {
     "critic-radical-candor": "Radical Candor reviewer",
     "critic-change-systems": "Change Systems reviewer",
     "critic-manager-tools": "Manager Tools reviewer",
+    "issue-register": "Issue Register",
     "rebuttal-nvc": "Nonviolent Communication rebuttal",
     "rebuttal-negotiation": "Negotiation rebuttal",
     "rebuttal-coaching": "Coaching rebuttal",
@@ -88,6 +89,7 @@ function roleLabel(role: string) {
     "audit-semantic": "Semantic auditor",
     "audit-teaching-alignment": "Teaching-alignment auditor",
     "audit-repository-integrity": "Repository-integrity auditor",
+    "audit-page-language": "Page-language auditor",
     "deterministic-validator": "Deterministic validator",
   };
   if (labels[role]) return labels[role];

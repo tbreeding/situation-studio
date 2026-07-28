@@ -56,7 +56,7 @@ function snapshot(input: {
     };
   });
   return reviewStatusSnapshotSchema.parse({
-    schemaVersion: "review-status-v1",
+    schemaVersion: "review-status-v2",
     reviewJobId: input.reviewJobId ?? firstJobId,
     state,
     completedStages,
@@ -186,7 +186,7 @@ describe("live review client state", () => {
               ? "2"
               : "3",
         state: terminalState,
-        completedStages: terminalState === "SUCCEEDED" ? 22 : 1,
+        completedStages: terminalState === "SUCCEEDED" ? REVIEW_STAGE_TOTAL : 1,
         currentOrdinal: terminalState === "SUCCEEDED" ? null : 2,
         proposalReady,
       });
@@ -250,7 +250,7 @@ describe("review timing and accessibility presentation", () => {
       11_500,
     );
     expect(terminal.message).toBe(
-      "Review stopped after 1 of 22 stages complete. You can retry the review.",
+      `Review stopped after 1 of ${REVIEW_STAGE_TOTAL} stages complete. You can retry the review.`,
     );
   });
 
@@ -258,7 +258,7 @@ describe("review timing and accessibility presentation", () => {
     const completed = snapshot({
       snapshotCharacter: "7",
       state: "SUCCEEDED",
-      completedStages: 22,
+      completedStages: REVIEW_STAGE_TOTAL,
       currentOrdinal: null,
       proposalReady: true,
     });

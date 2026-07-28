@@ -35,11 +35,11 @@ describe("public review-status snapshots", () => {
     const snapshot = buildReviewStatusSnapshot(statusRecord());
     expect(reviewStatusSnapshotSchema.parse(snapshot)).toEqual(snapshot);
     expect(snapshot).toMatchObject({
-      schemaVersion: "review-status-v1",
+      schemaVersion: "review-status-v2",
       reviewJobId,
       state: "QUEUED",
       completedStages: 0,
-      totalStages: 22,
+      totalStages: REVIEW_STAGE_TOTAL,
       currentStage: {
         ordinal: 1,
         code: "surface-mapper",
@@ -51,8 +51,18 @@ describe("public review-status snapshots", () => {
       terminal: null,
       proposalReady: false,
     });
-    expect(snapshot.stages).toHaveLength(22);
+    expect(snapshot.stages).toHaveLength(REVIEW_STAGE_TOTAL);
     expect(snapshot.snapshotId).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("keeps historical 22-stage review snapshots readable", () => {
+    const legacy = statusRecord({
+      steps: statusRecord().steps.slice(0, 22),
+    });
+    const snapshot = buildReviewStatusSnapshot(legacy);
+    expect(reviewStatusSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect(snapshot.totalStages).toBe(22);
+    expect(snapshot.stages).toHaveLength(22);
   });
 
   it("projects only bounded safe retry data and never raw provider evidence", () => {

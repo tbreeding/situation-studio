@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "review-policy-snapshot-v1",
+  "policyName": "review-leadership-situations",
+  "version": "review-leadership-situations-00b1e69c8dfc2d39",
+  "sourceHash": "00b1e69c8dfc2d3991698f31908ced6f7d53b172895d27a9b6c03167830d0b9b",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "sha256": "36f6d6321aca9b5061a69e42d853225ea7da78a0a667915bbf1653d1e7875b30",
+      "bytes": 16522
+    },
+    {
+      "path": "references/agent-contracts.md",
+      "sha256": "19eb01c1821d08e0c42dc8230cfd6b147828203a34cc2585347b22eb31d15129",
+      "bytes": 8850
+    },
+    {
+      "path": "references/framework-lenses.md",
+      "sha256": "d8b6413181498890b008c2a655bd56f0c1da2b33ab9024d95666e814c97c3511",
+      "bytes": 9952
+    },
+    {
+      "path": "references/leadership-field-guide.md",
+      "sha256": "8040f50dc8d900d9277b551eca5dac127c66b58e57d92da377764ec882673210",
+      "bytes": 11629
+    },
+    {
+      "path": "references/plain-global-english.md",
+      "sha256": "068fb09968576d1977df391dfacaf7de09a795841e99cde0edc84956c89a507f",
+      "bytes": 7719
+    },
+    {
+      "path": "references/teaching-alignment.md",
+      "sha256": "742db0c46b8752a072962f219011a0367a47a05c5020ad37565760709414ce31",
+      "bytes": 8716
+    }
+  ]
+}

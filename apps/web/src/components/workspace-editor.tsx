@@ -1386,7 +1386,7 @@ export function WorkspaceEditor({
                   >
                     {reviewStatus.retry ? "RETRYING" : reviewStatus.state}
                   </span>
-                  <strong>22-stage agent review</strong>
+                  <strong>{reviewStatus.totalStages}-stage agent review</strong>
                   <span className="reviewProgressText">
                     {reviewProgressText(reviewStatus)}
                   </span>

@@ -2,7 +2,7 @@
 
 Situation Studio is a private editorial workbench for Leadership situations.
 An editor checks out one situation, works in durable drafts, optionally runs a
-22-stage agent review, previews and compares exact content, and submits one
+24-stage agent review, previews and compares exact content, and submits one
 validated change. Leadership remains the sole public content authority.
 
 The redesign and guarded production release candidate are implemented through
@@ -37,6 +37,17 @@ pnpm db:migrate:deploy
 pnpm db:seed
 pnpm dev
 ```
+
+The review worker uses a committed, hash-versioned snapshot of the
+`review-leadership-situations` skill. After changing that skill locally, run:
+
+```sh
+pnpm review-policy:sync
+pnpm review-policy:check
+```
+
+Production reads only the committed snapshot. It never reads a personal skill
+directory at runtime.
 
 Bootstrap production-shaped history only against a disposable Leadership
 clone and its reader role:

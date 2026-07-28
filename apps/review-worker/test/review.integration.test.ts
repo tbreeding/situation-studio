@@ -28,6 +28,7 @@ import {
   type AdapterRequest,
   type AdapterResult,
 } from "@situation-studio/ai-adapters";
+import { REVIEW_POLICY_VERSION } from "@situation-studio/review-policy";
 import {
   BUNDLE_WRITER_PROVIDER_TIMEOUT_MS,
   claimNextReview,
@@ -152,6 +153,11 @@ describe("checkout fencing and the complete durable review DAG", () => {
       claim.claimToken,
       {
         runStage: async (request, _configuration, runtimeOptions) => {
+          expect(request.system).toContain(REVIEW_POLICY_VERSION);
+          if (request.role === "issue-register")
+            expect(request.system).toContain("ISSUE: I-<number>");
+          if (request.role === "audit-page-language")
+            expect(request.system).toContain("FIRST_ACTION_IN_30_SECONDS");
           expect(runtimeOptions?.providerTimeoutMs).toBe(
             request.role === "bundle-writer"
               ? BUNDLE_WRITER_PROVIDER_TIMEOUT_MS
@@ -359,7 +365,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
     ).toBe(1);
   });
 
-  it("runs all 22 stages once, globally serializes jobs, and fences cancellation", async () => {
+  it("runs every policy stage once, globally serializes jobs, and fences cancellation", async () => {
     const first = await workflows.createSituation({
       actorId: editorOneId,
       slug: "integration-review-one",
@@ -370,7 +376,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
       checkoutId: first.checkout.id,
       fence: first.checkout.fence,
     });
-    expect(firstJob.steps).toHaveLength(22);
+    expect(firstJob.policyVersion).toBe(REVIEW_POLICY_VERSION);
+    expect(firstJob.steps).toHaveLength(reviewStages.length);
     expect(
       [...firstJob.steps]
         .sort((left, right) => left.ordinal - right.ordinal)
@@ -416,11 +423,13 @@ describe("checkout fencing and the complete durable review DAG", () => {
       },
     });
     expect(completed.state).toBe("SUCCEEDED");
-    expect(completed.steps).toHaveLength(22);
+    expect(completed.steps).toHaveLength(reviewStages.length);
     expect(completed.steps.every((step) => step.state === "SUCCEEDED")).toBe(
       true,
     );
-    expect(completed.steps.flatMap((step) => step.runs)).toHaveLength(22);
+    expect(completed.steps.flatMap((step) => step.runs)).toHaveLength(
+      reviewStages.length,
+    );
     for (const run of completed.steps.flatMap((step) => step.runs)) {
       expect(run).toMatchObject({
         requestedProvider: "deterministic",
@@ -455,7 +464,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       await database.agentRun.count({
         where: { step: { jobId: firstJob.id } },
       }),
-    ).toBe(22);
+    ).toBe(reviewStages.length);
 
     const claimedSecond = await claimNextReview(database);
     expect(claimedSecond?.id).toBe(secondJob.id);

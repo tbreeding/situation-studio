@@ -340,6 +340,7 @@ export const reviewRoleCodes = [
   "critic-radical-candor",
   "critic-change-systems",
   "critic-manager-tools",
+  "issue-register",
   "rebuttal-nvc",
   "rebuttal-negotiation",
   "rebuttal-coaching",
@@ -353,6 +354,7 @@ export const reviewRoleCodes = [
   "audit-semantic",
   "audit-teaching-alignment",
   "audit-repository-integrity",
+  "audit-page-language",
   "deterministic-validator",
 ] as const;
 
@@ -373,31 +375,45 @@ export const reviewStages: readonly ReviewStage[] = reviewRoleCodes.map(
         role,
         dependencies: ["surface-mapper"],
       };
-    if (index <= 14)
+    if (index === 8)
+      return {
+        ordinal: 9,
+        role,
+        dependencies: reviewRoleCodes.slice(1, 8) as ReviewRoleCode[],
+      };
+    if (index <= 15)
       return {
         ordinal: index + 1,
         role,
-        dependencies: [reviewRoleCodes[index - 7] as ReviewRoleCode],
-      };
-    if (index === 15)
-      return {
-        ordinal: 16,
-        role,
-        dependencies: reviewRoleCodes.slice(1, 15) as ReviewRoleCode[],
+        dependencies: [
+          "issue-register",
+          reviewRoleCodes[index - 8] as ReviewRoleCode,
+        ],
       };
     if (index === 16)
-      return { ordinal: 17, role, dependencies: ["adjudicator"] };
+      return {
+        ordinal: 17,
+        role,
+        dependencies: reviewRoleCodes.slice(1, 16) as ReviewRoleCode[],
+      };
     if (index === 17)
-      return { ordinal: 18, role, dependencies: ["teaching-designer"] };
-    if (index <= 20)
-      return { ordinal: index + 1, role, dependencies: ["bundle-writer"] };
+      return { ordinal: 18, role, dependencies: ["adjudicator"] };
+    if (index === 18)
+      return { ordinal: 19, role, dependencies: ["teaching-designer"] };
+    if (index <= 22)
+      return {
+        ordinal: index + 1,
+        role,
+        dependencies: ["bundle-writer", "adjudicator", "teaching-designer"],
+      };
     return {
-      ordinal: 22,
+      ordinal: 24,
       role,
       dependencies: [
         "audit-semantic",
         "audit-teaching-alignment",
         "audit-repository-integrity",
+        "audit-page-language",
       ],
     };
   },

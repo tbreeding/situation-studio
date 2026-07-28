@@ -12,6 +12,7 @@
     "@situation-studio/ai-adapters": "workspace:*",
     "@situation-studio/db": "workspace:*",
     "@situation-studio/domain": "workspace:*",
+    "@situation-studio/review-policy": "workspace:*",
     "tsx": "4.21.0",
     "zod": "4.4.3"
   },

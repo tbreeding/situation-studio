@@ -3,7 +3,7 @@
 Status: deterministic route, live subscription route, and durable automatic
 retry handling complete.
 
-The review worker implements the full durable 22-stage DAG with one global
+The review worker implements the full durable 24-stage DAG with one global
 running job and FIFO claiming. Jobs pin an immutable input revision and remain
 read-only while queued or running. Cancellation and force-check-in fence late
 work. Retry resumes at the first incomplete stage.
@@ -17,7 +17,7 @@ credentials. Claude tools are disabled. Codex ignores user/project
 configuration and rules, runs ephemerally in a temporary read-only sandbox,
 and receives a stripped tool-command environment.
 
-Deterministic integration tests execute all 22 stages in order and prove
+Deterministic integration tests execute all 24 stages in order and prove
 durable evidence, one global runner, cancellation, proposal isolation, and
 idempotent retries. Adapter tests prove Codex-first ordering, Claude fallback,
 secret-minimal child environments, strict output validation, and rejection of
@@ -67,7 +67,7 @@ The connection lifecycle is:
 
 1. An active `QUEUED` or `RUNNING` review creates one native `EventSource`.
 2. The server authenticates the existing session and sends a complete
-   `review-status-v1` snapshot, regardless of `Last-Event-ID`.
+   `review-status-v2` snapshot, regardless of `Last-Event-ID`.
 3. A bounded 1.5-second database projection check emits only when the safe
    deterministic snapshot changes; 15-second comments provide heartbeats.
 4. A dropped connection shows **Reconnecting…** while native reconnection uses
@@ -83,7 +83,7 @@ The connection lifecycle is:
    a generic comment so native reconnection can recover.
 
 The safe snapshot contains the schema version, review job ID, job state, exact
-completed and total stage counts, all 22 ordinal/state rail entries, the current
+completed and total stage counts, all 24 ordinal/state rail entries, the current
 or first incomplete stage with a display name and applicable attempt, bounded
 retry state and scheduled time, terminal state and safe failure class, proposal
 readiness, and a deterministic SHA-256 snapshot identity. It deliberately

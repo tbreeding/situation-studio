@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "pnpm --filter @situation-studio/web dev",
-    "build": "pnpm db:generate && pnpm --filter @situation-studio/web build",
+    "build": "pnpm review-policy:check && pnpm db:generate && pnpm --filter @situation-studio/web build",
     "start": "pnpm --filter @situation-studio/web start",
     "start:review-worker": "pnpm --filter @situation-studio/review-worker start",
     "start:publisher": "pnpm --filter @situation-studio/publisher start",
@@ -17,6 +17,8 @@
     "db:migrate:deploy": "pnpm --filter @situation-studio/db migrate:deploy",
     "db:seed": "pnpm --filter @situation-studio/db seed",
     "bootstrap:leadership": "pnpm --filter @situation-studio/testing bootstrap",
+    "review-policy:sync": "node scripts/sync-review-policy.mjs",
+    "review-policy:check": "node scripts/sync-review-policy.mjs --check",
     "qualify:review-clis": "pnpm --filter @situation-studio/review-worker qualify",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
@@ -26,7 +28,7 @@
     "format:check": "prettier --check .",
     "lint": "pnpm -r --if-present lint",
     "typecheck": "pnpm -r --if-present typecheck",
-    "verify": "pnpm db:generate && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:security && pnpm build"
+    "verify": "pnpm review-policy:check && pnpm db:generate && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:security && pnpm build"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.12.1",

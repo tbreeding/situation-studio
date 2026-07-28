@@ -51,12 +51,20 @@ machine, approval queue, staging site, or candidate runtime.
 ## Review
 
 The review worker claims one global job with `FOR UPDATE SKIP LOCKED` and
-persists all 22 stages: graph mapping, seven critics, seven rebuttals,
-adjudication, teaching design, consolidated proposal, validation, and summary.
+persists all 24 stages: graph mapping, seven critics, a mediated issue register,
+seven rebuttals, adjudication, teaching design, one consolidated proposal, four
+independent audits, and deterministic validation.
 Every run records requested and resolved provider/model/effort, evidence and
 output hashes, strict structured output, usage, and failure classification.
 Codex is preferred and Claude is the provider-scoped fallback. Proposals never
 alter a draft until the editor accepts a change.
+
+Review substance comes from a committed, hash-versioned snapshot of the
+`review-leadership-situations` skill in `packages/review-policy/policy`.
+`pnpm review-policy:sync` refreshes that snapshot from the authored local skill;
+`pnpm review-policy:check` verifies every packaged file and detects source drift
+when the authored skill is available. Production uses only the committed
+snapshot, and each review job pins its exact review-policy version.
 
 An explicitly retryable provider failure returns the job to `QUEUED` at its
 first incomplete stage for two bounded automatic retries. The persisted
@@ -74,8 +82,8 @@ Server-Sent Events stream. It uses the ordinary session cookie and does not
 change mutation CSRF handling.
 
 PostgreSQL remains authoritative. A connection receives one complete
-`review-status-v1` snapshot immediately, including the job state, exact
-completed/total counts, the 22 bounded stage states, a safe human-readable
+`review-status-v2` snapshot immediately, including the job state, exact
+completed/total counts, the 24 bounded stage states, a safe human-readable
 current stage, attempt and durable retry information when applicable, terminal
 state, proposal readiness, and a deterministic SHA-256 snapshot identity.
 The public Zod schema rejects unknown structure at runtime. It cannot contain

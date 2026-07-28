@@ -83,6 +83,9 @@ importers:
       "@situation-studio/domain":
         specifier: workspace:*
         version: link:../../packages/domain
+      "@situation-studio/review-policy":
+        specifier: workspace:*
+        version: link:../../packages/review-policy
       tsx:
         specifier: 4.21.0
         version: 4.21.0
@@ -108,6 +111,9 @@ importers:
       "@situation-studio/leadership-bridge":
         specifier: workspace:*
         version: link:../../packages/leadership-bridge
+      "@situation-studio/review-policy":
+        specifier: workspace:*
+        version: link:../../packages/review-policy
       argon2:
         specifier: 0.44.0
         version: 0.44.0
@@ -248,6 +254,18 @@ importers:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
+
+  packages/review-policy:
+    devDependencies:
+      "@types/node":
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/testing:
     dependencies:

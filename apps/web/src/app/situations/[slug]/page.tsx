@@ -139,6 +139,8 @@ export default async function SituationPage({
     contentHash: relationship.contentHash,
     sharingCount: 1,
     hasVariant: variantsByLogicalId.has(relationship.logicalId),
+    body:
+      variantsByLogicalId.get(relationship.logicalId)?.content.textBody ?? "",
   }));
   return (
     <AppShell

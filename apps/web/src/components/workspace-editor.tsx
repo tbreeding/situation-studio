@@ -121,6 +121,7 @@ type ContextItem = {
   contentHash: string;
   sharingCount: number;
   hasVariant: boolean;
+  body: string;
 };
 
 async function sha256(value: string) {
@@ -252,6 +253,10 @@ export function WorkspaceEditor({
   const [proposalPending, setProposalPending] = useState(false);
   const [pending, startTransition] = useTransition();
   const [confirmSubmit, setConfirmSubmit] = useState(false);
+  const [scopedEdit, setScopedEdit] = useState<{
+    item: ContextItem;
+    body: string;
+  } | null>(null);
   const [comparedHistoryId, setComparedHistoryId] = useState<string | null>(
     null,
   );
@@ -1797,18 +1802,7 @@ export function WorkspaceEditor({
                   type="button"
                   disabled={!editable}
                   onClick={() => {
-                    if (!checkout) return;
-                    const changedBody = window.prompt(
-                      `Create a situation-scoped ${item.kind.toLowerCase()} variant. Enter the complete replacement content:`,
-                    );
-                    if (changedBody)
-                      void mutate(`/api/checkouts/${checkout.id}/variants`, {
-                        fence: checkout.fence,
-                        originalLogicalId: item.logicalId,
-                        originalContentHash: item.contentHash,
-                        kind: item.kind,
-                        changedBody,
-                      });
+                    setScopedEdit({ item, body: item.body });
                   }}
                 >
                   {item.hasVariant ? "Edit this variant" : "Create scoped edit"}
@@ -1817,6 +1811,76 @@ export function WorkspaceEditor({
             ))}
           </div>
         </section>
+      ) : null}
+
+      {scopedEdit && checkout ? (
+        <div className="dialogBackdrop" role="presentation">
+          <div
+            className="confirmationDialog scopedArtifactDialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="scoped-edit-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setScopedEdit(null);
+              }
+            }}
+          >
+            <p className="cardEyebrow">
+              {scopedEdit.item.hasVariant
+                ? "Situation-scoped variant"
+                : "New situation-scoped variant"}
+            </p>
+            <h2 id="scoped-edit-title">
+              {scopedEdit.item.hasVariant ? "Edit" : "Create"}{" "}
+              {scopedEdit.item.kind.toLowerCase()} content
+            </h2>
+            <p>
+              Enter the complete replacement content. Practice and source
+              artifacts use JSON and are validated before the draft is saved.
+            </p>
+            <label htmlFor="scoped-edit-body">Complete replacement</label>
+            <textarea
+              id="scoped-edit-body"
+              autoFocus
+              spellCheck={false}
+              value={scopedEdit.body}
+              onChange={(event) =>
+                setScopedEdit((current) =>
+                  current ? { ...current, body: event.target.value } : current,
+                )
+              }
+            />
+            <div className="dialogActions">
+              <button
+                className="secondaryButton"
+                type="button"
+                onClick={() => setScopedEdit(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="primaryButton"
+                type="button"
+                disabled={pending || !scopedEdit.body.trim()}
+                onClick={() => {
+                  const { item, body: changedBody } = scopedEdit;
+                  setScopedEdit(null);
+                  void mutate(`/api/checkouts/${checkout.id}/variants`, {
+                    fence: checkout.fence,
+                    originalLogicalId: item.logicalId,
+                    originalContentHash: item.contentHash,
+                    kind: item.kind,
+                    changedBody,
+                  });
+                }}
+              >
+                Save scoped variant
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {confirmSubmit && checkout ? (

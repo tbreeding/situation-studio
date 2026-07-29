@@ -2675,6 +2675,31 @@ button {
   font-weight: 700;
 }
 
+.scopedArtifactDialog {
+  width: min(52rem, 100%);
+}
+
+.scopedArtifactDialog > label {
+  display: block;
+  margin: 1rem 0 0.4rem;
+  color: #465149;
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+
+.scopedArtifactDialog textarea {
+  width: 100%;
+  min-height: min(28rem, 55vh);
+  padding: 0.85rem;
+  border: 1px solid #cdd0ca;
+  border-radius: 0.45rem;
+  background: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  resize: vertical;
+}
+
 .dialogActions {
   display: flex;
   justify-content: flex-end;

@@ -140,6 +140,7 @@ export function OperationsDashboard({
         </div>
         <form
           className="createUserForm"
+          autoComplete="off"
           onSubmit={(event) => {
             event.preventDefault();
             request("/api/users", "POST", newUser);
@@ -149,6 +150,8 @@ export function OperationsDashboard({
           <label>
             <span>Username</span>
             <input
+              name="new-username"
+              autoComplete="off"
               disabled={!hydrated || pending}
               value={newUser.username}
               onChange={(event) =>
@@ -163,6 +166,8 @@ export function OperationsDashboard({
           <label>
             <span>Display name</span>
             <input
+              name="display-name"
+              autoComplete="off"
               disabled={!hydrated || pending}
               value={newUser.displayName}
               onChange={(event) =>
@@ -178,6 +183,8 @@ export function OperationsDashboard({
             <span>Initial password</span>
             <input
               type="password"
+              name="new-password"
+              autoComplete="new-password"
               disabled={!hydrated || pending}
               value={newUser.password}
               minLength={12}

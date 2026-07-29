@@ -12,21 +12,41 @@ export async function GET() {
   try {
     await database().$queryRaw`SELECT 1`;
     const runtimeCapabilities = await requireCompatibleLeadershipRuntime();
-    const [cursor, heartbeats, backup, recoveryRequired] = await Promise.all([
-      database().leadershipSyncCursor.findUnique({
-        where: { id: "official" },
-      }),
-      database().processHeartbeat.findMany({
-        orderBy: { id: "asc" },
-      }),
-      database().backupReceipt.findFirst({
-        where: { state: "VERIFIED" },
-        orderBy: { verifiedAt: "desc" },
-      }),
-      database().publicationJob.count({
-        where: { state: "RECOVERY_REQUIRED" },
-      }),
-    ]);
+    const [cursor, heartbeats, backup, restoreDrillReceipt, recoveryRequired] =
+      await Promise.all([
+        database().leadershipSyncCursor.findUnique({
+          where: { id: "official" },
+        }),
+        database().processHeartbeat.findMany({
+          orderBy: { id: "asc" },
+        }),
+        database().backupReceipt.findFirst({
+          where: {
+            state: "VERIFIED",
+            verifiedAt: { not: null },
+          },
+          orderBy: [{ verifiedAt: "desc" }, { createdAt: "desc" }],
+          select: {
+            encrypted: true,
+            verifiedAt: true,
+          },
+        }),
+        database().backupReceipt.findFirst({
+          where: {
+            state: "VERIFIED",
+            restoreDrillAt: { not: null },
+            restoreDrillResult: { not: null },
+          },
+          orderBy: [{ restoreDrillAt: "desc" }, { createdAt: "desc" }],
+          select: {
+            restoreDrillAt: true,
+            restoreDrillResult: true,
+          },
+        }),
+        database().publicationJob.count({
+          where: { state: "RECOVERY_REQUIRED" },
+        }),
+      ]);
     const now = Date.now();
     const ageSeconds = (value: Date | null | undefined) =>
       value ? Math.max(0, Math.floor((now - value.getTime()) / 1_000)) : null;
@@ -46,6 +66,7 @@ export async function GET() {
       };
     });
     const backupAge = ageSeconds(backup?.verifiedAt);
+    const restoreDrillAge = ageSeconds(restoreDrillReceipt?.restoreDrillAt);
     const backupStatus = backupReadiness({
       mode: process.env.SITUATION_STUDIO_BACKUP_READINESS_MODE,
       verifiedAtAgeSeconds: backupAge,
@@ -83,9 +104,10 @@ export async function GET() {
           ageSeconds: backupAge,
           encrypted: backup?.encrypted ?? null,
           restoreDrill:
-            backup?.restoreDrillResult === "PASSED"
+            restoreDrillReceipt?.restoreDrillResult === "PASSED"
               ? "passed"
               : "not-yet-passed",
+          restoreDrillAgeSeconds: restoreDrillAge,
         },
       },
       {

@@ -2,6 +2,10 @@ import { AppShell } from "@/components/app-shell";
 import { OperationsDashboard } from "@/components/operations-dashboard";
 import { requireSession } from "@/server/auth/request";
 import { database } from "@/server/database";
+import {
+  backupAttemptHealth,
+  publicationRecoveryHealth,
+} from "@/server/operations-health";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +18,8 @@ export default async function OperationsPage() {
     checkouts,
     reviewQueue,
     reviewHeartbeat,
-    failedPublications,
+    recoveryRequired,
+    historicalTerminalPublications,
     sync,
     backup,
   ] = await Promise.all([
@@ -34,11 +39,23 @@ export default async function OperationsPage() {
       where: { id: "review-worker" },
     }),
     database().publicationJob.count({
-      where: { state: { in: ["FAILED", "RESTORED", "RECOVERY_REQUIRED"] } },
+      where: { state: "RECOVERY_REQUIRED" },
+    }),
+    database().publicationJob.count({
+      where: { state: { in: ["FAILED", "RESTORED"] } },
     }),
     database().leadershipSyncCursor.findUnique({ where: { id: "official" } }),
     database().backupReceipt.findFirst({ orderBy: { createdAt: "desc" } }),
   ]);
+  const publicationHealth = publicationRecoveryHealth({
+    recoveryRequired,
+    historicalTerminal: historicalTerminalPublications,
+  });
+  const backupHealth = backupAttemptHealth({
+    state: backup?.state ?? null,
+    verifiedAtLabel: backup?.verifiedAt?.toLocaleString() ?? null,
+    readinessMode: process.env.SITUATION_STUDIO_BACKUP_READINESS_MODE,
+  });
   return (
     <AppShell
       active="operations"
@@ -56,7 +73,7 @@ export default async function OperationsPage() {
             </p>
           </div>
         </header>
-        <div className="healthStrip">
+        <section className="healthStrip" aria-label="Operational health">
           <article
             className={
               reviewHeartbeat?.status.startsWith("PROVIDER_")
@@ -72,10 +89,14 @@ export default async function OperationsPage() {
                 : "one running globally"}
             </small>
           </article>
-          <article className={failedPublications ? "healthWarning" : ""}>
-            <span>Publisher failures</span>
-            <strong>{failedPublications}</strong>
-            <small>{failedPublications ? "attention needed" : "clear"}</small>
+          <article
+            className={
+              publicationHealth.tone === "warning" ? "healthWarning" : ""
+            }
+          >
+            <span>Publication recovery</span>
+            <strong>{publicationHealth.value}</strong>
+            <small>{publicationHealth.detail}</small>
           </article>
           <article>
             <span>Leadership observation</span>
@@ -87,17 +108,19 @@ export default async function OperationsPage() {
             </small>
           </article>
           <article
-            className={backup?.state === "FAILED" ? "healthWarning" : ""}
+            className={
+              backupHealth.tone === "warning"
+                ? "healthWarning"
+                : backupHealth.tone === "pending"
+                  ? "healthPending"
+                  : ""
+            }
           >
-            <span>Latest backup</span>
-            <strong>{backup?.state ?? "Waiting"}</strong>
-            <small>
-              {backup?.verifiedAt
-                ? backup.verifiedAt.toLocaleString()
-                : "no verified receipt yet"}
-            </small>
+            <span>Latest backup attempt</span>
+            <strong>{backupHealth.value}</strong>
+            <small>{backupHealth.detail}</small>
           </article>
-        </div>
+        </section>
         <OperationsDashboard
           csrfToken={session.csrfToken}
           users={users.map((user) => ({

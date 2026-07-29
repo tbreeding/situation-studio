@@ -3005,11 +3005,83 @@ button {
   }
 }
 
+.operationsPage {
+  width: min(92rem, calc(100% - 3rem));
+  margin: 0 auto;
+  padding: 3rem 0 4rem;
+}
+
+.healthStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  margin: 2.2rem 0 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  background: var(--line);
+  box-shadow: var(--shadow);
+}
+
+.healthStrip article {
+  min-width: 0;
+  min-height: 8.4rem;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  align-content: start;
+  gap: 0.35rem;
+  padding: 1.15rem 1.25rem 1.2rem;
+  background: var(--paper);
+  box-shadow: inset 0 3px 0 transparent;
+}
+
+.healthStrip article.healthPending {
+  background: linear-gradient(180deg, #fff9ef 0, var(--paper) 72%);
+  box-shadow: inset 0 3px 0 #c8892c;
+}
+
+.healthStrip article.healthWarning {
+  background: linear-gradient(180deg, var(--amber-soft) 0, var(--paper) 72%);
+  box-shadow: inset 0 3px 0 var(--amber);
+}
+
+.healthStrip span {
+  color: #68716c;
+  font-size: 0.7rem;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.healthStrip strong {
+  overflow-wrap: anywhere;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.35rem, 2vw, 1.75rem);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+.healthStrip small {
+  align-self: end;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.healthStrip .healthPending small {
+  color: #86501c;
+}
+
+.healthStrip .healthWarning small {
+  color: #863f20;
+}
+
 .operationsGrid {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(20rem, 0.8fr);
   gap: 1rem;
-  padding: 0 1.5rem 3rem;
+  padding: 0;
 }
 
 .operationsMessage {
@@ -3167,6 +3239,10 @@ button {
 }
 
 @media (max-width: 1060px) {
+  .healthStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .operationsGrid {
     grid-template-columns: 1fr;
   }
@@ -3190,8 +3266,22 @@ button {
 }
 
 @media (max-width: 680px) {
+  .operationsPage {
+    width: min(100% - 1.5rem, 48rem);
+    padding: 1.5rem 0 2rem;
+  }
+
+  .healthStrip {
+    grid-template-columns: 1fr;
+    margin-top: 1.5rem;
+  }
+
+  .healthStrip article {
+    min-height: 7.2rem;
+  }
+
   .operationsGrid {
-    padding: 0 0.75rem 2rem;
+    padding: 0;
   }
 
   .createUserForm {

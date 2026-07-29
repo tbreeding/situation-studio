@@ -13,6 +13,7 @@ import {
   reviewStages,
   serializeSituationSections,
   sha256,
+  validateScopedArtifactBody,
   type SituationBundle,
   type SituationSections,
 } from "../src/index";
@@ -170,6 +171,55 @@ describe("domain invariants", () => {
     });
     expect(variant.artifact.visibility).toBe("SITUATION_SCOPED");
     expect(variant.artifact.forkedFromContentHash).toBe("a".repeat(64));
+  });
+
+  it("enforces Leadership's complete scoped-practice contract upstream", () => {
+    const practice = {
+      id: "silence-in-one-on-one",
+      title: "Make room after nothing",
+      description: "Practice responding without pressuring disclosure.",
+      estimatedTime: "2 minutes",
+      rounds: [
+        {
+          id: "first",
+          setup: "The direct report says there is nothing to discuss.",
+          prompt: "What do you do?",
+          choices: [
+            {
+              id: "pause",
+              label: "Leave room to think.",
+              consequenceId: "room",
+              consequence: "The person gets processing space.",
+              explanation: "A pause reduces pressure.",
+              signal: "toward",
+            },
+            {
+              id: "press",
+              label: "Demand a topic.",
+              consequenceId: "pressure",
+              consequence: "The meeting becomes a disclosure test.",
+              explanation: "Pressure makes silence costly.",
+              signal: "away",
+            },
+          ],
+        },
+      ],
+    };
+    expect(
+      validateScopedArtifactBody("PRACTICE", JSON.stringify(practice)),
+    ).toMatchObject({
+      valid: false,
+      errors: [expect.stringContaining("rounds")],
+    });
+    practice.rounds.push({
+      id: "second",
+      setup: "The pause ends and there is still no topic.",
+      prompt: "What do you do next?",
+      choices: practice.rounds[0]!.choices,
+    });
+    expect(
+      validateScopedArtifactBody("PRACTICE", JSON.stringify(practice)),
+    ).toEqual({ valid: true, errors: [] });
   });
 
   it("rebases unrelated releases and blocks target conflicts", () => {

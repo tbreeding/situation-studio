@@ -31,6 +31,7 @@ import {
   situationBundleSchema,
   situationMetadataKeys,
   situationMetadataSchema,
+  validateScopedArtifactBody,
   validateSituationBundle,
   type SituationSectionTarget,
 } from "@situation-studio/domain";
@@ -194,6 +195,7 @@ export function rolePrompt(
       "A smaller structural target may use section/subheading for the body beneath a ###-or-deeper heading, or section#named-block for a blockquote whose bold label slug matches the anchor.",
       "For a top-level or /subheading SECTION edit, afterBody contains only the target body and never its Markdown heading. For a #named-block edit, afterBody contains the complete replacement blockquote and must retain the same bold label.",
       "For SCOPED_VARIANT, targetKey names an existing relationship logical ID. It may append #new-variant-id when afterBody is a complete JSON artifact whose id exactly matches that suffix.",
+      "A PRACTICE scoped variant must be complete JSON with at least two rounds and two to four choices per round. A SOURCE scoped variant must be complete JSON with id, title, URL, publisher, and note.",
       `AUTOMATIC METADATA targetKey must be one of: ${situationMetadataKeys.join(" | ")}. Treat any other metadata concept, including sourceReferences, as MANUAL because Situation Studio cannot apply it safely.`,
       "Use MANUAL only for embeds, broad bundle changes, or a concrete suggestion whose application needs editor judgment.",
       "For every retained important or blocking finding, provide the smallest safe automatic edit, an explicit manual suggestion, or a concise unresolved finding that names the missing evidence or decision. Zero candidate edits is appropriate only when none of those findings has a concrete safe or manual replacement.",
@@ -543,6 +545,16 @@ function applyCandidateEdit(
       target.variantId,
       change.afterBody,
     );
+    const scopedValidation = validateScopedArtifactBody(
+      relationship.kind,
+      change.afterBody,
+    );
+    if (!scopedValidation.valid)
+      throw new AdapterFailure(
+        "APPLICATION",
+        `Candidate scoped target ${change.targetKey} is invalid: ${scopedValidation.errors.join(" ")}`,
+        false,
+      );
     const variant = createScopedVariant({
       situationId: input.bundle.situationId,
       kind: relationship.kind as

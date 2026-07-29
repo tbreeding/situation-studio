@@ -1119,6 +1119,60 @@ describe("checkout fencing and the complete durable review DAG", () => {
       scoped: randomUUID(),
       manual: randomUUID(),
     };
+    const scopedPracticeBody = canonicalJson({
+      id: "situation-follow-up",
+      title: "Ask, reflect, and follow up",
+      description: "Practice a two-step response to a recurring concern.",
+      estimatedTime: "3 minutes",
+      rounds: [
+        {
+          id: "ask",
+          setup: "A direct report names a recurring obstacle.",
+          prompt: "What is your first response?",
+          choices: [
+            {
+              id: "learn",
+              label: "Ask what changed most recently.",
+              consequenceId: "specific-example",
+              consequence: "The conversation moves to observable detail.",
+              explanation: "A specific example slows premature diagnosis.",
+              signal: "toward",
+            },
+            {
+              id: "solve",
+              label: "Offer a solution immediately.",
+              consequenceId: "solution-first",
+              consequence: "The concern is narrowed before it is understood.",
+              explanation: "Learn the shape of the concern before solving it.",
+              signal: "away",
+            },
+          ],
+        },
+        {
+          id: "follow-up",
+          setup: "You understand the example and agree on one next step.",
+          prompt: "How do you close?",
+          choices: [
+            {
+              id: "date",
+              label: "Set a dated follow-up.",
+              consequenceId: "follow-through-visible",
+              consequence: "Both people know when the commitment is reviewed.",
+              explanation: "A dated follow-up makes support observable.",
+              signal: "toward",
+            },
+            {
+              id: "vague",
+              label: "Say you will keep an eye on it.",
+              consequenceId: "ownership-unclear",
+              consequence: "The next move and ownership stay ambiguous.",
+              explanation: "Close with a concrete owner and review point.",
+              signal: "away",
+            },
+          ],
+        },
+      ],
+    });
     const job = await workflows.queueReview({
       actorId: editorTwoId,
       checkoutId: created.checkout.id,
@@ -1188,8 +1242,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           targetKey: `${relationship.logicalId}#situation-follow-up`,
           applicationMode: "AUTOMATIC",
           beforeHash: newContextHash,
-          afterBody:
-            '{"id":"situation-follow-up","steps":["Ask what changed, then set one follow-up."]}',
+          afterBody: scopedPracticeBody,
           problem: "The shared practice needs situation-specific wording.",
           explanation: "Creates a provenance-retaining scoped variant.",
           rationale:
@@ -1244,11 +1297,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
     expect(appliedBundle.metadata.title).toBe(nextTitle);
     expect(appliedBundle.relationships[0]).toMatchObject({
       visibility: "SITUATION_SCOPED",
-      contentHash: sha256(
-        canonicalText(
-          '{"id":"situation-follow-up","steps":["Ask what changed, then set one follow-up."]}',
-        ),
-      ),
+      contentHash: sha256(canonicalText(scopedPracticeBody)),
     });
     expect(
       applied.artifacts.find((artifact) => artifact.kind === "SITUATION")

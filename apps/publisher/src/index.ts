@@ -10,6 +10,8 @@ import {
   canonicalJson,
   canonicalText,
   publicationConflictDecision,
+  scopedPracticeSchema,
+  scopedSourceSchema,
   sha256,
   situationBundleSchema,
   validateSituationBundle,
@@ -199,40 +201,6 @@ const manifestSchema = z.object({
       evidence: z.string().min(1),
     }),
   ),
-});
-
-const practiceSchema = z.object({
-  id: z.string().min(1).max(160),
-  title: z.string().min(1),
-  description: z.string().min(1),
-  estimatedTime: z.string().min(1),
-  rounds: z
-    .array(
-      z.object({
-        id: z.string().min(1),
-        setup: z.string().min(1),
-        prompt: z.string().min(1),
-        choices: z.array(
-          z.object({
-            id: z.string().min(1),
-            label: z.string().min(1),
-            consequenceId: z.string().min(1),
-            consequence: z.string().min(1),
-            explanation: z.string().min(1),
-            signal: z.enum(["toward", "pause", "away"]),
-          }),
-        ),
-      }),
-    )
-    .min(2),
-});
-
-const sourceSchema = z.object({
-  id: z.string().min(1).max(160),
-  title: z.string().min(1),
-  url: z.url(),
-  publisher: z.string().min(1),
-  note: z.string().min(1),
 });
 
 function jsonInput(value: unknown): Prisma.InputJsonValue {
@@ -1525,7 +1493,7 @@ async function insertScopedProjection(
       ],
     );
     if (variant.type === "PRACTICE") {
-      const practice = practiceSchema.parse(JSON.parse(variant.body));
+      const practice = scopedPracticeSchema.parse(JSON.parse(variant.body));
       const practiceId = crypto.randomUUID();
       const projectedPracticeId = `${variant.forkedFromLogicalId.replace(/^practice:/u, "").slice(0, 80)}--${variant.contentHash.slice(0, 12)}`;
       await client.query(
@@ -1592,7 +1560,7 @@ async function insertScopedProjection(
       }
     } else if (variant.type === "SOURCE") {
       const parsed = JSON.parse(variant.body) as unknown;
-      const source = sourceSchema.parse(
+      const source = scopedSourceSchema.parse(
         Array.isArray(parsed) ? parsed[0] : parsed,
       );
       const position = await client.query<{ position: number }>(

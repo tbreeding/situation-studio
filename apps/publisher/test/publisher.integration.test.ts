@@ -18,6 +18,7 @@ import {
 } from "@situation-studio/leadership-bridge";
 import {
   bundleHash,
+  canonicalJson,
   canonicalText,
   sha256,
   situationBundleSchema,
@@ -766,6 +767,145 @@ describe("durable cross-database publisher", () => {
       });
     } finally {
       await client.end();
+    }
+  });
+
+  it("rejects an incomplete scoped practice before queuing and publishes a complete replacement", async () => {
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    const situation = await studio.situation.findUniqueOrThrow({
+      where: { slug: "nothing-in-one-on-ones" },
+    });
+    const checkout = await workflows.checkoutSituation({
+      situationId: situation.id,
+      actorId: user.id,
+    });
+    const workspace = await workflows.workspaceForSlug(situation.slug);
+    const revision = workspace?.drafts[0]?.revisions[0];
+    const practiceRelationship = situationBundleSchema
+      .parse(revision?.bundleManifest)
+      .relationships.find((relationship) => relationship.kind === "PRACTICE");
+    if (!practiceRelationship)
+      throw new Error("The test situation has no practice relationship.");
+    const rounds = [
+      {
+        id: "notice",
+        setup: "A delivery commitment slips for the second time.",
+        prompt: "What do you do first?",
+        choices: [
+          {
+            id: "ask",
+            label: "Ask for the most recent example.",
+            consequenceId: "specific",
+            consequence: "The conversation starts with observable detail.",
+            explanation: "A specific example slows premature diagnosis.",
+            signal: "toward",
+          },
+          {
+            id: "label",
+            label: "Call the person unreliable.",
+            consequenceId: "judged",
+            consequence: "A character judgment replaces the work pattern.",
+            explanation: "Describe the pattern before evaluating the person.",
+            signal: "away",
+          },
+        ],
+      },
+      {
+        id: "follow-up",
+        setup: "You agree on one next commitment.",
+        prompt: "How do you close?",
+        choices: [
+          {
+            id: "date",
+            label: "Set a dated follow-up.",
+            consequenceId: "visible",
+            consequence: "The commitment has a clear review point.",
+            explanation: "A date makes follow-through observable.",
+            signal: "toward",
+          },
+          {
+            id: "hope",
+            label: "Say you hope it improves.",
+            consequenceId: "vague",
+            consequence: "Ownership and timing remain unclear.",
+            explanation: "Close with a concrete owner and review point.",
+            signal: "away",
+          },
+        ],
+      },
+    ];
+    const practice = {
+      id: "delivery-follow-up",
+      title: "Name the pattern and follow up",
+      description: "Practice moving from an example to a dated commitment.",
+      estimatedTime: "3 minutes",
+      rounds: rounds.slice(0, 1),
+    };
+    await expect(
+      workflows.createScopedArtifactEdit({
+        actorId: user.id,
+        checkoutId: checkout.id,
+        fence: checkout.fence,
+        originalLogicalId: practiceRelationship.logicalId,
+        kind: "PRACTICE",
+        originalContentHash: practiceRelationship.contentHash,
+        changedBody: canonicalJson(practice),
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_SCOPED_ARTIFACT", status: 422 });
+    practice.rounds = rounds;
+    const scoped = await workflows.createScopedArtifactEdit({
+      actorId: user.id,
+      checkoutId: checkout.id,
+      fence: checkout.fence,
+      originalLogicalId: practiceRelationship.logicalId,
+      kind: "PRACTICE",
+      originalContentHash: practiceRelationship.contentHash,
+      changedBody: canonicalJson(practice),
+    });
+    const job = await workflows.requestPublication({
+      actorId: user.id,
+      checkoutId: checkout.id,
+      fence: checkout.fence,
+    });
+    await processAgainstCurrentRuntime(job.id);
+    expect(
+      await studio.publicationJob.findUniqueOrThrow({ where: { id: job.id } }),
+    ).toMatchObject({ state: "SUCCEEDED", failureCode: null });
+
+    const release = await leadershipIdentity(leadershipUrl);
+    const leadership = new Client({ connectionString: leadershipUrl });
+    await leadership.connect();
+    try {
+      const proof = await leadership.query<{
+        practices: string;
+        rounds: string;
+      }>(
+        `
+          SELECT
+            count(DISTINCT practice.id)::text AS practices,
+            count(round.id)::text AS rounds
+          FROM practices practice
+          LEFT JOIN practice_rounds round
+            ON round.practice_version_id = practice.id
+          WHERE practice.release_id = $1
+            AND practice.visibility = 'SITUATION_SCOPED'
+            AND practice.owner_situation_slug = $2
+            AND practice.forked_from_logical_id = $3
+            AND practice.forked_from_content_hash = $4
+        `,
+        [
+          release.releaseId,
+          situation.slug,
+          practiceRelationship.logicalId,
+          practiceRelationship.contentHash,
+        ],
+      );
+      expect(proof.rows[0]).toEqual({ practices: "1", rounds: "2" });
+      expect(scoped.variant.visibility).toBe("SITUATION_SCOPED");
+    } finally {
+      await leadership.end();
     }
   });
 

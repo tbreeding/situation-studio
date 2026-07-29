@@ -232,4 +232,81 @@ describe("candidate section-target materialization", () => {
     });
     expect(candidate.bundle.metadata).not.toHaveProperty("sourceReferences");
   });
+
+  it("rejects an incomplete scoped practice before downstream audits", () => {
+    const { body, bundle } = fixture();
+    const contextHash = "b".repeat(64);
+    bundle.relationships = [
+      {
+        kind: "PRACTICE",
+        logicalId: "practice:listen-first",
+        position: 0,
+        contentHash: contextHash,
+        visibility: "GLOBAL",
+      },
+    ];
+    bundle.contextHashes = [contextHash];
+    const scoped = bundleWriterOutputSchema.parse({
+      role: "bundle-writer",
+      summary: "Create a situation-specific practice.",
+      findings: [],
+      provenance: "candidate-materialization-test",
+      candidateEdits: [
+        {
+          id: "201eb1cb-c6d6-476d-9462-aa560519596e",
+          targetKind: "SCOPED_VARIANT",
+          targetKey: "practice:listen-first#silence-in-one-on-one",
+          applicationMode: "AUTOMATIC",
+          beforeHash: null,
+          afterBody: JSON.stringify({
+            id: "silence-in-one-on-one",
+            title: "Make room after nothing",
+            description: "Practice responding without pressure.",
+            estimatedTime: "2 minutes",
+            rounds: [
+              {
+                id: "only-round",
+                setup: "The direct report says there is nothing to discuss.",
+                prompt: "What do you do?",
+                choices: [
+                  {
+                    id: "pause",
+                    label: "Leave room to think.",
+                    consequenceId: "room",
+                    consequence: "The person gets processing space.",
+                    explanation: "A pause reduces pressure.",
+                    signal: "toward",
+                  },
+                  {
+                    id: "press",
+                    label: "Demand a topic.",
+                    consequenceId: "pressure",
+                    consequence: "The meeting becomes a disclosure test.",
+                    explanation: "Pressure makes silence costly.",
+                    signal: "away",
+                  },
+                ],
+              },
+            ],
+          }),
+          problem: "The shared practice is too broad.",
+          explanation: "Scopes the practice to this situation.",
+          rationale: "The practice should match the revised guidance.",
+          upstreamFindingIds: ["adjudicator:retained-change"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["adjudicator"],
+        },
+      ],
+    }).candidateEdits;
+
+    expect(() =>
+      materializeCandidateRevision({
+        inputRevisionId: "fb078234-6ef7-43cb-8d7b-3a1dc6610467",
+        inputBundleHash: "a".repeat(64),
+        bundleManifest: bundle,
+        body,
+        changes: scoped,
+      }),
+    ).toThrow(/rounds/u);
+  });
 });

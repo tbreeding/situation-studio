@@ -44,6 +44,71 @@ export const artifactVisibility = [
   "INTERNAL",
 ] as const;
 
+export const scopedPracticeChoiceSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  consequenceId: z.string().min(1),
+  consequence: z.string().min(1),
+  explanation: z.string().min(1),
+  signal: z.enum(["toward", "pause", "away"]),
+});
+
+export const scopedPracticeRoundSchema = z.object({
+  id: z.string().min(1),
+  setup: z.string().min(1),
+  prompt: z.string().min(1),
+  choices: z.array(scopedPracticeChoiceSchema).min(2).max(4),
+});
+
+export const scopedPracticeSchema = z.object({
+  id: z.string().min(1).max(160),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  estimatedTime: z.string().min(1),
+  rounds: z.array(scopedPracticeRoundSchema).min(2),
+});
+
+export const scopedSourceSchema = z.object({
+  id: z.string().min(1).max(160),
+  title: z.string().min(1),
+  url: z.url(),
+  publisher: z.string().min(1),
+  note: z.string().min(1),
+});
+
+export function validateScopedArtifactBody(kind: string, body: string) {
+  if (!body.trim())
+    return {
+      valid: false as const,
+      errors: ["Scoped artifact content must not be empty."],
+    };
+  if (kind !== "PRACTICE" && kind !== "SOURCE")
+    return { valid: true as const, errors: [] };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return {
+      valid: false as const,
+      errors: [`Scoped ${kind.toLowerCase()} content must be valid JSON.`],
+    };
+  }
+  const candidate =
+    kind === "SOURCE" && Array.isArray(parsed) ? parsed[0] : parsed;
+  const result =
+    kind === "PRACTICE"
+      ? scopedPracticeSchema.safeParse(candidate)
+      : scopedSourceSchema.safeParse(candidate);
+  if (result.success) return { valid: true as const, errors: [] };
+  return {
+    valid: false as const,
+    errors: result.error.issues.map((issue) => {
+      const path = issue.path.length ? `${issue.path.join(".")}: ` : "";
+      return `${path}${issue.message}`;
+    }),
+  };
+}
+
 export const relationshipSchema = z.object({
   kind: z.string().min(1).max(80),
   logicalId: z.string().min(1).max(240),

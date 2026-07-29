@@ -130,7 +130,7 @@ export default async function SituationPage({
       }
     : null;
   const variantsByLogicalId = new Map(
-    workspace.variants.map((variant) => [variant.forkedFromLogicalId, variant]),
+    workspace.variants.map((variant) => [variant.logicalId, variant]),
   );
   const context = initialBundle.relationships.map((relationship) => ({
     logicalId: relationship.logicalId,

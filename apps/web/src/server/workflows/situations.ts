@@ -17,6 +17,7 @@ import {
   situationSectionTargetBefore,
   situationBundleSchema,
   situationMetadataSchema,
+  validateScopedArtifactBody,
   validateSituationBundle,
   type SituationBundle,
   type SituationMetadata,
@@ -941,6 +942,31 @@ export async function requestPublication(input: {
           422,
           "VALIDATION_FAILED",
         );
+      for (const relationship of targetBundle.relationships) {
+        if (
+          relationship.visibility === "GLOBAL" ||
+          (relationship.kind !== "PRACTICE" && relationship.kind !== "SOURCE")
+        )
+          continue;
+        const artifact = await transaction.scopedArtifactVariant.findUnique({
+          where: { logicalId: relationship.logicalId },
+          include: { content: true },
+        });
+        const retainedBody =
+          artifact?.contentHash === relationship.contentHash
+            ? (artifact.content.textBody ?? "")
+            : "";
+        const scopedValidation = validateScopedArtifactBody(
+          relationship.kind,
+          retainedBody,
+        );
+        if (!scopedValidation.valid)
+          throw new WorkflowError(
+            `Scoped ${relationship.kind.toLowerCase()} ${relationship.logicalId} is invalid: ${scopedValidation.errors.join(" ")}`,
+            422,
+            "INVALID_SCOPED_ARTIFACT",
+          );
+      }
       const job = await transaction.publicationJob.create({
         data: {
           publicationId: crypto.randomUUID(),
@@ -1278,11 +1304,45 @@ export async function createScopedArtifactEdit(input: {
         throw new WorkflowError(
           "The shared artifact changed. Reload before forking.",
         );
+      if (relationship.kind !== input.kind)
+        throw new WorkflowError(
+          "The scoped artifact kind does not match the current relationship.",
+          422,
+          "INVALID_SCOPED_ARTIFACT",
+        );
+      const scopedValidation = validateScopedArtifactBody(
+        input.kind,
+        input.changedBody,
+      );
+      if (!scopedValidation.valid)
+        throw new WorkflowError(
+          `The scoped ${input.kind.toLowerCase()} is invalid: ${scopedValidation.errors.join(" ")}`,
+          422,
+          "INVALID_SCOPED_ARTIFACT",
+        );
+      const currentVariant = await transaction.scopedArtifactVariant.findUnique(
+        {
+          where: { logicalId: relationship.logicalId },
+        },
+      );
+      if (
+        currentVariant &&
+        currentVariant.ownerSituationId !== checkout.situationId
+      )
+        throw new WorkflowError(
+          "The current scoped artifact belongs to another situation.",
+          409,
+          "SCOPED_VARIANT_CONFLICT",
+        );
+      const forkedFromLogicalId =
+        currentVariant?.forkedFromLogicalId ?? relationship.logicalId;
+      const forkedFromContentHash =
+        currentVariant?.forkedFromContentHash ?? relationship.contentHash;
       const variant = createScopedVariant({
         situationId: checkout.situationId,
         kind: input.kind,
-        originalLogicalId: input.originalLogicalId,
-        originalContentHash: input.originalContentHash,
+        originalLogicalId: forkedFromLogicalId,
+        originalContentHash: forkedFromContentHash,
         changedBody: input.changedBody,
       });
       await putTextBlob(
@@ -1292,27 +1352,47 @@ export async function createScopedArtifactEdit(input: {
           ? "application/json; charset=utf-8"
           : "text/markdown; charset=utf-8",
       );
-      await transaction.scopedArtifactVariant.create({
-        data: {
-          ownerSituationId: checkout.situationId,
-          logicalId: variant.artifact.logicalId,
-          kind: input.kind,
-          visibility: variant.artifact.visibility,
-          forkedFromLogicalId: input.originalLogicalId,
-          forkedFromContentHash: input.originalContentHash,
-          contentHash: variant.artifact.contentHash,
-        },
-      });
+      const retainedVariant =
+        await transaction.scopedArtifactVariant.findUnique({
+          where: { logicalId: variant.artifact.logicalId },
+        });
+      if (!retainedVariant)
+        await transaction.scopedArtifactVariant.create({
+          data: {
+            ownerSituationId: checkout.situationId,
+            logicalId: variant.artifact.logicalId,
+            kind: input.kind,
+            visibility: variant.artifact.visibility,
+            forkedFromLogicalId,
+            forkedFromContentHash,
+            contentHash: variant.artifact.contentHash,
+          },
+        });
+      else if (
+        retainedVariant.ownerSituationId !== checkout.situationId ||
+        retainedVariant.kind !== input.kind ||
+        retainedVariant.forkedFromLogicalId !== forkedFromLogicalId ||
+        retainedVariant.forkedFromContentHash !== forkedFromContentHash ||
+        retainedVariant.contentHash !== variant.artifact.contentHash
+      )
+        throw new WorkflowError(
+          "The scoped edit conflicts with a retained variant.",
+          409,
+          "SCOPED_VARIANT_CONFLICT",
+        );
       const nextBundle = situationBundleSchema.parse({
         ...currentBundle,
         artifacts: [
           ...currentBundle.artifacts.filter(
-            (artifact) => artifact.logicalId !== variant.artifact.logicalId,
+            (artifact) =>
+              artifact.logicalId !== variant.artifact.logicalId &&
+              (!currentVariant ||
+                artifact.logicalId !== currentVariant.logicalId),
           ),
           variant.artifact,
         ],
         relationships: currentBundle.relationships.map((item) =>
-          item.logicalId === input.originalLogicalId
+          item.logicalId === relationship.logicalId
             ? {
                 ...item,
                 logicalId: variant.artifact.logicalId,
@@ -1322,7 +1402,7 @@ export async function createScopedArtifactEdit(input: {
             : item,
         ),
         contextHashes: currentBundle.relationships.map((item) =>
-          item.logicalId === input.originalLogicalId
+          item.logicalId === relationship.logicalId
             ? variant.artifact.contentHash
             : item.contentHash,
         ),
@@ -1687,6 +1767,16 @@ async function applyProposalChanges(
             "INVALID_SUGGESTION",
           );
       }
+      const scopedValidation = validateScopedArtifactBody(
+        relationship.kind,
+        afterBody,
+      );
+      if (!scopedValidation.valid)
+        throw new WorkflowError(
+          `Scoped suggestion ${change.targetKey} is invalid: ${scopedValidation.errors.join(" ")}`,
+          422,
+          "INVALID_SUGGESTION",
+        );
       const variant = createScopedVariant({
         situationId: input.checkout.situationId,
         kind: relationship.kind as

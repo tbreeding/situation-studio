@@ -6,6 +6,10 @@ import {
   type PublicationEventKind,
 } from "@situation-studio/db";
 import {
+  snapshotManifestSchema as leadershipSnapshotManifestSchema,
+  validationPolicyHash as leadershipValidationPolicyHash,
+} from "@leadership-field-guide/content-contracts";
+import {
   bundleHash,
   canonicalJson,
   canonicalText,
@@ -810,6 +814,15 @@ async function buildCandidate(
 
 export function validateCandidate(candidate: CandidateSnapshot) {
   const manifest = manifestSchema.parse(candidate.manifest);
+  const leadershipManifest = leadershipSnapshotManifestSchema.parse(
+    candidate.manifest,
+  );
+  if (
+    leadershipManifest.validationPolicyHash !== leadershipValidationPolicyHash
+  )
+    throw new Error(
+      "Candidate validation policy differs from the Leadership runtime.",
+    );
   if (canonicalJson(manifest) !== candidate.manifestBody)
     throw new Error("Candidate manifest is not canonical.");
   if (sha256(candidate.manifestBody) !== candidate.manifestHash)

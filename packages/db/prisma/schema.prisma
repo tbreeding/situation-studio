@@ -728,6 +728,19 @@ model VerificationReceipt {
   observedRuntimeReleaseId  String         @map("observed_runtime_release_id") @db.Uuid
   observedRuntimeHash       String         @map("observed_runtime_hash") @db.Char(64)
   pointerGeneration         BigInt         @map("pointer_generation")
+  producerCommit            String?        @map("producer_commit") @db.Char(40)
+  producerContractDigest    String?        @map("producer_contract_digest") @db.Char(64)
+  consumerCommit            String?        @map("consumer_commit") @db.Char(40)
+  capabilityDigest          String?        @map("capability_digest") @db.Char(64)
+  affectedSituationSlug     String?        @map("affected_situation_slug") @db.VarChar(160)
+  typedParityCode           String?        @map("typed_parity_code") @db.VarChar(100)
+  routeProbeCode            String?        @map("route_probe_code") @db.VarChar(100)
+  routeHttpStatus           Int?           @map("route_http_status")
+  observedRouteReleaseId    String?        @map("observed_route_release_id") @db.Uuid
+  observedRouteManifestHash String?        @map("observed_route_manifest_hash") @db.Char(64)
+  observedSituationBodyHash String?        @map("observed_situation_body_hash") @db.Char(64)
+  observedPracticeLogicalId String?        @map("observed_practice_logical_id") @db.VarChar(240)
+  observedPracticeContentHash String?      @map("observed_practice_content_hash") @db.Char(64)
   verifiedAt                DateTime       @default(now()) @map("verified_at") @db.Timestamptz(3)
   job                       PublicationJob @relation(fields: [jobId], references: [id], onDelete: Restrict)
 

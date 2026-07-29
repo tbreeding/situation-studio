@@ -3,6 +3,7 @@ import {
   CONTRACT_VERSION,
   VALIDATION_POLICY_VERSION,
   applySituationSectionTarget,
+  assertSafeManagedMdx,
   bundleHash,
   canonicalText,
   canonicalJson,
@@ -24,7 +25,9 @@ import {
   type SituationSections,
 } from "@situation-studio/domain";
 import { REVIEW_POLICY_VERSION } from "@situation-studio/review-policy";
+import { LeadershipCapabilityError } from "@situation-studio/leadership-bridge";
 import { database } from "@/server/database";
+import { requireCompatibleLeadershipRuntime } from "@/server/leadership-compatibility";
 import { reconcileLeadershipRelease } from "@/server/leadership-sync";
 
 type Transaction = Parameters<Parameters<DatabaseClient["$transaction"]>[0]>[0];
@@ -45,6 +48,20 @@ const activePublicationStates = [
   "PROMOTING",
   "VERIFYING",
 ] as const;
+
+function assertManagedSituationMdx(body: string) {
+  try {
+    assertSafeManagedMdx(body, "situation draft");
+  } catch (error) {
+    throw new WorkflowError(
+      error instanceof Error
+        ? error.message
+        : "The situation contains unsafe managed MDX.",
+      422,
+      "UNSAFE_MANAGED_MDX",
+    );
+  }
+}
 
 async function assertNoActivePublication(
   transaction: Transaction,
@@ -677,11 +694,28 @@ export async function startOverFromProduction(input: {
   );
 }
 
+async function compatibleLeadershipRuntimeForWorkflow(): Promise<
+  Awaited<ReturnType<typeof requireCompatibleLeadershipRuntime>>
+> {
+  try {
+    return await requireCompatibleLeadershipRuntime();
+  } catch (error) {
+    if (error instanceof LeadershipCapabilityError)
+      throw new WorkflowError(
+        error.message,
+        error.retryable ? 503 : 409,
+        error.code,
+      );
+    throw error;
+  }
+}
+
 export async function queueReview(input: {
   actorId: string;
   checkoutId: string;
   fence: bigint;
 }) {
+  const runtimeCapabilities = await compatibleLeadershipRuntimeForWorkflow();
   try {
     return await database().$transaction(
       async (transaction) => {
@@ -695,7 +729,11 @@ export async function queueReview(input: {
           include: {
             draft: {
               include: {
-                revisions: { orderBy: { revision: "desc" }, take: 1 },
+                revisions: {
+                  orderBy: { revision: "desc" },
+                  take: 1,
+                  include: { artifacts: { include: { content: true } } },
+                },
               },
             },
           },
@@ -705,6 +743,12 @@ export async function queueReview(input: {
         await assertNoActivePublication(transaction, checkout.situationId);
         const revision = checkout.draft.revisions[0];
         if (!revision) throw new WorkflowError("Save the draft before review.");
+        const body = revision.artifacts.find(
+          (artifact) => artifact.kind === "SITUATION",
+        )?.content.textBody;
+        if (!body)
+          throw new WorkflowError("Save the situation body before review.");
+        assertManagedSituationMdx(body);
         const job = await transaction.reviewJob.create({
           data: {
             situationId: checkout.situationId,
@@ -740,6 +784,8 @@ export async function queueReview(input: {
             payload: {
               inputRevisionId: revision.id,
               stepCount: job.steps.length,
+              leadershipCapabilityDigest: runtimeCapabilities.capabilityDigest,
+              leadershipRuntimeCommit: runtimeCapabilities.deployment.commit,
             },
           },
         });
@@ -821,16 +867,26 @@ export async function cancelReview(input: {
 }
 
 export async function retryReview(input: { actorId: string; jobId: string }) {
+  const runtimeCapabilities = await compatibleLeadershipRuntimeForWorkflow();
   return database().$transaction(
     async (transaction) => {
       const job = await transaction.reviewJob.findFirst({
         where: { id: input.jobId, state: "FAILED" },
         include: {
           steps: { orderBy: { ordinal: "asc" } },
+          inputRevision: {
+            include: { artifacts: { include: { content: true } } },
+          },
         },
       });
       if (!job)
         throw new WorkflowError("The failed review is unavailable.", 404);
+      const body = job.inputRevision.artifacts.find(
+        (artifact) => artifact.kind === "SITUATION",
+      )?.content.textBody;
+      if (!body)
+        throw new WorkflowError("The reviewed situation body is unavailable.");
+      assertManagedSituationMdx(body);
       const checkout = await transaction.situationCheckout.findFirst({
         where: {
           id: job.checkoutId,
@@ -875,7 +931,11 @@ export async function retryReview(input: { actorId: string; jobId: string }) {
           action: "REVIEW_RETRIED",
           subjectType: "REVIEW_JOB",
           subjectId: job.id,
-          payload: { resumedOrdinal: failed.ordinal },
+          payload: {
+            resumedOrdinal: failed.ordinal,
+            leadershipCapabilityDigest: runtimeCapabilities.capabilityDigest,
+            leadershipRuntimeCommit: runtimeCapabilities.deployment.commit,
+          },
         },
       });
       return queued;
@@ -890,6 +950,7 @@ export async function requestPublication(input: {
   fence: bigint;
 }) {
   await reconcileLeadershipRelease();
+  const runtimeCapabilities = await compatibleLeadershipRuntimeForWorkflow();
   return database().$transaction(
     async (transaction) => {
       const checkout = await transaction.situationCheckout.findFirst({
@@ -922,6 +983,7 @@ export async function requestPublication(input: {
       )?.content.textBody;
       if (!revision || !body)
         throw new WorkflowError("The latest saved revision is unavailable.");
+      assertManagedSituationMdx(body);
       const targetBundle = situationBundleSchema.parse(revision.bundleManifest);
       const agentAssisted = await transaction.proposalChange.count({
         where: { appliedRevisionId: revision.id, state: "ACCEPTED" },
@@ -985,6 +1047,9 @@ export async function requestPublication(input: {
               payload: {
                 sourceKind,
                 targetBundleHash: revision.bundleHash,
+                leadershipCapabilityDigest:
+                  runtimeCapabilities.capabilityDigest,
+                leadershipRuntimeCommit: runtimeCapabilities.deployment.commit,
               },
             },
           },
@@ -1000,6 +1065,8 @@ export async function requestPublication(input: {
             situationId: checkout.situationId,
             sourceKind,
             targetBundleHash: revision.bundleHash,
+            leadershipCapabilityDigest: runtimeCapabilities.capabilityDigest,
+            leadershipRuntimeCommit: runtimeCapabilities.deployment.commit,
           },
         },
       });

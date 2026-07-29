@@ -12,7 +12,8 @@
   "dependencies": {
     "@situation-studio/db": "workspace:*",
     "@situation-studio/domain": "workspace:*",
-    "pg": "8.22.0"
+    "pg": "8.22.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

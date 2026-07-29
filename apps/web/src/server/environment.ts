@@ -11,6 +11,7 @@ const schema = z
     THROTTLE_SECRET: z.string().min(32),
     SITUATION_STUDIO_ORIGIN: z.url(),
     LEADERSHIP_STUDIO_READER_DATABASE_URL: z.url().optional(),
+    LEADERSHIP_RUNTIME_CAPABILITIES_URL: z.url().optional(),
   })
   .superRefine((value, context) => {
     if (
@@ -30,6 +31,16 @@ const schema = z
         code: "custom",
         path: ["LEADERSHIP_STUDIO_READER_DATABASE_URL"],
         message: "Production requires the Leadership read-only connection.",
+      });
+    if (
+      value.NODE_ENV === "production" &&
+      !value.LEADERSHIP_RUNTIME_CAPABILITIES_URL
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["LEADERSHIP_RUNTIME_CAPABILITIES_URL"],
+        message:
+          "Production requires the Leadership runtime-capabilities endpoint.",
       });
   });
 

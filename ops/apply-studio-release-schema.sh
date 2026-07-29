@@ -108,6 +108,20 @@ docker exec postgres16 psql \
           AND table_name = 'proposal_changes'
           AND column_name = 'application_mode'
       )
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'verification_receipts'
+          AND column_name = 'capability_digest'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'verification_receipts'
+          AND column_name = 'route_probe_code'
+      )
       AND has_table_privilege(
         'situation_studio_review_worker',
         'public.audit_events',

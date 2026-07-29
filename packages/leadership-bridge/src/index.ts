@@ -15,6 +15,8 @@ import {
   type SituationMetadata,
 } from "@situation-studio/domain";
 
+export * from "./runtime-capabilities";
+
 type ReleaseRow = {
   release_id: string;
   manifest_hash: string;

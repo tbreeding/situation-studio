@@ -17,6 +17,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@situation-studio/leadership-bridge": "workspace:*",
     "@types/node": "24.13.3",
     "typescript": "5.9.3"
   }

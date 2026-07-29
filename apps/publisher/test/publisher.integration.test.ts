@@ -12,9 +12,15 @@ import {
   type DatabaseClient,
 } from "@situation-studio/db";
 import {
+  LeadershipCapabilityError,
+  leadershipCapabilitySchemaVersion,
+  leadershipTypedParityPredicate,
   importLeadershipRelease,
   readLeadershipReleaseHistory,
   readOfficialLeadershipRelease,
+  requiredContentContractIdentity,
+  requiredLeadershipFeatures,
+  requiredSituationContractIdentity,
 } from "@situation-studio/leadership-bridge";
 import {
   bundleHash,
@@ -27,18 +33,71 @@ import {
   claimPublicationJob,
   processPublicationJob,
   PublisherCrashInjectionError,
+  PublisherVerificationError,
   reconcilePublicationRecovery,
   type PublisherBoundary,
 } from "../src/index";
 
 const executeFile = promisify(execFile);
 const studioRoot = path.resolve(import.meta.dirname, "../../..");
-const leadershipRoot = path.resolve(studioRoot, "../leadership");
+const leadershipRoot =
+  process.env.LEADERSHIP_TEST_ROOT ?? path.resolve(studioRoot, "../leadership");
 
 function databaseUrl(container: StartedPostgreSqlContainer) {
   return container
     .getConnectionUri()
     .replace(/^postgres:\/\//u, "postgresql://");
+}
+
+function compatibleCapabilities() {
+  const capabilitySet = {
+    schemaVersion: leadershipCapabilitySchemaVersion,
+    deployment: {
+      commit: "d".repeat(40),
+      releaseId: "integration-runtime",
+      archiveSha256: "a".repeat(64),
+    },
+    contracts: {
+      content: requiredContentContractIdentity,
+      situation: requiredSituationContractIdentity,
+    },
+    database: { predicate: leadershipTypedParityPredicate },
+    features: [...requiredLeadershipFeatures],
+  };
+  return {
+    ...capabilitySet,
+    capabilityDigest: sha256(canonicalJson(capabilitySet)),
+  };
+}
+
+function runtimeContractDependencies() {
+  return {
+    runtimeCapabilities: async () => compatibleCapabilities(),
+    runtimeRouteProof: async (
+      expected: import("../src/index").RuntimeRouteExpectation,
+    ) =>
+      expected.visibility === "RETIRED"
+        ? {
+            code: "AFFECTED_ROUTE_RETIRED" as const,
+            httpStatus: 404,
+            observedReleaseId: null,
+            observedManifestHash: null,
+            observedSituationBodyHash: null,
+            observedPracticeLogicalId: null,
+            observedPracticeContentHash: null,
+          }
+        : {
+            code: "AFFECTED_ROUTE_VERIFIED" as const,
+            httpStatus: 200,
+            observedReleaseId: expected.releaseId,
+            observedManifestHash: expected.manifestHash,
+            observedSituationBodyHash: expected.situationBodyHash,
+            observedPracticeLogicalId:
+              expected.practice?.resolvedLogicalId ?? null,
+            observedPracticeContentHash: expected.practice?.contentHash ?? null,
+          },
+    producerCommit: "e".repeat(40),
+  };
 }
 
 async function command(
@@ -173,6 +232,10 @@ describe("durable cross-database publisher", () => {
     process.env.CSRF_SECRET = "c".repeat(32);
     process.env.THROTTLE_SECRET = "t".repeat(32);
     process.env.SITUATION_STUDIO_ORIGIN = "http://127.0.0.1:3015";
+    process.env.LEADERSHIP_STUDIO_READER_DATABASE_URL = leadershipReaderUrl;
+    process.env.LEADERSHIP_RUNTIME_CAPABILITIES_URL = `data:application/json,${encodeURIComponent(
+      JSON.stringify(compatibleCapabilities()),
+    )}`;
     workflows = await import("@/server/workflows/situations");
     expect(user.id).toMatch(/^[a-f0-9-]{36}$/u);
   });
@@ -233,6 +296,7 @@ describe("durable cross-database publisher", () => {
       {
         studio,
         leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
         onFailure: (error) => {
           lastPublisherError = error;
         },
@@ -341,6 +405,152 @@ describe("durable cross-database publisher", () => {
     }
   });
 
+  it("rejects an incompatible Leadership runtime before creating a review job", async () => {
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    const situation = await studio.situation.findUniqueOrThrow({
+      where: { slug: "defensive-about-feedback" },
+    });
+    const checkout = await workflows.checkoutSituation({
+      situationId: situation.id,
+      actorId: user.id,
+    });
+    const reviewCount = await studio.reviewJob.count({
+      where: { situationId: situation.id },
+    });
+    const { capabilityDigest: _digest, ...compatibleSet } =
+      compatibleCapabilities();
+    const incompatibleSet = {
+      ...compatibleSet,
+      contracts: {
+        ...compatibleSet.contracts,
+        content: {
+          ...compatibleSet.contracts.content,
+          version: "0.1.1",
+        },
+      },
+    };
+    const incompatible = {
+      ...incompatibleSet,
+      capabilityDigest: sha256(canonicalJson(incompatibleSet)),
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify(incompatible), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    try {
+      await expect(
+        workflows.queueReview({
+          actorId: user.id,
+          checkoutId: checkout.id,
+          fence: checkout.fence,
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        code: "UNSUPPORTED_CONTRACT_IDENTITY",
+      });
+      await expect(
+        studio.reviewJob.count({
+          where: { situationId: situation.id },
+        }),
+      ).resolves.toBe(reviewCount);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await workflows.checkInSituation({
+        actorId: user.id,
+        checkoutId: checkout.id,
+        fence: checkout.fence,
+      });
+    }
+  });
+
+  it("rejects forged runtime-proof MDX before creating a review job", async () => {
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    const situation = await studio.situation.findUniqueOrThrow({
+      where: { slug: "defensive-about-feedback" },
+    });
+    const checkout = await workflows.checkoutSituation({
+      situationId: situation.id,
+      actorId: user.id,
+    });
+    let original:
+      | {
+          body: string;
+          bundle: ReturnType<typeof situationBundleSchema.parse>;
+        }
+      | undefined;
+    try {
+      const workspace = await workflows.workspaceForSlug(situation.slug);
+      const revision = workspace?.drafts[0]?.revisions[0];
+      const body = revision?.artifacts.find(
+        (artifact) => artifact.kind === "SITUATION",
+      )?.content.textBody;
+      if (!revision || !body)
+        throw new Error("Review-safety fixture draft is unavailable.");
+      original = {
+        body,
+        bundle: situationBundleSchema.parse(revision.bundleManifest),
+      };
+      const forgedBody = canonicalText(
+        `${body}\n<section {...{["data-" + "leadership-practice-authored-id"]: "listen-first", ["data-" + "leadership-practice-logical-id"]: "practice:listen-first", ["data-" + "leadership-practice-content-hash"]: "${"a".repeat(64)}"}} />`,
+      );
+      await workflows.saveDraft({
+        actorId: user.id,
+        checkoutId: checkout.id,
+        fence: checkout.fence,
+        body: forgedBody,
+        bundle: {
+          ...original.bundle,
+          bodyHash: sha256(forgedBody),
+        },
+        namedCheckpoint: "Forged runtime proof rejection",
+      });
+      const beforePointer = await leadershipIdentity(leadershipUrl);
+      const reviewCount = await studio.reviewJob.count({
+        where: { situationId: situation.id },
+      });
+
+      await expect(
+        workflows.queueReview({
+          actorId: user.id,
+          checkoutId: checkout.id,
+          fence: checkout.fence,
+        }),
+      ).rejects.toMatchObject({
+        status: 422,
+        code: "UNSAFE_MANAGED_MDX",
+      });
+      await expect(
+        studio.reviewJob.count({
+          where: { situationId: situation.id },
+        }),
+      ).resolves.toBe(reviewCount);
+      await expect(leadershipIdentity(leadershipUrl)).resolves.toEqual(
+        beforePointer,
+      );
+    } finally {
+      if (original)
+        await workflows.saveDraft({
+          actorId: user.id,
+          checkoutId: checkout.id,
+          fence: checkout.fence,
+          body: original.body,
+          bundle: original.bundle,
+          namedCheckpoint: "Restore review-safety fixture",
+        });
+      await workflows.checkInSituation({
+        actorId: user.id,
+        checkoutId: checkout.id,
+        fence: checkout.fence,
+      });
+    }
+  });
+
   it("publishes one complete immutable successor and preserves unrelated situations", async () => {
     const before = await leadershipIdentity(leadershipUrl);
     const client = new Client({ connectionString: leadershipUrl });
@@ -390,6 +600,14 @@ describe("durable cross-database publisher", () => {
     expect(persisted.receipt).toMatchObject({
       expectedReleaseId: after.releaseId,
       expectedManifestHash: after.manifestHash,
+      producerCommit: "e".repeat(40),
+      producerContractDigest: requiredContentContractIdentity.packageSha256,
+      consumerCommit: "d".repeat(40),
+      capabilityDigest: compatibleCapabilities().capabilityDigest,
+      affectedSituationSlug: "repeatedly-misses-deadlines",
+      typedParityCode: leadershipTypedParityPredicate,
+      routeProbeCode: "AFFECTED_ROUTE_VERIFIED",
+      routeHttpStatus: 200,
     });
     expect(persisted.candidateSnapshot?.artifactCount).toBe(32);
     const candidateManifest = JSON.parse(
@@ -962,6 +1180,75 @@ describe("durable cross-database publisher", () => {
     }
   });
 
+  it("restores a promoted crash retry when capabilities become unavailable", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const job = await requestChangedPublication(
+      "Publisher capability failure after promotion.",
+    );
+    let injected = false;
+    await expect(
+      processAgainstCurrentRuntime(job.id, async (boundary) => {
+        if (!injected && boundary === "LEADERSHIP_PROMOTED") {
+          injected = true;
+          throw new PublisherCrashInjectionError(boundary);
+        }
+      }),
+    ).rejects.toThrow(PublisherCrashInjectionError);
+    expect(injected).toBe(true);
+    const promotedJob = await studio.publicationJob.findUniqueOrThrow({
+      where: { id: job.id },
+    });
+    expect((await leadershipIdentity(leadershipUrl)).releaseId).toBe(
+      promotedJob.leadershipReleaseId,
+    );
+
+    await processPublicationJob(
+      {
+        studio,
+        leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
+        runtimeCapabilities: async () => {
+          throw new LeadershipCapabilityError(
+            "Leadership capabilities are unavailable after restart.",
+            "RUNTIME_CAPABILITY_UNAVAILABLE",
+            true,
+          );
+        },
+        runtimeIdentity: async () => {
+          const identity = await leadershipIdentity(leadershipUrl);
+          return {
+            releaseId: identity.releaseId,
+            manifestHash: identity.manifestHash,
+          };
+        },
+      },
+      job.id,
+    );
+    await expect(leadershipIdentity(leadershipUrl)).resolves.toMatchObject({
+      releaseId: prior.releaseId,
+      manifestHash: prior.manifestHash,
+      generation: prior.generation + 2n,
+    });
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        include: { receipt: true },
+      }),
+    ).resolves.toMatchObject({
+      state: "RESTORED",
+      failureCode: "RUNTIME_CAPABILITY_UNAVAILABLE_RESTORED",
+      receipt: null,
+    });
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    await workflows.checkInSituation({
+      actorId: user.id,
+      checkoutId: job.checkoutId,
+      fence: job.checkoutFence,
+    });
+  });
+
   it("waits for the runtime identity to converge after promotion", async () => {
     const prior = await leadershipIdentity(leadershipUrl);
     const job = await requestChangedPublication(
@@ -972,6 +1259,7 @@ describe("durable cross-database publisher", () => {
       {
         studio,
         leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
         runtimeVerification: { attempts: 3, intervalMs: 0 },
         runtimeIdentity: async () => {
           healthCalls += 1;
@@ -1012,6 +1300,7 @@ describe("durable cross-database publisher", () => {
       {
         studio,
         leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
         runtimeVerification: { attempts: 1, intervalMs: 0 },
         runtimeIdentity: async () => {
           healthCalls += 1;
@@ -1055,6 +1344,122 @@ describe("durable cross-database publisher", () => {
     });
   });
 
+  it("withholds success and restores after the affected route fails verification", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const job = await requestChangedPublication(
+      "Publisher affected-route verification checkpoint.",
+    );
+    await processPublicationJob(
+      {
+        studio,
+        leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
+        runtimeIdentity: async () => {
+          const identity = await leadershipIdentity(leadershipUrl);
+          return {
+            releaseId: identity.releaseId,
+            manifestHash: identity.manifestHash,
+          };
+        },
+        runtimeRouteProof: async () => {
+          throw new PublisherVerificationError(
+            "The rendered situation did not expose the scoped practice.",
+            "AFFECTED_ROUTE_VERIFICATION_FAILED",
+          );
+        },
+      },
+      job.id,
+    );
+    await expect(leadershipIdentity(leadershipUrl)).resolves.toMatchObject({
+      releaseId: prior.releaseId,
+      manifestHash: prior.manifestHash,
+      generation: prior.generation + 2n,
+    });
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        include: { receipt: true },
+      }),
+    ).resolves.toMatchObject({
+      state: "RESTORED",
+      failureCode: "AFFECTED_ROUTE_VERIFICATION_FAILED_RESTORED",
+      receipt: null,
+    });
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    await workflows.checkInSituation({
+      actorId: user.id,
+      checkoutId: job.checkoutId,
+      fence: job.checkoutFence,
+    });
+  });
+
+  it("withholds a receipt when the Leadership deployment changes during route verification", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const job = await requestChangedPublication(
+      "Publisher capability identity bracket checkpoint.",
+    );
+    const initialCapabilities = compatibleCapabilities();
+    const { capabilityDigest: _digest, ...changedCapabilitySet } = {
+      ...initialCapabilities,
+      deployment: {
+        ...initialCapabilities.deployment,
+        commit: "c".repeat(40),
+      },
+    };
+    const changedCapabilities = {
+      ...changedCapabilitySet,
+      capabilityDigest: sha256(canonicalJson(changedCapabilitySet)),
+    };
+    let capabilityCalls = 0;
+    await processPublicationJob(
+      {
+        studio,
+        leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
+        runtimeCapabilities: async () => {
+          capabilityCalls += 1;
+          return capabilityCalls < 3
+            ? initialCapabilities
+            : changedCapabilities;
+        },
+        runtimeIdentity: async () => {
+          const identity = await leadershipIdentity(leadershipUrl);
+          return {
+            releaseId: identity.releaseId,
+            manifestHash: identity.manifestHash,
+          };
+        },
+      },
+      job.id,
+    );
+    expect(capabilityCalls).toBe(3);
+    await expect(leadershipIdentity(leadershipUrl)).resolves.toMatchObject({
+      releaseId: prior.releaseId,
+      manifestHash: prior.manifestHash,
+      generation: prior.generation + 2n,
+    });
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        include: { receipt: true },
+      }),
+    ).resolves.toMatchObject({
+      state: "RESTORED",
+      failureCode: "RUNTIME_CAPABILITY_UNAVAILABLE_RESTORED",
+      receipt: null,
+    });
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    await workflows.checkInSituation({
+      actorId: user.id,
+      checkoutId: job.checkoutId,
+      fence: job.checkoutFence,
+    });
+  });
+
   it("releases its claim before durably rebasing a pointer race", async () => {
     const job = await requestChangedPublication(
       "Publisher durable rebase checkpoint.",
@@ -1066,6 +1471,7 @@ describe("durable cross-database publisher", () => {
       {
         studio,
         leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
         runtimeIdentity: async () => {
           const identity = await leadershipIdentity(leadershipUrl);
           return {
@@ -1111,6 +1517,7 @@ describe("durable cross-database publisher", () => {
       {
         studio,
         leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
         runtimeIdentity: async () => {
           const identity = await leadershipIdentity(leadershipUrl);
           return {
@@ -1139,6 +1546,7 @@ describe("durable cross-database publisher", () => {
       {
         studio,
         leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
         runtimeVerification: { attempts: 1, intervalMs: 0 },
         runtimeIdentity: async () => ({
           releaseId: crypto.randomUUID(),
@@ -1173,6 +1581,7 @@ describe("durable cross-database publisher", () => {
       reconcilePublicationRecovery({
         studio,
         leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
         runtimeVerification: { attempts: 1, intervalMs: 0 },
         runtimeIdentity: async () => {
           const identity = await leadershipIdentity(leadershipUrl);

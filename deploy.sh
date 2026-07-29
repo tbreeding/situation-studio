@@ -5,6 +5,7 @@ set -euo pipefail
 : "${SITUATION_STUDIO_APPROVED_COMMIT:?missing approved commit}"
 : "${SITUATION_STUDIO_PUBLIC_ORIGIN:?missing approved HTTPS origin}"
 : "${SITUATION_STUDIO_PUBLIC_HOST:?missing approved host header}"
+: "${LEADERSHIP_RUNTIME_CAPABILITIES_URL:?missing Leadership capabilities URL}"
 
 studio_host="${SITUATION_STUDIO_DEPLOY_HOST}"
 studio_ssh_user="${SITUATION_STUDIO_DEPLOY_USER:-}"
@@ -39,6 +40,13 @@ if [[ "${SITUATION_STUDIO_PUBLIC_ORIGIN}" != https://* ]]; then
 fi
 if [[ "${SITUATION_STUDIO_PUBLIC_ORIGIN}" != "https://${SITUATION_STUDIO_PUBLIC_HOST}" ]]; then
   echo "Approved origin and public host must match exactly." >&2
+  exit 1
+fi
+if [[
+  "${LEADERSHIP_RUNTIME_CAPABILITIES_URL}" != http://* &&
+  "${LEADERSHIP_RUNTIME_CAPABILITIES_URL}" != https://*
+ ]]; then
+  echo "Leadership capabilities must use an HTTP(S) URL." >&2
   exit 1
 fi
 if [[ "${public_gate_mode}" != "required" && "${public_gate_mode}" != "first-deploy-deferred" ]]; then
@@ -85,6 +93,7 @@ if [[ ! "${studio_release_id}" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
 fi
 
 echo "[1/8] Preflighting the approved production host"
+node ops/verify-leadership-runtime-capabilities.mjs
 ssh "${studio_ssh_target}" bash -s -- \
   "${studio_root}" \
   "${web_environment}" \

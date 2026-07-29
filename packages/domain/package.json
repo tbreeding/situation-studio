@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@leadership-field-guide/content-contracts": "file:../../vendor/leadership-field-guide-content-contracts-0.2.0.tgz",
     "@leadership-field-guide/situation-contract": "file:../../vendor/leadership-field-guide-situation-contract-1.0.0.tgz",
     "zod": "4.4.3"
   },

@@ -22,6 +22,10 @@ const provisionPasswordsPath = path.join(
 );
 const runtimeGrantsPath = path.join(root, "ops/grant-runtime-roles.sql");
 const releaseSchemaPath = path.join(root, "ops/apply-studio-release-schema.sh");
+const leadershipCapabilitiesVerifierPath = path.join(
+  root,
+  "ops/verify-leadership-runtime-capabilities.mjs",
+);
 
 function position(source: string, fragment: string) {
   const index = source.indexOf(fragment);
@@ -47,8 +51,28 @@ describe("production deployment contract", () => {
       "SITUATION_STUDIO_PUBLIC_HOST",
       "SITUATION_STUDIO_PUBLIC_GATE_MODE",
       "SITUATION_STUDIO_DEPLOY_USER",
+      "LEADERSHIP_RUNTIME_CAPABILITIES_URL",
+      "ops/verify-leadership-runtime-capabilities.mjs",
     ])
       expect(position(source, guard)).toBeLessThan(firstSsh);
+  });
+
+  test("the launcher verifies the exact Leadership runtime before contacting production", async () => {
+    const [source, verifier] = await Promise.all([
+      readFile(deployPath, "utf8"),
+      readFile(leadershipCapabilitiesVerifierPath, "utf8"),
+    ]);
+    const firstSsh = position(source, 'ssh "${studio_ssh_target}"');
+    expect(
+      position(source, "node ops/verify-leadership-runtime-capabilities.mjs"),
+    ).toBeLessThan(firstSsh);
+    for (const fragment of [
+      "leadership-studio-capabilities-v1",
+      "typed-projection-parity-v1",
+      "affected-route-proof-v2",
+      "6441251640d45ac3b5280a8e586c108e0e678612c13f7421566b342326321aba",
+    ])
+      position(verifier, fragment);
   });
 
   test("the launcher uses immutable releases, isolated processes, health checks, and rollback", async () => {

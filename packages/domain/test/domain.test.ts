@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   applySectionProposal,
+  AUTHORED_PRACTICE_ID_MAX_LENGTH,
+  assertSafeManagedMdx,
   bundleHash,
   canonicalText,
   createScopedVariant,
@@ -9,6 +11,8 @@ import {
   parseSituationSections,
   parseSituationSectionTargetKey,
   publicationConflictDecision,
+  physicalPracticeId,
+  scopedPracticeSchema,
   requiredSituationSections,
   reviewStages,
   serializeSituationSections,
@@ -96,6 +100,24 @@ describe("domain invariants", () => {
     const original = sections();
     const serialized = serializeSituationSections(original);
     expect(parseSituationSections(serialized)).toEqual(original);
+  });
+
+  it("executes Leadership's managed-MDX proof safety predicate", () => {
+    expect(() =>
+      assertSafeManagedMdx(
+        '<PracticeEmbed practiceId="listen-first" variant="default" surface="situation" />',
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertSafeManagedMdx(
+        '<section {...{["data-" + "leadership-practice-authored-id"]: "forged"}} />',
+      ),
+    ).toThrow(/dynamic MDX JSX attributes/u);
+    expect(() =>
+      assertSafeManagedMdx(
+        '<div dangerouslySetInnerHTML={{__html: "<section data-" + "leadership-practice-authored-id=forged>"}} />',
+      ),
+    ).toThrow(/dangerouslySetInnerHTML|dynamic MDX JSX attributes/u);
   });
 
   it("defines exact, subheading, and named-block section targets", () => {
@@ -220,6 +242,45 @@ describe("domain invariants", () => {
     expect(
       validateScopedArtifactBody("PRACTICE", JSON.stringify(practice)),
     ).toEqual({ valid: true, errors: [] });
+    for (const candidate of [
+      { ...practice, unsupported: true },
+      {
+        ...practice,
+        rounds: [
+          { ...practice.rounds[0]!, unsupported: true },
+          practice.rounds[1]!,
+        ],
+      },
+      {
+        ...practice,
+        rounds: [
+          {
+            ...practice.rounds[0]!,
+            choices: [
+              { ...practice.rounds[0]!.choices[0]!, unsupported: true },
+              practice.rounds[0]!.choices[1]!,
+            ],
+          },
+          practice.rounds[1]!,
+        ],
+      },
+    ])
+      expect(
+        validateScopedArtifactBody("PRACTICE", JSON.stringify(candidate)),
+      ).toMatchObject({ valid: false });
+  });
+
+  it("uses Leadership's lossless authored-to-physical practice ID algebra", () => {
+    const authored = `a${"b".repeat(AUTHORED_PRACTICE_ID_MAX_LENGTH - 1)}`;
+    expect(scopedPracticeSchema.shape.id.safeParse(authored).success).toBe(
+      true,
+    );
+    expect(
+      scopedPracticeSchema.shape.id.safeParse(`${authored}c`).success,
+    ).toBe(false);
+    expect(physicalPracticeId(authored, "a".repeat(64))).toBe(
+      `${authored}--${"a".repeat(12)}`,
+    );
   });
 
   it("rebases unrelated releases and blocks target conflicts", () => {

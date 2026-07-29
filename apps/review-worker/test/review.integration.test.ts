@@ -21,6 +21,13 @@ import {
   situationBundleSchema,
 } from "@situation-studio/domain";
 import {
+  leadershipCapabilitySchemaVersion,
+  leadershipTypedParityPredicate,
+  requiredContentContractIdentity,
+  requiredLeadershipFeatures,
+  requiredSituationContractIdentity,
+} from "@situation-studio/leadership-bridge";
+import {
   AdapterFailure,
   bundleWriterOutputSchema,
   normalizedOutputSchema,
@@ -44,6 +51,29 @@ function databaseUrl(container: StartedPostgreSqlContainer) {
   return container
     .getConnectionUri()
     .replace(/^postgres:\/\//u, "postgresql://");
+}
+
+function compatibleCapabilitiesUrl() {
+  const capabilitySet = {
+    schemaVersion: leadershipCapabilitySchemaVersion,
+    deployment: {
+      commit: "d".repeat(40),
+      releaseId: "review-integration-runtime",
+      archiveSha256: "a".repeat(64),
+    },
+    contracts: {
+      content: requiredContentContractIdentity,
+      situation: requiredSituationContractIdentity,
+    },
+    database: { predicate: leadershipTypedParityPredicate },
+    features: [...requiredLeadershipFeatures],
+  };
+  return `data:application/json,${encodeURIComponent(
+    JSON.stringify({
+      ...capabilitySet,
+      capabilityDigest: sha256(canonicalJson(capabilitySet)),
+    }),
+  )}`;
 }
 
 const subscriptionConfiguration = {
@@ -234,6 +264,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
     process.env.CSRF_SECRET = "c".repeat(32);
     process.env.THROTTLE_SECRET = "t".repeat(32);
     process.env.SITUATION_STUDIO_ORIGIN = "http://localhost:3015";
+    process.env.LEADERSHIP_RUNTIME_CAPABILITIES_URL =
+      compatibleCapabilitiesUrl();
     database = createDatabaseClient(url, 6);
     const [editorOne, editorTwo, admin] = await Promise.all([
       database.user.create({

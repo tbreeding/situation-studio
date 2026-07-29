@@ -1,4 +1,15 @@
 import { createHash } from "node:crypto";
+import {
+  AUTHORED_PRACTICE_ID_MAX_LENGTH,
+  PHYSICAL_PRACTICE_ID_MAX_LENGTH,
+  assertSafeManagedMdx,
+  authoredPracticeIdSchema,
+  isSafeManagedMdx,
+  physicalPracticeId,
+  practiceChoiceSchema as leadershipPracticeChoiceSchema,
+  practiceRoundSchema as leadershipPracticeRoundSchema,
+  practiceSchema as leadershipPracticeSchema,
+} from "@leadership-field-guide/content-contracts";
 import { CONTRACT_VERSION as LEADERSHIP_CONTRACT_VERSION } from "@leadership-field-guide/situation-contract";
 import { z } from "zod";
 
@@ -44,29 +55,17 @@ export const artifactVisibility = [
   "INTERNAL",
 ] as const;
 
-export const scopedPracticeChoiceSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
-  consequenceId: z.string().min(1),
-  consequence: z.string().min(1),
-  explanation: z.string().min(1),
-  signal: z.enum(["toward", "pause", "away"]),
-});
-
-export const scopedPracticeRoundSchema = z.object({
-  id: z.string().min(1),
-  setup: z.string().min(1),
-  prompt: z.string().min(1),
-  choices: z.array(scopedPracticeChoiceSchema).min(2).max(4),
-});
-
-export const scopedPracticeSchema = z.object({
-  id: z.string().min(1).max(160),
-  title: z.string().min(1),
-  description: z.string().min(1),
-  estimatedTime: z.string().min(1),
-  rounds: z.array(scopedPracticeRoundSchema).min(2),
-});
+export {
+  AUTHORED_PRACTICE_ID_MAX_LENGTH,
+  PHYSICAL_PRACTICE_ID_MAX_LENGTH,
+  assertSafeManagedMdx,
+  authoredPracticeIdSchema,
+  isSafeManagedMdx,
+  physicalPracticeId,
+};
+export const scopedPracticeChoiceSchema = leadershipPracticeChoiceSchema;
+export const scopedPracticeRoundSchema = leadershipPracticeRoundSchema;
+export const scopedPracticeSchema = leadershipPracticeSchema;
 
 export const scopedSourceSchema = z.object({
   id: z.string().min(1).max(160),

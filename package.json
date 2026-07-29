@@ -19,6 +19,7 @@
     "bootstrap:leadership": "pnpm --filter @situation-studio/testing bootstrap",
     "review-policy:sync": "node scripts/sync-review-policy.mjs",
     "review-policy:check": "node scripts/sync-review-policy.mjs --check",
+    "contracts:verify": "node scripts/verify-contract-packages.mjs",
     "qualify:review-clis": "pnpm --filter @situation-studio/review-worker qualify",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
@@ -28,7 +29,7 @@
     "format:check": "prettier --check .",
     "lint": "pnpm -r --if-present lint",
     "typecheck": "pnpm -r --if-present typecheck",
-    "verify": "pnpm review-policy:check && pnpm db:generate && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:security && pnpm build"
+    "verify": "pnpm contracts:verify && pnpm review-policy:check && pnpm db:generate && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:security && pnpm build"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.12.1",

@@ -4,12 +4,14 @@ import {
   backupReadiness,
   safeProcessState,
 } from "@/server/health/process-status";
+import { requireCompatibleLeadershipRuntime } from "@/server/leadership-compatibility";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
     await database().$queryRaw`SELECT 1`;
+    const runtimeCapabilities = await requireCompatibleLeadershipRuntime();
     const [cursor, heartbeats, backup, recoveryRequired] = await Promise.all([
       database().leadershipSyncCursor.findUnique({
         where: { id: "official" },
@@ -67,6 +69,12 @@ export async function GET() {
             cursorAge !== null && cursorAge <= 120 && !cursor?.lastErrorCode
               ? "fresh"
               : "stale",
+        },
+        leadershipRuntime: {
+          commit: runtimeCapabilities.deployment.commit,
+          capabilityDigest: runtimeCapabilities.capabilityDigest,
+          typedParity: runtimeCapabilities.database.predicate,
+          state: "compatible",
         },
         processes: processStatus,
         publisher: { recoveryRequired },

@@ -6,10 +6,20 @@ import {
   type PublicationEventKind,
 } from "@situation-studio/db";
 import {
+  physicalPracticeId,
   snapshotManifestSchema as leadershipSnapshotManifestSchema,
   validationPolicyHash as leadershipValidationPolicyHash,
 } from "@leadership-field-guide/content-contracts";
 import {
+  LeadershipCapabilityError,
+  assertLeadershipRuntimeCompatible,
+  leadershipTypedParityPredicate,
+  readOfficialLeadershipRelease,
+  requiredContentContractIdentity,
+  type LeadershipRuntimeCapabilities,
+} from "@situation-studio/leadership-bridge";
+import {
+  assertSafeManagedMdx,
   bundleHash,
   canonicalJson,
   canonicalText,
@@ -21,7 +31,6 @@ import {
   validateSituationBundle,
   type SituationBundle,
 } from "@situation-studio/domain";
-import { readOfficialLeadershipRelease } from "@situation-studio/leadership-bridge";
 import { z } from "zod";
 
 type ManifestArtifact = {
@@ -76,10 +85,44 @@ export type CandidateSnapshot = {
   changedArtifacts: ChangedArtifact[];
 };
 
-type RuntimeIdentity = {
+export type RuntimeIdentity = {
   releaseId: string;
   manifestHash: string;
 };
+
+export type RuntimeRouteExpectation = {
+  releaseId: string;
+  manifestHash: string;
+  situationSlug: string;
+  situationBodyHash: string;
+  visibility: "PUBLIC" | "RETIRED";
+  practice: {
+    authoredId: string;
+    resolvedLogicalId: string;
+    contentHash: string;
+  } | null;
+};
+
+export type RuntimeRouteProof = {
+  code: "AFFECTED_ROUTE_VERIFIED" | "AFFECTED_ROUTE_RETIRED";
+  httpStatus: number;
+  observedReleaseId: string | null;
+  observedManifestHash: string | null;
+  observedSituationBodyHash: string | null;
+  observedPracticeLogicalId: string | null;
+  observedPracticeContentHash: string | null;
+};
+
+export class PublisherVerificationError extends Error {
+  constructor(
+    message: string,
+    readonly code:
+      "AFFECTED_ROUTE_VERIFICATION_FAILED" | "TYPED_PROJECTION_INVALID",
+  ) {
+    super(message);
+    this.name = "PublisherVerificationError";
+  }
+}
 
 export type PublisherBoundary =
   "CANDIDATE_PERSISTED" | "LEADERSHIP_PROMOTED" | "RUNTIME_VERIFIED";
@@ -95,6 +138,11 @@ type PublisherDependencies = {
   studio: DatabaseClient;
   leadershipPublisherUrl: string;
   runtimeIdentity: () => Promise<RuntimeIdentity>;
+  runtimeCapabilities?: () => Promise<LeadershipRuntimeCapabilities>;
+  runtimeRouteProof?: (
+    expected: RuntimeRouteExpectation,
+  ) => Promise<RuntimeRouteProof>;
+  producerCommit: string;
   runtimeVerification?: {
     attempts?: number;
     intervalMs?: number;
@@ -144,6 +192,203 @@ async function convergedRuntimeIdentity(
   }
   if (lastIdentity) return lastIdentity;
   throw lastError ?? new Error("Runtime identity remained unavailable.");
+}
+
+function routeExpectation(
+  candidate: CandidateSnapshot,
+): RuntimeRouteExpectation {
+  const situationArtifact = candidate.changedArtifacts.find(
+    (artifact) =>
+      artifact.type === "SITUATION" &&
+      artifact.logicalId === `situation:${candidate.targetSlug}`,
+  );
+  if (!situationArtifact)
+    throw new PublisherVerificationError(
+      "The affected situation artifact is missing from the candidate.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  const scopedPractice = candidate.changedArtifacts.find(
+    (artifact) =>
+      artifact.type === "PRACTICE" &&
+      artifact.visibility === "SITUATION_SCOPED" &&
+      artifact.forkedFromLogicalId,
+  );
+  return {
+    releaseId: candidate.releaseId,
+    manifestHash: candidate.manifestHash,
+    situationSlug: candidate.targetSlug,
+    situationBodyHash: situationArtifact.contentHash,
+    visibility:
+      candidate.targetBundle.visibility === "RETIRED" ? "RETIRED" : "PUBLIC",
+    practice: scopedPractice?.forkedFromLogicalId
+      ? {
+          authoredId: scopedPractice.forkedFromLogicalId.replace(
+            /^practice:/u,
+            "",
+          ),
+          resolvedLogicalId: scopedPractice.logicalId,
+          contentHash: scopedPractice.contentHash,
+        }
+      : null,
+  };
+}
+
+function decodeHtmlAttribute(value: string) {
+  return value
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#x27;", "'")
+    .replaceAll("&#39;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+}
+
+function htmlAttribute(source: string, name: string) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const match = new RegExp(`\\s${escaped}="([^"]*)"`, "u").exec(source);
+  return match ? decodeHtmlAttribute(match[1] ?? "") : null;
+}
+
+export async function runtimeRouteProofFromSituationPage(
+  healthUrl: string,
+  expected: RuntimeRouteExpectation,
+): Promise<RuntimeRouteProof> {
+  const routeUrl = new URL(
+    `/situations/${encodeURIComponent(expected.situationSlug)}`,
+    healthUrl,
+  );
+  let response: Response;
+  try {
+    response = await fetch(routeUrl, {
+      headers: {
+        accept: "text/html",
+        "cache-control": "no-cache",
+      },
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch {
+    throw new PublisherVerificationError(
+      "The affected Leadership route was unavailable.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  }
+  if (expected.visibility === "RETIRED") {
+    if (response.status !== 404)
+      throw new PublisherVerificationError(
+        "The retired Leadership route remained publicly renderable.",
+        "AFFECTED_ROUTE_VERIFICATION_FAILED",
+      );
+    return {
+      code: "AFFECTED_ROUTE_RETIRED",
+      httpStatus: response.status,
+      observedReleaseId: null,
+      observedManifestHash: null,
+      observedSituationBodyHash: null,
+      observedPracticeLogicalId: null,
+      observedPracticeContentHash: null,
+    };
+  }
+  if (response.status !== 200)
+    throw new PublisherVerificationError(
+      `The affected Leadership route returned HTTP ${response.status}.`,
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  const declaredLength = Number(response.headers.get("content-length") ?? "0");
+  if (declaredLength > 2 * 1024 * 1024)
+    throw new PublisherVerificationError(
+      "The affected Leadership route exceeded the verification size limit.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  const body = await response.text();
+  if (new TextEncoder().encode(body).byteLength > 2 * 1024 * 1024)
+    throw new PublisherVerificationError(
+      "The affected Leadership route exceeded the verification size limit.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  const matchingArticles = (body.match(/<article\b[^>]*>/gu) ?? []).filter(
+    (tag) =>
+      htmlAttribute(tag, "class")?.split(/\s+/u).includes("paperPage") ===
+        true &&
+      htmlAttribute(tag, "data-leadership-release-id") === expected.releaseId &&
+      htmlAttribute(tag, "data-leadership-manifest-hash") ===
+        expected.manifestHash &&
+      htmlAttribute(tag, "data-leadership-situation-body-hash") ===
+        expected.situationBodyHash,
+  );
+  if (matchingArticles.length !== 1)
+    throw new PublisherVerificationError(
+      "The affected Leadership route did not render the expected immutable release.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  const articleTag = matchingArticles[0] ?? "";
+  const renderProof = htmlAttribute(articleTag, "data-leadership-render-proof");
+  if (
+    !renderProof ||
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(
+      renderProof,
+    )
+  )
+    throw new PublisherVerificationError(
+      "The affected Leadership route did not render a valid server proof.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  const observedReleaseId = htmlAttribute(
+    articleTag,
+    "data-leadership-release-id",
+  );
+  const observedManifestHash = htmlAttribute(
+    articleTag,
+    "data-leadership-manifest-hash",
+  );
+  const observedSituationBodyHash = htmlAttribute(
+    articleTag,
+    "data-leadership-situation-body-hash",
+  );
+
+  let observedPracticeLogicalId: string | null = null;
+  let observedPracticeContentHash: string | null = null;
+  if (expected.practice) {
+    const practiceTags = body.match(
+      /<section\b[^>]*\sdata-leadership-practice-authored-id="[^"]*"[^>]*>/gu,
+    );
+    const matchingTag = practiceTags?.find(
+      (tag) =>
+        htmlAttribute(tag, "class")
+          ?.split(/\s+/u)
+          .includes("practiceEngine") === true &&
+        htmlAttribute(tag, "data-leadership-practice-authored-id") ===
+          expected.practice?.authoredId &&
+        htmlAttribute(tag, "data-leadership-practice-logical-id") ===
+          expected.practice?.resolvedLogicalId &&
+        htmlAttribute(tag, "data-leadership-practice-content-hash") ===
+          expected.practice?.contentHash &&
+        htmlAttribute(tag, "data-leadership-render-proof") === renderProof,
+    );
+    if (!matchingTag)
+      throw new PublisherVerificationError(
+        "The affected Leadership route did not resolve the expected scoped practice.",
+        "AFFECTED_ROUTE_VERIFICATION_FAILED",
+      );
+    observedPracticeLogicalId = htmlAttribute(
+      matchingTag,
+      "data-leadership-practice-logical-id",
+    );
+    observedPracticeContentHash = htmlAttribute(
+      matchingTag,
+      "data-leadership-practice-content-hash",
+    );
+  }
+  return {
+    code: "AFFECTED_ROUTE_VERIFIED",
+    httpStatus: response.status,
+    observedReleaseId,
+    observedManifestHash,
+    observedSituationBodyHash,
+    observedPracticeLogicalId,
+    observedPracticeContentHash,
+  };
 }
 
 async function assertPublicationFence(
@@ -711,6 +956,10 @@ async function buildCandidate(
     );
     const candidateManifest: ReleaseManifest = {
       ...manifest,
+      // New releases are always written under the behavior-complete policy
+      // identity. Leadership continues to read the allowlisted legacy policy
+      // during the Leadership-first transition.
+      validationPolicyHash: leadershipValidationPolicyHash,
       source: {
         ...manifest.source,
         releaseId,
@@ -813,6 +1062,10 @@ async function buildCandidate(
 }
 
 export function validateCandidate(candidate: CandidateSnapshot) {
+  assertSafeManagedMdx(
+    candidate.targetBody,
+    `content/situations/${candidate.targetSlug}.mdx`,
+  );
   const manifest = manifestSchema.parse(candidate.manifest);
   const leadershipManifest = leadershipSnapshotManifestSchema.parse(
     candidate.manifest,
@@ -990,7 +1243,10 @@ async function cloneTypedProjection(
       artifact.forkedFromLogicalId,
   );
   const scopedPracticeId = scopedPractice?.forkedFromLogicalId
-    ? `${scopedPractice.forkedFromLogicalId.replace(/^practice:/u, "").slice(0, 80)}--${scopedPractice.contentHash.slice(0, 12)}`
+    ? physicalPracticeId(
+        scopedPractice.forkedFromLogicalId.replace(/^practice:/u, ""),
+        scopedPractice.contentHash,
+      )
     : null;
   await executeStatements(
     client,
@@ -1508,7 +1764,10 @@ async function insertScopedProjection(
     if (variant.type === "PRACTICE") {
       const practice = scopedPracticeSchema.parse(JSON.parse(variant.body));
       const practiceId = crypto.randomUUID();
-      const projectedPracticeId = `${variant.forkedFromLogicalId.replace(/^practice:/u, "").slice(0, 80)}--${variant.contentHash.slice(0, 12)}`;
+      const projectedPracticeId = physicalPracticeId(
+        variant.forkedFromLogicalId.replace(/^practice:/u, ""),
+        variant.contentHash,
+      );
       await client.query(
         `
           INSERT INTO practices (
@@ -2076,6 +2335,9 @@ async function finalizeSuccess(
   candidate: CandidateSnapshot,
   identity: { releaseId: string; manifestHash: string; generation: bigint },
   runtime: RuntimeIdentity,
+  capabilities: LeadershipRuntimeCapabilities,
+  routeProof: RuntimeRouteProof,
+  producerCommit: string,
 ) {
   const productionBundleHash = bundleHash(candidate.targetBundle);
   await studio.$transaction(
@@ -2188,6 +2450,19 @@ async function finalizeSuccess(
           observedRuntimeReleaseId: runtime.releaseId,
           observedRuntimeHash: runtime.manifestHash,
           pointerGeneration: identity.generation,
+          producerCommit,
+          producerContractDigest: requiredContentContractIdentity.packageSha256,
+          consumerCommit: capabilities.deployment.commit,
+          capabilityDigest: capabilities.capabilityDigest,
+          affectedSituationSlug: candidate.targetSlug,
+          typedParityCode: leadershipTypedParityPredicate,
+          routeProbeCode: routeProof.code,
+          routeHttpStatus: routeProof.httpStatus,
+          observedRouteReleaseId: routeProof.observedReleaseId,
+          observedRouteManifestHash: routeProof.observedManifestHash,
+          observedSituationBodyHash: routeProof.observedSituationBodyHash,
+          observedPracticeLogicalId: routeProof.observedPracticeLogicalId,
+          observedPracticeContentHash: routeProof.observedPracticeContentHash,
         },
       });
       const released = await transaction.situationCheckout.updateMany({
@@ -2230,6 +2505,9 @@ async function finalizeSuccess(
             releaseId: candidate.releaseId,
             manifestHash: candidate.manifestHash,
             pointerGeneration: identity.generation.toString(),
+            capabilityDigest: capabilities.capabilityDigest,
+            typedParityCode: leadershipTypedParityPredicate,
+            routeProbeCode: routeProof.code,
           },
         },
       });
@@ -2241,6 +2519,10 @@ async function finalizeSuccess(
     manifestHash: identity.manifestHash,
     runtimeReleaseId: runtime.releaseId,
     runtimeManifestHash: runtime.manifestHash,
+    capabilityDigest: capabilities.capabilityDigest,
+    typedParityCode: leadershipTypedParityPredicate,
+    routeProbeCode: routeProof.code,
+    routeHttpStatus: routeProof.httpStatus,
   });
   await event(studio, job.id, "SUCCEEDED", {
     releaseId: candidate.releaseId,
@@ -2358,6 +2640,31 @@ async function candidateFromPersisted(
   }
 }
 
+function publicationFailureCode(error: unknown) {
+  if (error instanceof LeadershipCapabilityError) return error.code;
+  if (error instanceof PublisherVerificationError) return error.code;
+  if (
+    error instanceof Error &&
+    /TYPED_PROJECTION_INVALID/iu.test(error.message)
+  )
+    return "TYPED_PROJECTION_INVALID";
+  if (error instanceof Error && /fenced|lease|checkout/iu.test(error.message))
+    return "PUBLICATION_AUTHORITY_LOST";
+  return "PUBLICATION_FAILED";
+}
+
+function restoredPublicationFailureCode(failureCode: string) {
+  if (failureCode === "AFFECTED_ROUTE_VERIFICATION_FAILED")
+    return "AFFECTED_ROUTE_VERIFICATION_FAILED_RESTORED";
+  if (
+    failureCode === "RUNTIME_CAPABILITY_UNAVAILABLE" ||
+    failureCode === "UNSUPPORTED_VERSION_PAIR" ||
+    failureCode === "UNSUPPORTED_CONTRACT_IDENTITY"
+  )
+    return `${failureCode}_RESTORED`;
+  return "VERIFICATION_FAILED_RESTORED";
+}
+
 export async function processPublicationJob(
   dependencies: PublisherDependencies,
   jobId: string,
@@ -2378,6 +2685,7 @@ export async function processPublicationJob(
   await leadership.connect();
   let promoted = false;
   let activeCandidate: CandidateSnapshot | null = null;
+  let activeCapabilities: LeadershipRuntimeCapabilities | null = null;
   try {
     const external = await leadership.query<{
       id: string;
@@ -2392,7 +2700,7 @@ export async function processPublicationJob(
       [job.publicationId],
     );
     const existing = external.rows[0];
-    let candidate: CandidateSnapshot | null;
+    let candidate: CandidateSnapshot | null = null;
     if (existing && job.candidateSnapshot) {
       candidate = await candidateFromPersisted(
         studio,
@@ -2404,9 +2712,27 @@ export async function processPublicationJob(
         existing.manifest_hash !== candidate?.manifestHash
       )
         throw new Error("Reconciled publication release differs from Studio.");
-    } else {
-      candidate = await buildCandidate(studio, leadershipPublisherUrl, job);
+      activeCandidate = candidate;
+      const observed = await databaseIdentity(leadership);
+      promoted =
+        observed.releaseId === candidate.releaseId &&
+        observed.manifestHash === candidate.manifestHash;
     }
+    if (!/^[a-f0-9]{40}$/u.test(dependencies.producerCommit))
+      throw new Error(
+        "The publisher deployment commit is not an immutable Git identity.",
+      );
+    if (!dependencies.runtimeCapabilities)
+      throw new LeadershipCapabilityError(
+        "Leadership runtime capabilities are not configured.",
+        "RUNTIME_CAPABILITY_UNAVAILABLE",
+        true,
+      );
+    activeCapabilities = assertLeadershipRuntimeCompatible(
+      await dependencies.runtimeCapabilities(),
+    );
+    if (!candidate)
+      candidate = await buildCandidate(studio, leadershipPublisherUrl, job);
     if (!candidate) {
       await studio.publicationAttempt.update({
         where: { id: attempt.id },
@@ -2492,10 +2818,45 @@ export async function processPublicationJob(
       runtime.manifestHash !== candidate.manifestHash
     )
       throw new Error("Running Leadership application identity differs.");
+    if (!dependencies.runtimeRouteProof)
+      throw new PublisherVerificationError(
+        "Affected-route verification is not configured.",
+        "AFFECTED_ROUTE_VERIFICATION_FAILED",
+      );
+    const routeCapabilitiesBefore = assertLeadershipRuntimeCompatible(
+      await dependencies.runtimeCapabilities(),
+    );
+    const routeProof = await dependencies.runtimeRouteProof(
+      routeExpectation(candidate),
+    );
+    const routeCapabilitiesAfter = assertLeadershipRuntimeCompatible(
+      await dependencies.runtimeCapabilities(),
+    );
+    if (
+      routeCapabilitiesBefore.deployment.commit !==
+        routeCapabilitiesAfter.deployment.commit ||
+      routeCapabilitiesBefore.capabilityDigest !==
+        routeCapabilitiesAfter.capabilityDigest
+    )
+      throw new LeadershipCapabilityError(
+        "Leadership runtime capabilities changed during affected-route verification.",
+        "RUNTIME_CAPABILITY_UNAVAILABLE",
+        true,
+      );
+    activeCapabilities = routeCapabilitiesAfter;
     await dependencies.afterBoundary?.("RUNTIME_VERIFIED");
     await renewPublicationLease(studio, jobId, claimToken);
     job = await loadJob(studio, jobId);
-    await finalizeSuccess(studio, job, candidate, promotedIdentity, runtime);
+    await finalizeSuccess(
+      studio,
+      job,
+      candidate,
+      promotedIdentity,
+      runtime,
+      activeCapabilities,
+      routeProof,
+      dependencies.producerCommit,
+    );
     await studio.publicationAttempt.update({
       where: { id: attempt.id },
       data: {
@@ -2510,10 +2871,11 @@ export async function processPublicationJob(
   } catch (error) {
     if (error instanceof PublisherCrashInjectionError) throw error;
     dependencies.onFailure?.(error);
-    const failureCode =
-      error instanceof Error && /fenced|lease|checkout/iu.test(error.message)
-        ? "PUBLICATION_AUTHORITY_LOST"
-        : "PUBLICATION_FAILED";
+    const failureCode = publicationFailureCode(error);
+    const promotionStateUnverified =
+      !promoted &&
+      Boolean(job.candidateSnapshot) &&
+      (job.state === "PROMOTING" || job.state === "VERIFYING");
     if (promoted) {
       job = await loadJob(studio, jobId);
       const snapshot = job.candidateSnapshot;
@@ -2549,7 +2911,7 @@ export async function processPublicationJob(
           data: {
             state: "RESTORED",
             finishedAt: new Date(),
-            failureCode: "VERIFICATION_FAILED_RESTORED",
+            failureCode: restoredPublicationFailureCode(failureCode),
             claimToken: null,
             leaseExpiresAt: null,
           },
@@ -2573,13 +2935,26 @@ export async function processPublicationJob(
           failureCode: "AUTOMATIC_RESTORATION_FAILED",
         });
       }
+    } else if (promotionStateUnverified) {
+      await studio.publicationJob.update({
+        where: { id: jobId },
+        data: {
+          state: "RECOVERY_REQUIRED",
+          failureCode: "PROMOTION_STATE_UNVERIFIED",
+          claimToken: null,
+          leaseExpiresAt: null,
+        },
+      });
+      await event(studio, jobId, "RECOVERY_REQUIRED", {
+        failureCode: "PROMOTION_STATE_UNVERIFIED",
+      });
     } else {
       await studio.publicationJob.update({
         where: { id: jobId },
         data: {
           state: "FAILED",
           finishedAt: new Date(),
-          failureCode: "PUBLICATION_FAILED",
+          failureCode,
           claimToken: null,
           leaseExpiresAt: null,
         },
@@ -2592,8 +2967,14 @@ export async function processPublicationJob(
         finishedAt: new Date(),
         failureCode: promoted
           ? "POST_PROMOTION_VERIFICATION"
-          : "PUBLICATION_FAILED",
-        reconciledState: { failureCode, promoted },
+          : promotionStateUnverified
+            ? "PROMOTION_STATE_UNVERIFIED"
+            : failureCode,
+        reconciledState: {
+          failureCode,
+          promoted,
+          promotionStateUnverified,
+        },
       },
     });
   } finally {

@@ -1,9 +1,14 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { createDatabaseClient } from "@situation-studio/db";
+import { runtimeCapabilitiesFromHealth } from "@situation-studio/leadership-bridge";
 import {
   claimPublicationJob,
   processPublicationJob,
   reconcilePublicationRecovery,
   runtimeIdentityFromHealth,
+  runtimeRouteProofFromSituationPage,
+  type RuntimeRouteExpectation,
 } from "./index.js";
 
 function requiredEnvironment(name: string) {
@@ -19,12 +24,25 @@ const leadershipPublisherUrl = requiredEnvironment(
 const leadershipHealthUrl = requiredEnvironment(
   "LEADERSHIP_CONTENT_HEALTH_URL",
 );
+const leadershipCapabilitiesUrl = requiredEnvironment(
+  "LEADERSHIP_RUNTIME_CAPABILITIES_URL",
+);
+const studioRelease = requiredEnvironment("SITUATION_STUDIO_RELEASE");
+const producerCommit = readFileSync(
+  path.join(studioRelease, ".release-commit"),
+  "utf8",
+).trim();
 
 const studio = createDatabaseClient(studioDatabaseUrl, 4);
 const dependencies = {
   studio,
   leadershipPublisherUrl,
   runtimeIdentity: () => runtimeIdentityFromHealth(leadershipHealthUrl),
+  runtimeCapabilities: () =>
+    runtimeCapabilitiesFromHealth(leadershipCapabilitiesUrl),
+  runtimeRouteProof: (expected: RuntimeRouteExpectation) =>
+    runtimeRouteProofFromSituationPage(leadershipHealthUrl, expected),
+  producerCommit,
   onFailure: (error: unknown) => {
     console.error("Publication attempt failed.", error);
   },

@@ -97,6 +97,35 @@ describe("public publication-status snapshots", () => {
     expect(JSON.stringify(snapshot)).not.toMatch(/secret|database detail/iu);
   });
 
+  it("explains practice-embed mismatches without exposing validator details", () => {
+    const snapshot = buildPublicationStatusSnapshot(
+      statusRecord({
+        state: "FAILED",
+        failureCode: "PRACTICE_EMBED_MISMATCH",
+        events: [
+          { sequence: 1, kind: "REQUESTED" },
+          { sequence: 2, kind: "POINTER_OBSERVED" },
+          { sequence: 3, kind: "SNAPSHOT_BUILT" },
+        ],
+      }),
+    );
+    expect(snapshot.terminal).toEqual({
+      state: "FAILED",
+      tone: "ERROR",
+      title: "Practice embed does not match",
+      message:
+        "Production was not changed. In Two-minute practice, make the PracticeEmbed practice ID and variant match the situation metadata before trying again.",
+    });
+    expect(snapshot.stages.map((stage) => stage.state)).toEqual([
+      "COMPLETE",
+      "COMPLETE",
+      "FAILED",
+      "PENDING",
+      "PENDING",
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain("PRACTICE_EMBED_MISMATCH");
+  });
+
   it("reports verified completion and produces a deterministic identity", () => {
     const record = statusRecord({
       state: "SUCCEEDED",

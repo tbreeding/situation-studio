@@ -58,7 +58,10 @@ function snapshotIdentity(value: object) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-function terminalDetails(state: PublicationJobState) {
+function terminalDetails(
+  state: PublicationJobState,
+  failureCode: string | null,
+) {
   switch (state) {
     case "SUCCEEDED":
       return {
@@ -93,6 +96,30 @@ function terminalDetails(state: PublicationJobState) {
           "Automatic recovery could not be verified. Editing stays locked while an administrator restores a known release.",
       };
     case "FAILED":
+      if (failureCode === "PRACTICE_EMBED_MISMATCH")
+        return {
+          state,
+          tone: "ERROR" as const,
+          title: "Practice embed does not match",
+          message:
+            "Production was not changed. In Two-minute practice, make the PracticeEmbed practice ID and variant match the situation metadata before trying again.",
+        };
+      if (failureCode === "PREPARED_ACTION_MISMATCH")
+        return {
+          state,
+          tone: "ERROR" as const,
+          title: "Prepared action does not match",
+          message:
+            "Production was not changed. Make the PreparedAction scenario and skill match the situation metadata before trying again.",
+        };
+      if (failureCode === "CANONICAL_SNAPSHOT_INVALID")
+        return {
+          state,
+          tone: "ERROR" as const,
+          title: "Release validation failed",
+          message:
+            "Production was not changed. The saved draft does not satisfy Leadership's content contract; review the changed content before trying again.",
+        };
       return {
         state,
         tone: "ERROR" as const,
@@ -152,7 +179,7 @@ export function buildPublicationStatusSnapshot(
   );
   const eventKinds = new Set(events.map((event) => event.kind));
   const restoring = eventKinds.has("RESTORE_STARTED");
-  const terminal = terminalDetails(state);
+  const terminal = terminalDetails(state, record.failureCode);
   const completedStages = completedStageCount(state, eventKinds);
   const failedStageIndex =
     terminal && state !== "SUCCEEDED"

@@ -1647,6 +1647,20 @@ function normalizeSectionReplacement(targetKey: string, replacement: string) {
   return canonicalText(lines.slice(1).join("\n").trimStart());
 }
 
+const managedMdxComponentPattern =
+  /<(?:PracticeEmbed|PreparedAction)\b[^>]*>/gu;
+
+export function proposalPreservesManagedMdxComponents(
+  before: string,
+  after: string,
+) {
+  const componentTags = (value: string) =>
+    canonicalText(value).match(managedMdxComponentPattern) ?? [];
+  return (
+    canonicalJson(componentTags(before)) === canonicalJson(componentTags(after))
+  );
+}
+
 function proposedBody(change: ApplicableProposalChange) {
   const replacement = change.editorBody ?? change.afterBody;
   return change.targetKind === "SECTION"
@@ -1697,6 +1711,12 @@ async function applyProposalChanges(
       }
       if (sha256(canonicalText(before)) !== change.beforeHash)
         staleSuggestion(change.targetKey);
+      if (!proposalPreservesManagedMdxComponents(before, afterBody))
+        throw new WorkflowError(
+          `Agent suggestions cannot add, remove, or change managed PracticeEmbed or PreparedAction tags in ${change.targetKey}. Make that component edit explicitly in the raw MDX editor.`,
+          422,
+          "INVALID_SUGGESTION",
+        );
       try {
         body = serializeSituationSections(
           applySituationSectionTarget(sections, change.targetKey, afterBody),

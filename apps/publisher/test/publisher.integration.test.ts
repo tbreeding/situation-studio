@@ -32,6 +32,7 @@ import {
 import {
   claimPublicationJob,
   processPublicationJob,
+  PublisherCandidateContractError,
   PublisherCrashInjectionError,
   PublisherVerificationError,
   reconcilePublicationRecovery,
@@ -134,6 +135,24 @@ async function leadershipIdentity(url: string) {
       manifestHash: row.manifest_hash,
       generation: BigInt(row.generation),
     };
+  } finally {
+    await client.end();
+  }
+}
+
+async function leadershipPublicationCount(url: string, publicationId: string) {
+  const client = new Client({ connectionString: url });
+  await client.connect();
+  try {
+    const result = await client.query<{ count: string }>(
+      `
+        SELECT count(*)::text AS count
+          FROM content_releases
+         WHERE studio_publication_id = $1
+      `,
+      [publicationId],
+    );
+    return Number(result.rows[0]?.count ?? "0");
   } finally {
     await client.end();
   }
@@ -551,6 +570,118 @@ describe("durable cross-database publisher", () => {
     }
   });
 
+  it("rejects a canonical MDX mismatch before the production pointer advances", async () => {
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    const situation = await studio.situation.findUniqueOrThrow({
+      where: { slug: "defensive-about-feedback" },
+    });
+    const checkout = await workflows.checkoutSituation({
+      situationId: situation.id,
+      actorId: user.id,
+    });
+    let original:
+      | {
+          body: string;
+          bundle: ReturnType<typeof situationBundleSchema.parse>;
+        }
+      | undefined;
+    try {
+      const workspace = await workflows.workspaceForSlug(situation.slug);
+      const revision = workspace?.drafts[0]?.revisions[0];
+      const body = revision?.artifacts.find(
+        (artifact) => artifact.kind === "SITUATION",
+      )?.content.textBody;
+      if (!revision || !body)
+        throw new Error("Canonical-validation fixture draft is unavailable.");
+      original = {
+        body,
+        bundle: situationBundleSchema.parse(revision.bundleManifest),
+      };
+      const invalidBody = canonicalText(
+        body.replace(
+          /(<PracticeEmbed\s+practiceId=["'][^"']+["'])\s+variant=["'][^"']+["'](\s+surface=["']situation["'])/u,
+          "$1$2",
+        ),
+      );
+      expect(invalidBody).not.toBe(body);
+      await workflows.saveDraft({
+        actorId: user.id,
+        checkoutId: checkout.id,
+        fence: checkout.fence,
+        body: invalidBody,
+        bundle: {
+          ...original.bundle,
+          bodyHash: sha256(invalidBody),
+        },
+        namedCheckpoint: "Canonical snapshot rejection",
+      });
+      const job = await workflows.requestPublication({
+        actorId: user.id,
+        checkoutId: checkout.id,
+        fence: checkout.fence,
+      });
+      const before = await leadershipIdentity(leadershipUrl);
+      lastPublisherError = undefined;
+
+      await processAgainstCurrentRuntime(job.id);
+
+      await expect(leadershipIdentity(leadershipUrl)).resolves.toEqual(before);
+      const persisted = await studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        include: {
+          candidateSnapshot: true,
+          events: { orderBy: { sequence: "asc" } },
+        },
+      });
+      expect(persisted).toMatchObject({
+        state: "FAILED",
+        failureCode: "PRACTICE_EMBED_MISMATCH",
+      });
+      expect(persisted.candidateSnapshot).not.toBeNull();
+      expect(persisted.events.map((item) => item.kind)).toContain(
+        "SNAPSHOT_BUILT",
+      );
+      expect(persisted.events.map((item) => item.kind)).not.toContain(
+        "VALIDATED",
+      );
+      expect(persisted.events.map((item) => item.kind)).not.toContain(
+        "POINTER_ADVANCED",
+      );
+      expect(lastPublisherError).toBeInstanceOf(
+        PublisherCandidateContractError,
+      );
+      expect((lastPublisherError as Error).cause).toBeInstanceOf(Error);
+      expect(((lastPublisherError as Error).cause as Error).message).toContain(
+        "PracticeEmbed does not match frontmatter",
+      );
+      await expect(
+        leadershipPublicationCount(leadershipUrl, job.publicationId),
+      ).resolves.toBe(0);
+      await expect(
+        studio.situationCheckout.count({
+          where: { id: checkout.id, releasedAt: null },
+        }),
+      ).resolves.toBe(1);
+    } finally {
+      if (original)
+        await workflows.saveDraft({
+          actorId: user.id,
+          checkoutId: checkout.id,
+          fence: checkout.fence,
+          body: original.body,
+          bundle: original.bundle,
+          namedCheckpoint: "Restore canonical-validation fixture",
+        });
+      await workflows.checkInSituation({
+        actorId: user.id,
+        checkoutId: checkout.id,
+        fence: checkout.fence,
+      });
+    }
+  });
+
   it("publishes one complete immutable successor and preserves unrelated situations", async () => {
     const before = await leadershipIdentity(leadershipUrl);
     const client = new Client({ connectionString: leadershipUrl });
@@ -669,12 +800,11 @@ describe("durable cross-database publisher", () => {
     });
   });
 
-  it("creates, retires, and restores one situation through forward-only releases", async () => {
+  it("rejects an incomplete new situation before the production pointer advances", async () => {
     const user = await studio.user.findUniqueOrThrow({
       where: { username: "publisher-test-editor" },
     });
     const slug = "publisher-lifecycle-situation";
-    const unrelatedBefore = await typedSituation("defensive-about-feedback");
     const created = await workflows.createSituation({
       actorId: user.id,
       slug,
@@ -685,44 +815,63 @@ describe("durable cross-database publisher", () => {
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
     });
+    const before = await leadershipIdentity(leadershipUrl);
+    lastPublisherError = undefined;
     await processAgainstCurrentRuntime(createJob.id);
+    await expect(
+      studio.situationCheckout.count({
+        where: { id: createJob.checkoutId, releasedAt: null },
+      }),
+    ).resolves.toBe(1);
+    await expect(leadershipIdentity(leadershipUrl)).resolves.toEqual(before);
+    const persisted = await studio.publicationJob.findUniqueOrThrow({
+      where: { id: createJob.id },
+      include: { events: { orderBy: { sequence: "asc" } } },
+    });
+    expect(persisted).toMatchObject({
+      state: "FAILED",
+      failureCode: "CANONICAL_SNAPSHOT_INVALID",
+    });
+    expect(lastPublisherError).toBeInstanceOf(PublisherCandidateContractError);
+    expect(((lastPublisherError as Error).cause as Error).message).toContain(
+      '"sourceReferences"',
+    );
+    expect(((lastPublisherError as Error).cause as Error).message).toContain(
+      '"relatedSituationIds"',
+    );
+    expect(persisted.events.map((item) => item.kind)).not.toContain(
+      "POINTER_ADVANCED",
+    );
+    await expect(
+      leadershipPublicationCount(leadershipUrl, createJob.publicationId),
+    ).resolves.toBe(0);
+    await workflows.checkInSituation({
+      actorId: user.id,
+      checkoutId: createJob.checkoutId,
+      fence: createJob.checkoutFence,
+    });
+  });
 
+  it("retires and restores one situation through forward-only releases", async () => {
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    const situation = await studio.situation.findUniqueOrThrow({
+      where: { slug: "defensive-about-feedback" },
+    });
     const publicVersion =
       await studio.productionSituationVersion.findFirstOrThrow({
         where: {
-          situationId: created.situation.id,
-          sourceKind: "CREATE",
+          situationId: situation.id,
+          sourceKind: "BOOTSTRAP_IMPORT",
         },
+        orderBy: { productionAt: "desc" },
       });
-    const observedCreation =
-      await readOfficialLeadershipRelease(leadershipReaderUrl);
-    const observedCreationBundle = observedCreation.situations.find(
-      (situation) => situation.slug === slug,
-    )?.bundle;
-    expect(
-      observedCreationBundle
-        ? situationBundleSchema.parse({
-            ...observedCreationBundle,
-            situationId: created.situation.id,
-          })
-        : null,
-    ).toEqual(situationBundleSchema.parse(publicVersion.bundleManifest));
-    const afterCreate = await typedSituation(slug);
-    expect(afterCreate.situation).toMatchObject({
-      slug,
-      visibility: "PUBLIC",
-    });
-    expect(afterCreate.identity.generation).toBe(
-      unrelatedBefore.identity.generation + 1n,
-    );
-    await expect(
-      studio.situationCheckout.count({
-        where: { id: created.checkout.id, releasedAt: null },
-      }),
-    ).resolves.toBe(0);
+    const beforeRetire = await typedSituation(situation.slug);
+    const unrelatedBefore = await typedSituation("repeatedly-misses-deadlines");
 
     const retirementCheckout = await workflows.checkoutSituation({
-      situationId: created.situation.id,
+      situationId: situation.id,
       actorId: user.id,
     });
     await workflows.createRetirementDraft({
@@ -752,23 +901,23 @@ describe("durable cross-database publisher", () => {
             typeof value === "bigint" ? value.toString() : value,
         )}`,
       );
-    const afterRetire = await typedSituation(slug);
+    const afterRetire = await typedSituation(situation.slug);
     expect(afterRetire.situation).toMatchObject({
-      slug,
+      slug: situation.slug,
       visibility: "RETIRED",
     });
     expect(afterRetire.identity.generation).toBe(
-      afterCreate.identity.generation + 1n,
+      beforeRetire.identity.generation + 1n,
     );
     await expect(
       studio.situation.findUniqueOrThrow({
-        where: { id: created.situation.id },
+        where: { id: situation.id },
         select: { visibility: true },
       }),
     ).resolves.toEqual({ visibility: "RETIRED" });
 
     const restorationCheckout = await workflows.checkoutSituation({
-      situationId: created.situation.id,
+      situationId: situation.id,
       actorId: user.id,
     });
     await workflows.startRestorationDraft({
@@ -799,33 +948,32 @@ describe("durable cross-database publisher", () => {
             typeof value === "bigint" ? value.toString() : value,
         )}`,
       );
-    const afterRestore = await typedSituation(slug);
+    const afterRestore = await typedSituation(situation.slug);
     expect(afterRestore.situation).toMatchObject({
-      slug,
+      slug: situation.slug,
       visibility: "PUBLIC",
-      body_mdx: afterCreate.situation?.body_mdx,
+      body_mdx: beforeRetire.situation?.body_mdx,
     });
     expect(afterRestore.identity.generation).toBe(
       afterRetire.identity.generation + 1n,
     );
-    const unrelatedAfter = await typedSituation("defensive-about-feedback");
+    const unrelatedAfter = await typedSituation("repeatedly-misses-deadlines");
     expect(unrelatedAfter.situation?.body_mdx).toBe(
       unrelatedBefore.situation?.body_mdx,
     );
     await expect(
       studio.productionSituationVersion.findMany({
-        where: { situationId: created.situation.id },
+        where: {
+          situationId: situation.id,
+          sourceKind: { in: ["RETIRE", "RESTORE"] },
+        },
         orderBy: { productionAt: "asc" },
         select: { sourceKind: true },
       }),
-    ).resolves.toEqual([
-      { sourceKind: "CREATE" },
-      { sourceKind: "RETIRE" },
-      { sourceKind: "RESTORE" },
-    ]);
+    ).resolves.toEqual([{ sourceKind: "RETIRE" }, { sourceKind: "RESTORE" }]);
   });
 
-  it("carries one scoped guide through consecutive releases without changing another consumer", async () => {
+  it("rejects a scoped guide candidate the canonical contract cannot represent", async () => {
     const user = await studio.user.findUniqueOrThrow({
       where: { username: "publisher-test-editor" },
     });
@@ -841,150 +989,80 @@ describe("durable cross-database publisher", () => {
       fixture.target_slug,
     );
     const firstRevision = firstWorkspace?.drafts[0]?.revisions[0];
-    const originalRelationship = situationBundleSchema
-      .parse(firstRevision?.bundleManifest)
-      .relationships.find(
-        (relationship) =>
-          relationship.logicalId === `guide:${fixture.guide_slug}`,
-      );
-    if (!originalRelationship)
-      throw new Error("The shared guide relationship is unavailable.");
-    const scoped = await workflows.createScopedArtifactEdit({
-      actorId: user.id,
-      checkoutId: firstCheckout.id,
-      fence: firstCheckout.fence,
-      originalLogicalId: originalRelationship.logicalId,
-      kind: "GUIDE",
-      originalContentHash: originalRelationship.contentHash,
-      changedBody: canonicalText(
-        `${fixture.body_mdx}\nScoped only to ${fixture.target_slug}.`,
-      ),
-    });
-    const firstJob = await workflows.requestPublication({
-      actorId: user.id,
-      checkoutId: firstCheckout.id,
-      fence: firstCheckout.fence,
-    });
-    await processAgainstCurrentRuntime(firstJob.id);
-    const firstPersisted = await studio.publicationJob.findUniqueOrThrow({
-      where: { id: firstJob.id },
-      include: {
-        attempts: { orderBy: { attempt: "asc" } },
-        events: { orderBy: { sequence: "asc" } },
-      },
-    });
-    if (firstPersisted.state !== "SUCCEEDED")
-      throw new Error(
-        `First scoped publication failed: ${
-          lastPublisherError instanceof Error
-            ? lastPublisherError.message
-            : String(lastPublisherError)
-        }`,
-        { cause: lastPublisherError },
-      );
-    const firstRelease = await leadershipIdentity(leadershipUrl);
-
-    const secondCheckout = await workflows.checkoutSituation({
-      situationId: situation.id,
-      actorId: user.id,
-    });
-    const secondWorkspace = await workflows.workspaceForSlug(
-      fixture.target_slug,
-    );
-    const secondRevision = secondWorkspace?.drafts[0]?.revisions[0];
-    const bodyArtifact = secondRevision?.artifacts.find(
+    const originalBody = firstRevision?.artifacts.find(
       (artifact) => artifact.kind === "SITUATION",
+    )?.content.textBody;
+    const originalBundle = situationBundleSchema.parse(
+      firstRevision?.bundleManifest,
     );
-    if (!secondRevision || !bodyArtifact?.content.textBody)
-      throw new Error("The second scoped draft is unavailable.");
-    const changedBody = canonicalText(
-      bodyArtifact.content.textBody.replace(
-        /^(## The short answer\n\n[^\n]+)/mu,
-        "$1\n\nConsecutive scoped publication.",
-      ),
+    const originalRelationship = originalBundle.relationships.find(
+      (relationship) =>
+        relationship.logicalId === `guide:${fixture.guide_slug}`,
     );
-    await workflows.saveDraft({
-      actorId: user.id,
-      checkoutId: secondCheckout.id,
-      fence: secondCheckout.fence,
-      bundle: situationBundleSchema.parse({
-        ...situationBundleSchema.parse(secondRevision.bundleManifest),
-        bodyHash: sha256(changedBody),
-      }),
-      body: changedBody,
-      namedCheckpoint: "Consecutive scoped publication",
-    });
-    const secondJob = await workflows.requestPublication({
-      actorId: user.id,
-      checkoutId: secondCheckout.id,
-      fence: secondCheckout.fence,
-    });
-    await processAgainstCurrentRuntime(secondJob.id);
-    const secondRelease = await leadershipIdentity(leadershipUrl);
-
-    const client = new Client({ connectionString: leadershipUrl });
-    await client.connect();
+    if (!originalRelationship || !originalBody)
+      throw new Error("The shared guide relationship is unavailable.");
     try {
-      const proof = await client.query<{
-        first_scoped: string;
-        second_scoped: string;
-        target_bindings: string;
-        other_global_membership: string;
-        global_body: string;
-      }>(
-        `
-          SELECT
-            (SELECT count(*)::text
-               FROM guides
-              WHERE release_id = $1
-                AND visibility = 'SITUATION_SCOPED'
-                AND owner_situation_slug = $3
-                AND forked_from_logical_id = $5) AS first_scoped,
-            (SELECT count(*)::text
-               FROM guides
-              WHERE release_id = $2
-                AND visibility = 'SITUATION_SCOPED'
-                AND owner_situation_slug = $3
-                AND forked_from_logical_id = $5) AS second_scoped,
-            (SELECT count(*)::text
-               FROM situation_artifact_bindings
-              WHERE release_id = $2
-                AND situation_slug = $3
-                AND original_logical_id = $5
-                AND resolved_logical_id = $6) AS target_bindings,
-            (SELECT count(*)::text
-               FROM guide_situations membership
-               JOIN guides guide ON guide.id = membership.guide_id
-               JOIN situations situation ON situation.id = membership.situation_id
-              WHERE guide.release_id = $2
-                AND guide.slug = $4
-                AND guide.visibility = 'GLOBAL'
-                AND situation.slug = $7) AS other_global_membership,
-            (SELECT body_mdx
-               FROM guides
-              WHERE release_id = $2
-                AND slug = $4
-                AND visibility = 'GLOBAL') AS global_body
-        `,
-        [
-          firstRelease.releaseId,
-          secondRelease.releaseId,
-          fixture.target_slug,
-          fixture.guide_slug,
-          originalRelationship.logicalId,
-          scoped.variant.logicalId,
-          fixture.other_slug,
-        ],
-      );
-      expect(proof.rows[0]).toMatchObject({
-        first_scoped: "1",
-        second_scoped: "1",
-        target_bindings: "1",
-        other_global_membership: "1",
-        global_body: fixture.body_mdx,
+      await workflows.createScopedArtifactEdit({
+        actorId: user.id,
+        checkoutId: firstCheckout.id,
+        fence: firstCheckout.fence,
+        originalLogicalId: originalRelationship.logicalId,
+        kind: "GUIDE",
+        originalContentHash: originalRelationship.contentHash,
+        changedBody: canonicalText(
+          `${fixture.body_mdx}\nScoped only to ${fixture.target_slug}.`,
+        ),
       });
+      const before = await leadershipIdentity(leadershipUrl);
+      const job = await workflows.requestPublication({
+        actorId: user.id,
+        checkoutId: firstCheckout.id,
+        fence: firstCheckout.fence,
+      });
+      lastPublisherError = undefined;
+      await processAgainstCurrentRuntime(job.id);
+      await expect(leadershipIdentity(leadershipUrl)).resolves.toEqual(before);
+      const persisted = await studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        include: {
+          candidateSnapshot: true,
+          events: { orderBy: { sequence: "asc" } },
+        },
+      });
+      expect(persisted).toMatchObject({
+        state: "FAILED",
+        failureCode: "CANONICAL_SNAPSHOT_INVALID",
+      });
+      expect(persisted.candidateSnapshot).not.toBeNull();
+      expect(persisted.events.map((item) => item.kind)).not.toContain(
+        "POINTER_ADVANCED",
+      );
+      expect(lastPublisherError).toBeInstanceOf(
+        PublisherCandidateContractError,
+      );
+      expect(((lastPublisherError as Error).cause as Error).message).toContain(
+        '"slug"',
+      );
+      expect(((lastPublisherError as Error).cause as Error).message).toContain(
+        "received undefined",
+      );
+      await expect(
+        leadershipPublicationCount(leadershipUrl, job.publicationId),
+      ).resolves.toBe(0);
     } finally {
-      await client.end();
+      await workflows.saveDraft({
+        actorId: user.id,
+        checkoutId: firstCheckout.id,
+        fence: firstCheckout.fence,
+        body: originalBody,
+        bundle: originalBundle,
+        namedCheckpoint: "Restore unsupported scoped guide fixture",
+      });
+      await workflows.checkInSituation({
+        actorId: user.id,
+        checkoutId: firstCheckout.id,
+        fence: firstCheckout.fence,
+      });
     }
   });
 
@@ -1238,6 +1316,76 @@ describe("durable cross-database publisher", () => {
       state: "RESTORED",
       failureCode: "RUNTIME_CAPABILITY_UNAVAILABLE_RESTORED",
       receipt: null,
+    });
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    await workflows.checkInSituation({
+      actorId: user.id,
+      checkoutId: job.checkoutId,
+      fence: job.checkoutFence,
+    });
+  });
+
+  it("restores an already-promoted candidate when persisted validation fails after restart", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const job = await requestChangedPublication(
+      "Publisher invalid promoted retry recovery.",
+    );
+    let injected = false;
+    await expect(
+      processAgainstCurrentRuntime(job.id, async (boundary) => {
+        if (!injected && boundary === "LEADERSHIP_PROMOTED") {
+          injected = true;
+          throw new PublisherCrashInjectionError(boundary);
+        }
+      }),
+    ).rejects.toThrow(PublisherCrashInjectionError);
+    expect(injected).toBe(true);
+    const promotedJob = await studio.publicationJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: { candidateSnapshot: true },
+    });
+    expect((await leadershipIdentity(leadershipUrl)).releaseId).toBe(
+      promotedJob.candidateSnapshot?.releaseId,
+    );
+
+    const leadership = new Client({ connectionString: leadershipUrl });
+    await leadership.connect();
+    try {
+      await leadership.query("SET session_replication_role = replica");
+      const corrupted = await leadership.query<{ id: string }>(
+        `
+          UPDATE artifact_versions version
+             SET text_body = version.text_body || E'\ncorrupted after promotion\n'
+            FROM release_artifacts membership
+           WHERE membership.release_id = $1
+             AND membership.logical_id = 'situation:repeatedly-misses-deadlines'
+             AND version.id = membership.artifact_version_id
+          RETURNING version.id
+        `,
+        [promotedJob.candidateSnapshot?.releaseId],
+      );
+      expect(corrupted.rowCount).toBe(1);
+    } finally {
+      await leadership
+        .query("SET session_replication_role = origin")
+        .catch(() => undefined);
+      await leadership.end();
+    }
+
+    await processAgainstCurrentRuntime(job.id);
+
+    await expect(leadershipIdentity(leadershipUrl)).resolves.toMatchObject({
+      releaseId: prior.releaseId,
+      manifestHash: prior.manifestHash,
+      generation: prior.generation + 2n,
+    });
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({ where: { id: job.id } }),
+    ).resolves.toMatchObject({
+      state: "RESTORED",
+      failureCode: "VERIFICATION_FAILED_RESTORED",
     });
     const user = await studio.user.findUniqueOrThrow({
       where: { username: "publisher-test-editor" },

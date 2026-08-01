@@ -8,6 +8,7 @@ import {
 import {
   physicalPracticeId,
   snapshotManifestSchema as leadershipSnapshotManifestSchema,
+  validateCanonicalSnapshot,
   validationPolicyHash as leadershipValidationPolicyHash,
 } from "@leadership-field-guide/content-contracts";
 import {
@@ -121,6 +122,27 @@ export class PublisherVerificationError extends Error {
   ) {
     super(message);
     this.name = "PublisherVerificationError";
+  }
+}
+
+export class PublisherCandidateContractError extends Error {
+  readonly code:
+    | "CANONICAL_SNAPSHOT_INVALID"
+    | "PRACTICE_EMBED_MISMATCH"
+    | "PREPARED_ACTION_MISMATCH";
+
+  constructor(cause: unknown) {
+    super(
+      "The assembled Leadership snapshot does not satisfy the canonical content contract.",
+      { cause },
+    );
+    this.name = "PublisherCandidateContractError";
+    const detail = cause instanceof Error ? cause.message : "";
+    this.code = /PracticeEmbed does not match frontmatter/iu.test(detail)
+      ? "PRACTICE_EMBED_MISMATCH"
+      : /PreparedAction does not match frontmatter/iu.test(detail)
+        ? "PREPARED_ACTION_MISMATCH"
+        : "CANONICAL_SNAPSHOT_INVALID";
   }
 }
 
@@ -572,6 +594,63 @@ function situationFile(input: {
     canonicalText(input.body).trimEnd(),
   ];
   return canonicalText(lines.join("\n"));
+}
+
+async function releaseBodies(client: Client, releaseId: string) {
+  const result = await client.query<{
+    content_hash: string;
+    encoding: "UTF8" | "BINARY";
+    text_body: string | null;
+    binary_body: Uint8Array | null;
+  }>(
+    `
+      SELECT membership.content_hash,
+             version.encoding::text,
+             version.text_body,
+             version.binary_body
+        FROM release_artifacts membership
+        JOIN artifact_versions version
+          ON version.id = membership.artifact_version_id
+       WHERE membership.release_id = $1
+    `,
+    [releaseId],
+  );
+  const bodies = new Map<string, Uint8Array>();
+  for (const row of result.rows) {
+    if (row.encoding === "UTF8") {
+      if (row.text_body === null)
+        throw new PublisherCandidateContractError(
+          new Error(`UTF-8 artifact ${row.content_hash} has no text body.`),
+        );
+      bodies.set(row.content_hash, new TextEncoder().encode(row.text_body));
+      continue;
+    }
+    if (row.binary_body === null)
+      throw new PublisherCandidateContractError(
+        new Error(`Binary artifact ${row.content_hash} has no binary body.`),
+      );
+    bodies.set(row.content_hash, new Uint8Array(row.binary_body));
+  }
+  return bodies;
+}
+
+async function validateCanonicalCandidate(
+  client: Client,
+  candidate: CandidateSnapshot,
+  baseReleaseId: string,
+) {
+  const bodies = await releaseBodies(client, baseReleaseId);
+  for (const artifact of candidate.changedArtifacts)
+    bodies.set(
+      artifact.contentHash,
+      new TextEncoder().encode(canonicalText(artifact.body)),
+    );
+  try {
+    await validateCanonicalSnapshot(candidate.manifestBody, bodies);
+  } catch (error) {
+    if (error instanceof PublisherCandidateContractError) throw error;
+    throw new PublisherCandidateContractError(error);
+  }
 }
 
 async function event(
@@ -1034,6 +1113,17 @@ async function buildCandidate(
         }),
       },
     });
+    await event(studio, job.id, "SNAPSHOT_BUILT", {
+      releaseId: candidate.releaseId,
+      manifestHash: candidate.manifestHash,
+      artifactCount: candidate.artifactCount,
+      edgeCount: candidate.edgeCount,
+    });
+    await validateCanonicalCandidate(
+      client,
+      candidate,
+      observed.identity.releaseId,
+    );
     await studio.publicationJob.update({
       where: { id: job.id },
       data: {
@@ -1044,12 +1134,6 @@ async function buildCandidate(
         previousReleaseId: candidate.parentReleaseId,
         state: "PROMOTING",
       },
-    });
-    await event(studio, job.id, "SNAPSHOT_BUILT", {
-      releaseId: candidate.releaseId,
-      manifestHash: candidate.manifestHash,
-      artifactCount: candidate.artifactCount,
-      edgeCount: candidate.edgeCount,
     });
     await event(studio, job.id, "VALIDATED", {
       targetBundleHash: job.targetBundleHash,
@@ -2533,6 +2617,7 @@ async function candidateFromPersisted(
   studio: DatabaseClient,
   leadershipUrl: string,
   job: ClaimedJob,
+  options: { validate?: boolean } = {},
 ) {
   const snapshot = job.candidateSnapshot;
   if (!snapshot) return buildCandidate(studio, leadershipUrl, job);
@@ -2595,7 +2680,11 @@ async function candidateFromPersisted(
         bundle.artifacts.map((artifact) => artifact.logicalId),
       ],
     );
-    if (!rows.rowCount) return buildCandidate(studio, leadershipUrl, job);
+    if (!rows.rowCount) {
+      if (options.validate === false)
+        throw new Error("Persisted candidate release artifacts are absent.");
+      return buildCandidate(studio, leadershipUrl, job);
+    }
     const changedArtifacts: ChangedArtifact[] = rows.rows.map((row) => {
       if (row.encoding !== "UTF8" || row.text_body === null)
         throw new Error(`Publication artifact ${row.logical_id} is not UTF-8.`);
@@ -2633,7 +2722,14 @@ async function candidateFromPersisted(
       sourceKind: job.sourceKind,
       changedArtifacts,
     };
-    validateCandidate(candidate);
+    if (options.validate !== false) {
+      validateCandidate(candidate);
+      await validateCanonicalCandidate(
+        leadership,
+        candidate,
+        snapshot.releaseId,
+      );
+    }
     return candidate;
   } finally {
     await leadership.end();
@@ -2642,6 +2738,7 @@ async function candidateFromPersisted(
 
 function publicationFailureCode(error: unknown) {
   if (error instanceof LeadershipCapabilityError) return error.code;
+  if (error instanceof PublisherCandidateContractError) return error.code;
   if (error instanceof PublisherVerificationError) return error.code;
   if (
     error instanceof Error &&
@@ -2702,6 +2799,15 @@ export async function processPublicationJob(
     const existing = external.rows[0];
     let candidate: CandidateSnapshot | null = null;
     if (existing && job.candidateSnapshot) {
+      if (
+        existing.id !== job.candidateSnapshot.releaseId ||
+        existing.manifest_hash !== job.candidateSnapshot.manifestHash
+      )
+        throw new Error("Reconciled publication release differs from Studio.");
+      const observed = await databaseIdentity(leadership);
+      promoted =
+        observed.releaseId === job.candidateSnapshot.releaseId &&
+        observed.manifestHash === job.candidateSnapshot.manifestHash;
       candidate = await candidateFromPersisted(
         studio,
         leadershipPublisherUrl,
@@ -2713,10 +2819,6 @@ export async function processPublicationJob(
       )
         throw new Error("Reconciled publication release differs from Studio.");
       activeCandidate = candidate;
-      const observed = await databaseIdentity(leadership);
-      promoted =
-        observed.releaseId === candidate.releaseId &&
-        observed.manifestHash === candidate.manifestHash;
     }
     if (!/^[a-f0-9]{40}$/u.test(dependencies.producerCommit))
       throw new Error(
@@ -2874,6 +2976,7 @@ export async function processPublicationJob(
     const failureCode = publicationFailureCode(error);
     const promotionStateUnverified =
       !promoted &&
+      !(error instanceof PublisherCandidateContractError) &&
       Boolean(job.candidateSnapshot) &&
       (job.state === "PROMOTING" || job.state === "VERIFYING");
     if (promoted) {
@@ -2891,7 +2994,9 @@ export async function processPublicationJob(
         const current = await databaseIdentity(leadership);
         const candidate =
           activeCandidate ??
-          (await candidateFromPersisted(studio, leadershipPublisherUrl, job));
+          (await candidateFromPersisted(studio, leadershipPublisherUrl, job, {
+            validate: false,
+          }));
         if (!candidate)
           throw new Error("Candidate disappeared during recovery.");
         await restorePrevious(leadership, candidate, current.generation);

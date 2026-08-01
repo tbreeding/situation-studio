@@ -997,13 +997,14 @@ approval at the appropriate implementation checkpoint.
 - [ ] Only explicitly retryable provider failures receive two automatic
       retries, with a durable not-before schedule and immutable attempt
       history.
-- [ ] Retry backoff remains cancellable and fenced, and releases the one global
-      running slot without allowing an early post-restart claim.
-- [ ] Retry scheduling records a bounded system audit and the workspace shows
-      stage, safe class, attempt count, and scheduled time.
+- [ ] Retry backoff remains cancellable and fenced, releases the running lease,
+      and retains the focused lane so later reviews cannot overtake it.
+- [ ] Retry and terminal failures record bounded system audits and the workspace
+      shows the failed stage, safe reason, attempt count, scheduled time, and
+      explicit retry-or-stop recovery choice.
 - [ ] Historical terminal provider failures do not indefinitely degrade
       readiness for a currently healthy worker.
-- [ ] An authenticated same-origin `review-status-v2` SSE stream sends a full
+- [ ] An authenticated same-origin `review-status-v3` SSE stream sends a full
       durable snapshot on connect/reconnect and changed snapshots only.
 - [ ] Heartbeats, abort cleanup, bounded lifetime, native reconnection, and
       stale review/connection rejection do not affect worker authority.

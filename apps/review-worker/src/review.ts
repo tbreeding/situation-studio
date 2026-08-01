@@ -33,6 +33,9 @@ import {
   situationMetadataSchema,
   validateScopedArtifactBody,
   validateSituationBundle,
+  reviewRoleCodes,
+  type ReviewFailurePhase,
+  type ReviewFailureReasonCode,
   type SituationSectionTarget,
 } from "@situation-studio/domain";
 import {
@@ -76,7 +79,7 @@ export type ReviewApplicationFailureEvent = {
   jobId: string;
   stageOrdinal: number;
   stageRole: string;
-  phase: "BUILD_EVIDENCE" | "VALIDATE_CANDIDATE" | "MATERIALIZE_PROPOSAL";
+  phase: ReviewFailurePhase;
   failureClass: AdapterFailure["failureClass"];
   errorMessage: string;
 };
@@ -173,6 +176,42 @@ function isRetryableProviderFailure(error: AdapterFailure) {
   );
 }
 
+function failureReasonCode(
+  error: AdapterFailure,
+  phase: ReviewFailurePhase,
+): ReviewFailureReasonCode {
+  if (/metadata field .* is not valid JSON/iu.test(error.message))
+    return "CANDIDATE_METADATA_JSON_INVALID";
+  if (/references missing finding/iu.test(error.message))
+    return "CANDIDATE_FINDING_REFERENCE_INVALID";
+  if (phase === "BUILD_EVIDENCE") return "REVIEW_EVIDENCE_BUILD_FAILED";
+  if (phase === "VALIDATE_INPUT") return "REVIEW_INPUT_VALIDATION_FAILED";
+  if (phase === "VALIDATE_CANDIDATE") return "CANDIDATE_OUTPUT_INVALID";
+  if (phase === "MATERIALIZE_PROPOSAL")
+    return "PROPOSAL_MATERIALIZATION_FAILED";
+  const reasons: Record<
+    AdapterFailure["failureClass"],
+    ReviewFailureReasonCode
+  > = {
+    CAPACITY: "PROVIDER_CAPACITY",
+    TRANSIENT: "PROVIDER_TRANSIENT",
+    AUTHENTICATION: "PROVIDER_AUTHENTICATION",
+    INVALID_OUTPUT: "PROVIDER_OUTPUT_INVALID",
+    APPLICATION: "REVIEW_APPLICATION_FAILED",
+    CANCELLED: "REVIEW_APPLICATION_FAILED",
+  };
+  return reasons[error.failureClass];
+}
+
+function canonicalFindingReference(value: string) {
+  const separator = value.indexOf(":");
+  if (separator <= 0) return value;
+  const role = value.slice(0, separator).toLowerCase();
+  return reviewRoleCodes.includes(role as (typeof reviewRoleCodes)[number])
+    ? `${role}${value.slice(separator)}`
+    : value;
+}
+
 export function rolePrompt(
   role: string,
   policyVersion = REVIEW_POLICY_VERSION,
@@ -215,29 +254,93 @@ export async function claimNextReview(
   try {
     return await database.$transaction(
       async (transaction) => {
-        const rows = await transaction.$queryRaw<
-          Array<{
-            id: string;
-            state: "QUEUED" | "RUNNING";
-            startedAt: Date | null;
-          }>
-        >`
-          SELECT id, state::text, started_at AS "startedAt"
-          FROM review_jobs
-          WHERE (
-               state = 'QUEUED'
-               AND (retry_not_before IS NULL OR retry_not_before <= ${now})
-             )
-             OR (
-               state = 'RUNNING'
-               AND (lease_expires_at IS NULL OR lease_expires_at < ${now})
-             )
-          ORDER BY queued_at, id
-          FOR UPDATE SKIP LOCKED
+        type LaneRow = {
+          id: string;
+          state: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+          startedAt: Date | null;
+          retryNotBefore: Date | null;
+          leaseExpiresAt: Date | null;
+          checkoutActive: boolean;
+        };
+        const focusedRows = await transaction.$queryRaw<LaneRow[]>`
+          SELECT job.id,
+                 job.state::text,
+                 job.started_at AS "startedAt",
+                 job.retry_not_before AS "retryNotBefore",
+                 job.lease_expires_at AS "leaseExpiresAt",
+                 EXISTS (
+                   SELECT 1
+                   FROM situation_checkouts checkout
+                   WHERE checkout.id = job.checkout_id
+                     AND checkout.fence = job.checkout_fence
+                     AND checkout.released_at IS NULL
+                 ) AS "checkoutActive"
+          FROM review_jobs job
+          WHERE job.lane_owner = true
+          FOR UPDATE
           LIMIT 1
         `;
-        const selected = rows[0];
+        let selected = focusedRows[0] ?? null;
+        if (
+          selected &&
+          (!selected.checkoutActive ||
+            selected.state === "SUCCEEDED" ||
+            selected.state === "CANCELLED")
+        ) {
+          await transaction.reviewJob.update({
+            where: { id: selected.id },
+            data: { laneOwner: false },
+          });
+          selected = null;
+        }
+        if (!selected) {
+          const rows = await transaction.$queryRaw<
+            Array<{
+              id: string;
+              state: "QUEUED";
+              startedAt: Date | null;
+              retryNotBefore: Date | null;
+              leaseExpiresAt: Date | null;
+              checkoutActive: true;
+            }>
+          >`
+          SELECT job.id,
+                 job.state::text,
+                 job.started_at AS "startedAt",
+                 job.retry_not_before AS "retryNotBefore",
+                 job.lease_expires_at AS "leaseExpiresAt",
+                 true AS "checkoutActive"
+          FROM review_jobs job
+          JOIN situation_checkouts checkout
+            ON checkout.id = job.checkout_id
+           AND checkout.fence = job.checkout_fence
+           AND checkout.released_at IS NULL
+          WHERE job.state = 'QUEUED'
+          ORDER BY job.queued_at, job.id
+          FOR UPDATE OF job SKIP LOCKED
+          LIMIT 1
+        `;
+          selected = rows[0] ?? null;
+          if (selected)
+            await transaction.reviewJob.update({
+              where: { id: selected.id },
+              data: { laneOwner: true },
+            });
+        }
         if (!selected) return null;
+        if (selected.state === "FAILED") return null;
+        if (
+          selected.state === "QUEUED" &&
+          selected.retryNotBefore &&
+          selected.retryNotBefore > now
+        )
+          return null;
+        if (
+          selected.state === "RUNNING" &&
+          selected.leaseExpiresAt &&
+          selected.leaseExpiresAt >= now
+        )
+          return null;
         if (selected.state === "RUNNING") {
           await transaction.agentRun.updateMany({
             where: {
@@ -265,6 +368,10 @@ export async function claimNextReview(
             leaseExpiresAt: new Date(now.getTime() + leaseDurationMs(timing)),
             retryNotBefore: null,
             failureCode: null,
+            failureReasonCode: null,
+            failurePhase: null,
+            failureStageOrdinal: null,
+            failureStageRole: null,
           },
         });
       },
@@ -862,6 +969,7 @@ async function recordFailure(
     fence: bigint;
     claimToken: string;
     attempt: number;
+    phase: ReviewFailurePhase;
     error: unknown;
   },
   timing?: ReviewWorkerTiming,
@@ -882,6 +990,7 @@ async function recordFailure(
   const providerAttempts = providerAttemptsMetadataSchema.parse(
     adapterError.providerAttempts,
   ) as Prisma.InputJsonValue;
+  const reasonCode = failureReasonCode(adapterError, input.phase);
   await database.$transaction(async (transaction) => {
     const job = await transaction.reviewJob.findFirst({
       where: {
@@ -916,6 +1025,29 @@ async function recordFailure(
         finishedAt: now,
       },
     });
+    await transaction.$executeRaw`
+      INSERT INTO audit_events (
+        id, actor_id, action, subject_type, subject_id, payload, occurred_at
+      )
+      VALUES (
+        ${crypto.randomUUID()}::uuid,
+        NULL,
+        'REVIEW_STAGE_FAILED',
+        'REVIEW_JOB',
+        ${input.jobId},
+        ${JSON.stringify({
+          systemActor: "review-worker",
+          stageOrdinal: step.ordinal,
+          stageRole: step.roleCode,
+          phase: input.phase,
+          failureClass: failureClass(adapterError),
+          reasonCode,
+          retryable: automaticallyRetry,
+          attempt: input.attempt,
+        })}::jsonb,
+        ${now}
+      )
+    `;
     if (automaticallyRetry && retryAt) {
       await transaction.reviewStep.update({
         where: { id: input.stepId },
@@ -929,10 +1061,13 @@ async function recordFailure(
         where: { id: input.jobId },
         data: {
           state: "QUEUED",
-          queuedAt: now,
           finishedAt: null,
           retryNotBefore: retryAt,
           failureCode: adapterError.failureClass,
+          failureReasonCode: reasonCode,
+          failurePhase: input.phase,
+          failureStageOrdinal: step.ordinal,
+          failureStageRole: step.roleCode,
           claimToken: null,
           leaseExpiresAt: null,
         },
@@ -951,7 +1086,9 @@ async function recordFailure(
             systemActor: "review-worker",
             stageOrdinal: step.ordinal,
             stageRole: step.roleCode,
+            phase: input.phase,
             failureClass: failureClass(adapterError),
+            reasonCode,
             attempt: input.attempt,
             maximumAttempts: REVIEW_STAGE_MAX_ATTEMPTS,
             scheduledRetryAt: retryAt.toISOString(),
@@ -972,6 +1109,10 @@ async function recordFailure(
         finishedAt: now,
         retryNotBefore: null,
         failureCode: adapterError.failureClass,
+        failureReasonCode: reasonCode,
+        failurePhase: input.phase,
+        failureStageOrdinal: step.ordinal,
+        failureStageRole: step.roleCode,
         claimToken: null,
         leaseExpiresAt: null,
       },
@@ -986,10 +1127,23 @@ async function recordApplicationFailure(
     stepId: string;
     fence: bigint;
     claimToken: string;
+    phase: ReviewFailurePhase;
+    error: unknown;
   },
   timing?: ReviewWorkerTiming,
 ) {
   const now = currentTime(timing);
+  const adapterError =
+    input.error instanceof AdapterFailure
+      ? input.error
+      : new AdapterFailure(
+          "APPLICATION",
+          input.error instanceof Error
+            ? input.error.message
+            : "Review application processing failed.",
+          false,
+        );
+  const reasonCode = failureReasonCode(adapterError, input.phase);
   await database.$transaction(async (transaction) => {
     const active = await transaction.reviewJob.findFirst({
       where: {
@@ -1000,6 +1154,24 @@ async function recordApplicationFailure(
       },
     });
     if (!active) return;
+    const step = await transaction.reviewStep.findUniqueOrThrow({
+      where: { id: input.stepId },
+      select: { ordinal: true, roleCode: true },
+    });
+    if (input.phase === "MATERIALIZE_PROPOSAL")
+      await transaction.reviewStep.updateMany({
+        where: {
+          jobId: input.jobId,
+          ordinal: { gt: step.ordinal },
+          state: { not: "CANCELLED" },
+        },
+        data: {
+          state: "PENDING",
+          outputHash: null,
+          startedAt: null,
+          finishedAt: null,
+        },
+      });
     await transaction.reviewStep.updateMany({
       where: {
         id: input.stepId,
@@ -1014,10 +1186,36 @@ async function recordApplicationFailure(
         finishedAt: now,
         retryNotBefore: null,
         failureCode: "APPLICATION",
+        failureReasonCode: reasonCode,
+        failurePhase: input.phase,
+        failureStageOrdinal: step.ordinal,
+        failureStageRole: step.roleCode,
         claimToken: null,
         leaseExpiresAt: null,
       },
     });
+    await transaction.$executeRaw`
+      INSERT INTO audit_events (
+        id, actor_id, action, subject_type, subject_id, payload, occurred_at
+      )
+      VALUES (
+        ${crypto.randomUUID()}::uuid,
+        NULL,
+        'REVIEW_STAGE_FAILED',
+        'REVIEW_JOB',
+        ${input.jobId},
+        ${JSON.stringify({
+          systemActor: "review-worker",
+          stageOrdinal: step.ordinal,
+          stageRole: step.roleCode,
+          phase: input.phase,
+          failureClass: failureClass(adapterError),
+          reasonCode,
+          retryable: false,
+        })}::jsonb,
+        ${now}
+      )
+    `;
   });
 }
 
@@ -1139,7 +1337,9 @@ async function materializeProposal(
       );
     const linkedFindings = [...new Set(change.upstreamFindingIds)].map(
       (findingKey) => {
-        const finding = findingsByKey.get(findingKey);
+        const finding = findingsByKey.get(
+          canonicalFindingReference(findingKey),
+        );
         if (!finding)
           throw new AdapterFailure(
             "APPLICATION",
@@ -1269,8 +1469,13 @@ async function materializeProposal(
       data: {
         state: "SUCCEEDED",
         finishedAt: now,
+        laneOwner: false,
         retryNotBefore: null,
         failureCode: null,
+        failureReasonCode: null,
+        failurePhase: null,
+        failureStageOrdinal: null,
+        failureStageRole: null,
         claimToken: null,
         leaseExpiresAt: null,
       },
@@ -1324,12 +1529,14 @@ export async function processClaimedReview(
             options.timing,
           );
         } catch (error) {
-          const finalStep = job.steps.at(-1);
-          if (finalStep) {
+          const writerStep = job.steps.find(
+            (step) => step.roleCode === "bundle-writer",
+          );
+          if (writerStep) {
             reportApplicationFailure(options.onApplicationFailure, {
               jobId: job.id,
-              stageOrdinal: finalStep.ordinal,
-              stageRole: finalStep.roleCode,
+              stageOrdinal: writerStep.ordinal,
+              stageRole: writerStep.roleCode,
               phase: "MATERIALIZE_PROPOSAL",
               error,
             });
@@ -1337,9 +1544,11 @@ export async function processClaimedReview(
               database,
               {
                 jobId: job.id,
-                stepId: finalStep.id,
+                stepId: writerStep.id,
                 fence: job.fence,
                 claimToken: activeClaim,
+                phase: "MATERIALIZE_PROPOSAL",
+                error,
               },
               options.timing,
             );
@@ -1373,6 +1582,8 @@ export async function processClaimedReview(
           stepId: ready.id,
           fence: job.fence,
           claimToken: activeClaim,
+          phase: "BUILD_EVIDENCE",
+          error,
         },
         options.timing,
       );
@@ -1415,6 +1626,7 @@ export async function processClaimedReview(
     if (!run) return;
     const stageStartedAt = Date.now();
     let providerCompleted = false;
+    let failurePhase: ReviewFailurePhase = "RUN_STAGE";
     const controller = new AbortController();
     const monitor = setInterval(() => {
       void renewReviewLease(
@@ -1430,6 +1642,7 @@ export async function processClaimedReview(
     monitor.unref();
     try {
       if (ready.roleCode === "deterministic-validator") {
+        failurePhase = "VALIDATE_INPUT";
         const body = job.inputRevision.artifacts[0]?.content.textBody ?? "";
         const validation = validateSituationBundle(
           job.inputRevision.bundleManifest,
@@ -1445,6 +1658,7 @@ export async function processClaimedReview(
             false,
           );
       }
+      failurePhase = "RUN_STAGE";
       const result = await runStage(
         {
           role: ready.roleCode,
@@ -1459,6 +1673,7 @@ export async function processClaimedReview(
         { providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS },
       );
       if (ready.roleCode === "bundle-writer") {
+        failurePhase = "VALIDATE_CANDIDATE";
         try {
           const output = bundleWriterOutputSchema.parse(result.output);
           const body =
@@ -1546,6 +1761,7 @@ export async function processClaimedReview(
           fence: job.fence,
           claimToken: activeClaim,
           attempt: run.attempt,
+          phase: failurePhase,
           error,
         },
         options.timing,

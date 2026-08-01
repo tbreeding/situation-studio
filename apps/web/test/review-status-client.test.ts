@@ -57,7 +57,7 @@ function snapshot(input: {
     };
   });
   return reviewStatusSnapshotSchema.parse({
-    schemaVersion: "review-status-v2",
+    schemaVersion: "review-status-v3",
     reviewJobId: input.reviewJobId ?? firstJobId,
     state,
     completedStages,
@@ -73,6 +73,12 @@ function snapshot(input: {
             state: stages[currentOrdinal - 1]!.state,
             attempt: 1,
           },
+    laneState:
+      state === "RUNNING" || state === "FAILED"
+        ? "FOCUSED"
+        : state === "QUEUED"
+          ? "WAITING"
+          : "RELEASED",
     retry: input.retry
       ? {
           state: "SCHEDULED",
@@ -89,6 +95,24 @@ function snapshot(input: {
           failureClass: state === "FAILED" ? "PROVIDER_TRANSIENT" : null,
         }
       : null,
+    failure:
+      input.retry || state === "FAILED"
+        ? {
+            failureClass: "PROVIDER_TRANSIENT",
+            reasonCode: "PROVIDER_TRANSIENT",
+            title: "The review provider was interrupted",
+            explanation:
+              "The provider timed out or returned a temporary error.",
+            stage:
+              currentOrdinal === null
+                ? null
+                : {
+                    ordinal: currentOrdinal,
+                    code: `stage-${currentOrdinal}`,
+                    displayName: `Human stage ${currentOrdinal}`,
+                  },
+          }
+        : null,
     proposalReady: input.proposalReady ?? false,
     snapshotId: input.snapshotCharacter.repeat(64),
   });
@@ -302,7 +326,7 @@ describe("review timing and accessibility presentation", () => {
       11_500,
     );
     expect(terminal.message).toBe(
-      `Review stopped after 1 of ${REVIEW_STAGE_TOTAL} stages complete. You can retry the review.`,
+      `Review stopped after 1 of ${REVIEW_STAGE_TOTAL} stages complete. The review provider was interrupted. The review lane is paused; retry or stop the review.`,
     );
   });
 

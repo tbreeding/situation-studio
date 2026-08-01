@@ -156,11 +156,13 @@ function announcementText(snapshot: ReviewStatusSnapshot) {
   if (snapshot.state === "SUCCEEDED")
     return `Review complete. ${progress}. Loading the proposal.`;
   if (snapshot.state === "FAILED")
-    return `Review stopped after ${progress}. You can retry the review.`;
+    return `Review stopped after ${progress}. ${snapshot.failure?.title ?? "Review processing stopped"}. The review lane is paused; retry or stop the review.`;
   if (snapshot.state === "CANCELLED")
     return `Review cancelled after ${progress}. Editing is available.`;
   if (snapshot.retry && snapshot.currentStage)
-    return `${progress}. ${snapshot.currentStage.displayName} will retry automatically.`;
+    return `${progress}. ${snapshot.currentStage.displayName} will retry automatically and keeps the review lane.`;
+  if (snapshot.state === "QUEUED" && snapshot.laneState === "WAITING")
+    return `${progress}. Waiting for the focused review to finish.`;
   if (snapshot.currentStage)
     return `${progress}. Current stage: ${snapshot.currentStage.displayName}.`;
   return `${progress}. Review queued.`;

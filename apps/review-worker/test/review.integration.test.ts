@@ -902,6 +902,60 @@ describe("checkout fencing and the complete durable review DAG", () => {
     expect(appliedBody).toContain("### “Everything is fine.”");
   });
 
+  it("accepts case-only role differences in bundle-writer finding links", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-uppercase-finding-link",
+      title: "A case-normalized finding lineage scenario",
+    });
+    const job = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    await completeCandidateReview(job.id, {
+      findings: [
+        {
+          id: "case-only-lineage",
+          severity: "important",
+          targetKind: "SECTION",
+          targetKey: "The short answer",
+          summary: "The opening needs one observable next move.",
+          rationale: "The finding exists under the canonical lowercase role.",
+          evidenceRoleCodes: ["critic-nvc"],
+        },
+      ],
+      candidateEdits: [
+        {
+          id: "61e949ea-e41d-4337-92e2-761f0b2afe3c",
+          targetKind: "SECTION",
+          targetKey: "The short answer",
+          applicationMode: "AUTOMATIC",
+          beforeHash: null,
+          afterBody: "Name the observed pattern, then ask for their view.",
+          problem: "The first action needs to be concrete.",
+          explanation: "Makes the first conversation move explicit.",
+          rationale: "A case-only role prefix must not break valid lineage.",
+          upstreamFindingIds: ["CRITIC-NVC:case-only-lineage"],
+          writtenByRoleCode: "bundle-writer",
+          evidenceRoleCodes: ["critic-nvc"],
+        },
+      ],
+    });
+    const completed = await database.reviewJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: {
+        proposal: {
+          include: {
+            changes: { include: { findingLinks: true } },
+          },
+        },
+      },
+    });
+    expect(completed).toMatchObject({ state: "SUCCEEDED", laneOwner: false });
+    expect(completed.proposal?.changes[0]?.findingLinks).toHaveLength(1);
+  });
+
   it("logs the safe proposal-materialization error instead of discarding it", async () => {
     const created = await workflows.createSituation({
       actorId: editorOneId,
@@ -959,11 +1013,21 @@ describe("checkout fencing and the complete durable review DAG", () => {
     );
     expect(
       await database.reviewJob.findUniqueOrThrow({ where: { id: job.id } }),
-    ).toMatchObject({ state: "FAILED", failureCode: "APPLICATION" });
+    ).toMatchObject({
+      state: "FAILED",
+      laneOwner: true,
+      failureCode: "APPLICATION",
+      failureReasonCode: "CANDIDATE_FINDING_REFERENCE_INVALID",
+      failurePhase: "MATERIALIZE_PROPOSAL",
+      failureStageOrdinal: 19,
+      failureStageRole: "bundle-writer",
+    });
     expect(events).toContainEqual(
       expect.objectContaining({
         event: "review_application_failure",
         jobId: job.id,
+        stageOrdinal: 19,
+        stageRole: "bundle-writer",
         phase: "MATERIALIZE_PROPOSAL",
         failureClass: "APPLICATION",
         errorMessage: expect.stringContaining(
@@ -971,6 +1035,29 @@ describe("checkout fencing and the complete durable review DAG", () => {
         ),
       }),
     );
+    expect(
+      await database.reviewStep.count({
+        where: { jobId: job.id, ordinal: { gt: 19 }, state: "PENDING" },
+      }),
+    ).toBe(5);
+    expect(
+      await database.auditEvent.findFirst({
+        where: {
+          action: "REVIEW_STAGE_FAILED",
+          subjectId: job.id,
+        },
+      }),
+    ).toMatchObject({
+      payload: expect.objectContaining({
+        reasonCode: "CANDIDATE_FINDING_REFERENCE_INVALID",
+        stageOrdinal: 19,
+      }),
+    });
+    await workflows.cancelReview({
+      actorId: editorOneId,
+      jobId: job.id,
+      reason: "Integration cleanup after materialization failure",
+    });
   });
 
   it("atomically rejects all pending suggestions without changing the draft", async () => {
@@ -1536,6 +1623,17 @@ describe("checkout fencing and the complete durable review DAG", () => {
       }),
     );
 
+    const waiting = await workflows.createSituation({
+      actorId: editorTwoId,
+      slug: "integration-review-waits-for-retry",
+      title: "A review waiting behind focused retry work",
+    });
+    const waitingJob = await workflows.queueReview({
+      actorId: editorTwoId,
+      checkoutId: waiting.checkout.id,
+      fence: waiting.checkout.fence,
+    });
+
     expect(await claimNextReview(database, timing)).toBeNull();
     now = new Date(now.getTime() + 1_000);
     const restartedClaim = await claimNextReview(database, timing);
@@ -1590,6 +1688,13 @@ describe("checkout fencing and the complete durable review DAG", () => {
         maximumAttempts: 3,
         scheduledRetryAt: backingOff.retryNotBefore?.toISOString(),
       },
+    });
+    const nextClaim = await claimNextReview(database, timing);
+    expect(nextClaim?.id).toBe(waitingJob.id);
+    await workflows.cancelReview({
+      actorId: editorTwoId,
+      jobId: waitingJob.id,
+      reason: "Integration cleanup after focused retry proof",
     });
   });
 
@@ -1691,6 +1796,16 @@ describe("checkout fencing and the complete durable review DAG", () => {
     });
     const now = new Date(Date.now() + 180_000);
     const timing = { now: () => now, retryDelaysMs: [1_000, 2_000] };
+    const waiting = await workflows.createSituation({
+      actorId: editorTwoId,
+      slug: "integration-review-waits-for-terminal-resolution",
+      title: "A review waiting behind a terminal failure",
+    });
+    const waitingJob = await workflows.queueReview({
+      actorId: editorTwoId,
+      checkoutId: waiting.checkout.id,
+      fence: waiting.checkout.fence,
+    });
     const runStage = async () => {
       throw new AdapterFailure(
         "AUTHENTICATION",
@@ -1725,7 +1840,9 @@ describe("checkout fencing and the complete durable review DAG", () => {
     });
     expect(failed).toMatchObject({
       state: "FAILED",
+      laneOwner: true,
       failureCode: "AUTHENTICATION",
+      failureReasonCode: "PROVIDER_AUTHENTICATION",
       retryNotBefore: null,
     });
     expect(failed.steps[0]?.runs).toHaveLength(1);
@@ -1741,6 +1858,19 @@ describe("checkout fencing and the complete durable review DAG", () => {
         },
       }),
     ).toBe(0);
+    expect(await claimNextReview(database, timing)).toBeNull();
+    await workflows.cancelReview({
+      actorId: editorOneId,
+      jobId: queued.id,
+      reason: "Stop failed review and release focused lane",
+    });
+    const waitingClaim = await claimNextReview(database, timing);
+    expect(waitingClaim?.id).toBe(waitingJob.id);
+    await workflows.cancelReview({
+      actorId: editorTwoId,
+      jobId: waitingJob.id,
+      reason: "Integration cleanup after terminal lane proof",
+    });
   });
 
   it("honors cancellation and checkout fencing while a retry is backing off", async () => {

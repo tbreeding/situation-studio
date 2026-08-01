@@ -24,6 +24,7 @@ The Studio migration checksums are:
 | Variant immutability   | `6d85343ebb72e165a48193e9ee2a42743136c168ee1ad4939a2267533aac8060` |
 | Lineage and leases     | `4fdd192543c4b3b0ce1daf5de529fd15fe14c1f95120a31af9298a3f9b5a4662` |
 | Review retry backoff   | `215a97ca59bb9ad0009780683bf9bcfee7d3d48af16022cbb221c91397ae971a` |
+| Focused review lane    | `440d9fc1232b075164e1a43ee9ea002aa8dc9b10c1c4f7eaae21ff7336f3cb27` |
 
 The final disposable queued-backup receipt was:
 

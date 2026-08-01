@@ -1,12 +1,12 @@
 # Situation Studio handoff
 
-Last updated: 2026-07-27
+Last updated: 2026-08-01
 
 ## Outcome
 
 Situation Studio is deployed on `rpi1` from the immutable release at
-`/home/admin/projects/situation-studio/releases/20260727T171556Z`. The deployed
-source is commit `b422f4384f1edd71e329a3524f8bff97a33b2960` on `main`. The
+`/home/admin/projects/situation-studio/releases/20260729T085659Z`. The deployed
+source is commit `70da5cae79d747204eeb6f1f8a4b6f61a997b586` on `main`. The
 authenticated production workspace is
 `https://situation-studio.timsprototypes.com`.
 
@@ -170,6 +170,21 @@ stages 1–17, and resets stages 19–22 for the remaining dependency path. It w
 not invoked during this investigation.
 
 ## Implemented follow-ups
+
+### Unreleased focused review lane and failure explanations
+
+The 2026-08-01 local implementation supersedes the earlier backoff queue
+behavior below but has not been deployed. One durable lane owner now remains
+focused through automatic retry waits and terminal failures. Later reviews do
+not start until the focused review succeeds or the editor explicitly retries,
+stops, or closes it. The workspace projects fixed safe reason codes as plain
+stage-specific explanations and keeps raw provider output and error text out of
+the public status stream. Proposal materialization accepts case-only role-code
+differences in evidence links and attributes other assembly failures to the
+bundle writer so the writer and downstream audits can run again.
+
+The deployed 2026-07-29 release still uses the earlier behavior described in
+the historical retry-provider record that follows.
 
 The retry-provider implementation now:
 

@@ -642,6 +642,32 @@ export const reviewRoleCodes = [
 
 export type ReviewRoleCode = (typeof reviewRoleCodes)[number];
 
+export const reviewFailureReasonCodes = [
+  "PROVIDER_CAPACITY",
+  "PROVIDER_TRANSIENT",
+  "PROVIDER_AUTHENTICATION",
+  "PROVIDER_OUTPUT_INVALID",
+  "CANDIDATE_METADATA_JSON_INVALID",
+  "CANDIDATE_OUTPUT_INVALID",
+  "CANDIDATE_FINDING_REFERENCE_INVALID",
+  "PROPOSAL_MATERIALIZATION_FAILED",
+  "REVIEW_EVIDENCE_BUILD_FAILED",
+  "REVIEW_INPUT_VALIDATION_FAILED",
+  "REVIEW_APPLICATION_FAILED",
+] as const;
+
+export type ReviewFailureReasonCode = (typeof reviewFailureReasonCodes)[number];
+
+export const reviewFailurePhases = [
+  "RUN_STAGE",
+  "BUILD_EVIDENCE",
+  "VALIDATE_INPUT",
+  "VALIDATE_CANDIDATE",
+  "MATERIALIZE_PROPOSAL",
+] as const;
+
+export type ReviewFailurePhase = (typeof reviewFailurePhases)[number];
+
 export type ReviewStage = {
   ordinal: number;
   role: ReviewRoleCode;

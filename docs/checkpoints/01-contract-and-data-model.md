@@ -142,16 +142,19 @@ Every mutating command also matches the current monotonically increasing fence.
 | succeeded      | proposal materialization  | succeeded with immutable proposal |
 
 Only one job can be queued or running per situation and one job can be running
-globally. Queue ordering is `(queued_at, id)`. Cancellation increments the job
-fence so late provider results cannot commit.
+globally. Queue ordering is `(queued_at, id)`. One durable `lane_owner` remains
+focused through retry waits and terminal failure, so later jobs cannot overtake
+it. Cancellation increments the job fence so late provider results cannot
+commit and explicitly releases the lane.
 
 Retryable means an `AdapterFailure` explicitly carrying `retryable = true`.
 Each stage receives at most three automatic attempts: the initial attempt,
 then durable 5-second and 30-second backoffs. A queued retry stores its
-`retry_not_before` timestamp, releases the global running slot, and is
-ineligible for claim until that timestamp. Succeeded steps and all prior
-`AgentRun` rows remain unchanged. Exhaustion and every non-retryable failure
-remain terminal and retain the editor-triggered retry path.
+`retry_not_before` timestamp and releases its running lease, but retains the
+focused lane and is ineligible for claim until that timestamp. Succeeded steps
+and all prior `AgentRun` rows remain unchanged. Exhaustion and every
+non-retryable failure pause later reviews until the editor retries or stops the
+focused review.
 
 ## Publication transitions
 

@@ -1544,6 +1544,10 @@ button {
   color: #8a561f !important;
 }
 
+.state-waiting {
+  color: #656f69 !important;
+}
+
 .state-failed {
   color: #805148 !important;
 }

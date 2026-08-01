@@ -68,10 +68,13 @@ snapshot, and each review job pins its exact review-policy version.
 
 An explicitly retryable provider failure returns the job to `QUEUED` at its
 first incomplete stage for two bounded automatic retries. The persisted
-not-before timestamp survives worker restarts, while the global running slot is
-available to other due work. Every attempt remains an immutable `AgentRun`,
-including bounded per-provider duration, safe outcome, and failure-class
-metadata. System retry audits contain no provider output or error text.
+not-before timestamp survives worker restarts. A durable focused-lane marker
+keeps that review ahead of every later job during backoff. A terminal failure
+also retains the lane until the editor retries the review, stops it, or closes
+the checkout. Every attempt remains an immutable `AgentRun`, including bounded
+per-provider duration, safe outcome, and failure-class metadata. System failure
+and retry audits contain bounded reason codes, stage and phase details, and no
+provider output or raw error text.
 
 ### Live review status
 
@@ -82,10 +85,12 @@ Server-Sent Events stream. It uses the ordinary session cookie and does not
 change mutation CSRF handling.
 
 PostgreSQL remains authoritative. A connection receives one complete
-`review-status-v2` snapshot immediately, including the job state, exact
+`review-status-v3` snapshot immediately, including the job state, focused or
+waiting lane state, exact
 completed/total counts, the 24 bounded stage states, a safe human-readable
-current stage, attempt and durable retry information when applicable, terminal
-state, proposal readiness, and a deterministic SHA-256 snapshot identity.
+current stage, attempt and durable retry information when applicable, a fixed
+safe explanation of the latest failure, terminal state, proposal readiness,
+and a deterministic SHA-256 snapshot identity.
 The public Zod schema rejects unknown structure at runtime. It cannot contain
 prompts, evidence, provider output, raw errors, secrets, logs, lease claims, or
 fencing tokens.

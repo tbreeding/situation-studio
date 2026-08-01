@@ -906,6 +906,7 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
   await database.query(
     `UPDATE review_jobs
         SET state = 'RUNNING',
+            lane_owner = true,
             started_at = now(),
             claim_token = $2,
             lease_expires_at = now() + interval '2 minutes'
@@ -981,6 +982,10 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
         SET state = 'QUEUED',
             retry_not_before = $2,
             failure_code = 'TRANSIENT',
+            failure_reason_code = 'PROVIDER_TRANSIENT',
+            failure_phase = 'RUN_STAGE',
+            failure_stage_ordinal = 2,
+            failure_stage_role = 'critic-nvc',
             claim_token = NULL,
             lease_expires_at = NULL
       WHERE id = $1`,
@@ -1022,7 +1027,9 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
     page.getByText("Nonviolent communication critique", { exact: true }),
   ).toBeVisible();
   const retryStatus = page.locator(".reviewRetryStatus");
-  await expect(retryStatus).toContainText("Temporary provider interruption");
+  await expect(retryStatus).toContainText(
+    "The review provider was interrupted",
+  );
   await expect(retryStatus).toContainText("attempt 1 of 3");
   await expect(retryStatus.locator("time")).toHaveAttribute(
     "datetime",
@@ -1087,6 +1094,7 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
     `UPDATE review_jobs
         SET state = 'SUCCEEDED',
             finished_at = now(),
+            lane_owner = false,
             retry_not_before = NULL,
             failure_code = NULL,
             claim_token = NULL,

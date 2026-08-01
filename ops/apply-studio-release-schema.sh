@@ -88,6 +88,31 @@ docker exec postgres16 psql \
           AND table_name = 'review_jobs'
           AND column_name = 'retry_not_before'
       )
+      AND NOT EXISTS (
+        SELECT required.column_name
+        FROM (VALUES
+          ('lane_owner'),
+          ('failure_reason_code'),
+          ('failure_phase'),
+          ('failure_stage_ordinal'),
+          ('failure_stage_role')
+        ) AS required(column_name)
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns actual
+          WHERE actual.table_schema = 'public'
+            AND actual.table_name = 'review_jobs'
+            AND actual.column_name = required.column_name
+        )
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'review_jobs'
+          AND indexname = 'review_jobs_one_lane_owner'
+          AND indexdef ILIKE '%WHERE (lane_owner = true)%'
+      )
       AND EXISTS (
         SELECT 1
         FROM information_schema.columns

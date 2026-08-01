@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import { database } from "@/server/database";
 import {
   publicReviewFailureClassSchema,
+  publicReviewFailureReasonCodeSchema,
   reviewStatusSnapshotSchema,
   REVIEW_STAGE_TOTAL,
   REVIEW_STATUS_SCHEMA_VERSION,
   type PublicReviewFailureClass,
+  type PublicReviewFailureReasonCode,
   type ReviewStatusSnapshot,
 } from "@/review-status-contract";
 
@@ -52,10 +54,69 @@ type ReviewStatusStep = {
 export type ReviewStatusRecord = {
   id: string;
   state: string;
+  laneOwner?: boolean;
   retryNotBefore: Date | null;
   failureCode: string | null;
+  failureReasonCode?: string | null;
+  failureStageOrdinal?: number | null;
+  failureStageRole?: string | null;
   proposal: { id: string } | null;
   steps: ReviewStatusStep[];
+};
+
+const PUBLIC_FAILURE_REASONS: Record<
+  PublicReviewFailureReasonCode,
+  { title: string; explanation: string }
+> = {
+  PROVIDER_CAPACITY: {
+    title: "The review provider was busy",
+    explanation: "The provider could not accept this review stage.",
+  },
+  PROVIDER_TRANSIENT: {
+    title: "The review provider was interrupted",
+    explanation: "The provider timed out or returned a temporary error.",
+  },
+  PROVIDER_AUTHENTICATION: {
+    title: "The review provider needs authentication",
+    explanation: "The worker could not authenticate with the review provider.",
+  },
+  PROVIDER_OUTPUT_INVALID: {
+    title: "The provider response could not be used",
+    explanation: "The response did not match the required review structure.",
+  },
+  CANDIDATE_METADATA_JSON_INVALID: {
+    title: "A proposed metadata change was invalid",
+    explanation: "The bundle writer returned metadata that was not valid JSON.",
+  },
+  CANDIDATE_OUTPUT_INVALID: {
+    title: "The proposed revision could not be built",
+    explanation:
+      "A bundle-writer change did not satisfy the safe candidate format.",
+  },
+  CANDIDATE_FINDING_REFERENCE_INVALID: {
+    title: "A proposal change lost its evidence link",
+    explanation:
+      "The bundle writer referenced a finding that the completed review did not contain.",
+  },
+  PROPOSAL_MATERIALIZATION_FAILED: {
+    title: "The proposal could not be assembled",
+    explanation:
+      "The completed stage outputs could not be combined into a reviewable proposal.",
+  },
+  REVIEW_EVIDENCE_BUILD_FAILED: {
+    title: "The review evidence could not be prepared",
+    explanation:
+      "The worker could not build the safe input for this review stage.",
+  },
+  REVIEW_INPUT_VALIDATION_FAILED: {
+    title: "The saved review input did not validate",
+    explanation:
+      "The pinned situation bundle failed the final deterministic check.",
+  },
+  REVIEW_APPLICATION_FAILED: {
+    title: "Review processing stopped",
+    explanation: "The worker could not complete an internal review operation.",
+  },
 };
 
 function safeFailureClass(value: string | null | undefined) {
@@ -75,6 +136,23 @@ function safeJobFailureClass(
     CANCELLED: "CANCELLED",
   };
   return value ? (mapping[value] ?? null) : null;
+}
+
+function defaultReasonCode(
+  failureClass: PublicReviewFailureClass,
+): PublicReviewFailureReasonCode {
+  const defaults: Record<
+    PublicReviewFailureClass,
+    PublicReviewFailureReasonCode
+  > = {
+    PROVIDER_CAPACITY: "PROVIDER_CAPACITY",
+    PROVIDER_TRANSIENT: "PROVIDER_TRANSIENT",
+    PROVIDER_AUTH: "PROVIDER_AUTHENTICATION",
+    OUTPUT_INVALID: "PROVIDER_OUTPUT_INVALID",
+    APPLICATION: "REVIEW_APPLICATION_FAILED",
+    CANCELLED: "REVIEW_APPLICATION_FAILED",
+  };
+  return defaults[failureClass];
 }
 
 function snapshotIdentity(value: object) {
@@ -124,6 +202,43 @@ export function buildReviewStatusSnapshot(
   const terminalFailureClass =
     safeFailureClass(failedStep?.runs[0]?.failureClass) ??
     safeJobFailureClass(record.failureCode);
+  const projectedFailureClass =
+    retryFailureClass ??
+    terminalFailureClass ??
+    (record.state === "FAILED" ? "APPLICATION" : null);
+  const storedReason = publicReviewFailureReasonCodeSchema.safeParse(
+    record.failureReasonCode,
+  );
+  const reasonCode = projectedFailureClass
+    ? storedReason.success
+      ? storedReason.data
+      : defaultReasonCode(projectedFailureClass)
+    : null;
+  const failureStageOrdinal =
+    record.failureStageOrdinal ?? currentStep?.ordinal ?? null;
+  const failureStageRole =
+    record.failureStageRole ?? currentStep?.roleCode ?? null;
+  const failureStage =
+    failureStageOrdinal &&
+    failureStageOrdinal >= 1 &&
+    failureStageOrdinal <= steps.length &&
+    failureStageRole &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(failureStageRole)
+      ? {
+          ordinal: failureStageOrdinal,
+          code: failureStageRole,
+          displayName: reviewStageDisplayName(
+            failureStageRole,
+            failureStageOrdinal,
+          ),
+        }
+      : null;
+  const laneState =
+    record.state === "RUNNING" || record.laneOwner
+      ? ("FOCUSED" as const)
+      : record.state === "QUEUED"
+        ? ("WAITING" as const)
+        : ("RELEASED" as const);
   const base = {
     schemaVersion: REVIEW_STATUS_SCHEMA_VERSION,
     reviewJobId: record.id,
@@ -151,6 +266,7 @@ export function buildReviewStatusSnapshot(
               : null,
         }
       : null,
+    laneState,
     retry:
       retryingStep && retryFailureClass && record.retryNotBefore
         ? {
@@ -172,6 +288,15 @@ export function buildReviewStatusSnapshot(
               record.state === "FAILED" ? terminalFailureClass : null,
           }
         : null,
+    failure:
+      projectedFailureClass && reasonCode
+        ? {
+            failureClass: projectedFailureClass,
+            reasonCode,
+            ...PUBLIC_FAILURE_REASONS[reasonCode],
+            stage: failureStage,
+          }
+        : null,
     proposalReady: Boolean(record.proposal),
   };
   return reviewStatusSnapshotSchema.parse({
@@ -183,8 +308,12 @@ export function buildReviewStatusSnapshot(
 const reviewStatusSelection = {
   id: true,
   state: true,
+  laneOwner: true,
   retryNotBefore: true,
   failureCode: true,
+  failureReasonCode: true,
+  failureStageOrdinal: true,
+  failureStageRole: true,
   proposal: { select: { id: true } },
   steps: {
     orderBy: { ordinal: "asc" as const },

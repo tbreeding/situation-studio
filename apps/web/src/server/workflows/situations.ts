@@ -543,6 +543,10 @@ export async function checkInSituation(input: {
         throw new WorkflowError("The checkout is no longer active.");
       await assertNoActivePublication(transaction, checkout.situationId);
       await assertNoActiveReview(transaction, checkout.situationId);
+      await transaction.reviewJob.updateMany({
+        where: { checkoutId: checkout.id, laneOwner: true },
+        data: { laneOwner: false },
+      });
       const released = await transaction.situationCheckout.update({
         where: { id: checkout.id },
         data: {
@@ -585,17 +589,17 @@ export async function forceCheckInSituation(input: {
       await transaction.reviewStep.updateMany({
         where: {
           job: {
-            situationId: input.situationId,
-            state: { in: ["QUEUED", "RUNNING"] },
+            checkoutId: checkout.id,
+            state: { in: ["QUEUED", "RUNNING", "FAILED"] },
           },
-          state: { in: ["PENDING", "READY", "RUNNING"] },
+          state: { in: ["PENDING", "READY", "RUNNING", "FAILED"] },
         },
         data: { state: "CANCELLED", finishedAt: now },
       });
       await transaction.reviewJob.updateMany({
         where: {
-          situationId: input.situationId,
-          state: { in: ["QUEUED", "RUNNING"] },
+          checkoutId: checkout.id,
+          state: { in: ["QUEUED", "RUNNING", "FAILED"] },
         },
         data: {
           state: "CANCELLED",
@@ -604,6 +608,7 @@ export async function forceCheckInSituation(input: {
           cancelledById: input.adminId,
           cancellationReason: "Administrative force check-in",
           finishedAt: now,
+          laneOwner: false,
           claimToken: null,
           leaseExpiresAt: null,
           retryNotBefore: null,
@@ -811,9 +816,13 @@ export async function cancelReview(input: {
   return database().$transaction(
     async (transaction) => {
       const job = await transaction.reviewJob.findFirst({
-        where: { id: input.jobId, state: { in: ["QUEUED", "RUNNING"] } },
+        where: {
+          id: input.jobId,
+          state: { in: ["QUEUED", "RUNNING", "FAILED"] },
+        },
       });
-      if (!job) throw new WorkflowError("The review is no longer active.", 404);
+      if (!job)
+        throw new WorkflowError("The review can no longer be stopped.", 404);
       const checkout = await transaction.situationCheckout.findFirst({
         where: {
           id: job.checkoutId,
@@ -833,7 +842,7 @@ export async function cancelReview(input: {
       await transaction.reviewStep.updateMany({
         where: {
           jobId: job.id,
-          state: { in: ["PENDING", "READY", "RUNNING"] },
+          state: { in: ["PENDING", "READY", "RUNNING", "FAILED"] },
         },
         data: { state: "CANCELLED", finishedAt: now },
       });
@@ -846,6 +855,7 @@ export async function cancelReview(input: {
           finishedAt: now,
           cancelledById: input.actorId,
           cancellationReason: input.reason?.slice(0, 500) ?? "Editor cancelled",
+          laneOwner: false,
           claimToken: null,
           leaseExpiresAt: null,
           retryNotBefore: null,
@@ -857,7 +867,10 @@ export async function cancelReview(input: {
           action: "REVIEW_CANCELLED",
           subjectType: "REVIEW_JOB",
           subjectId: job.id,
-          payload: { fence: cancelled.fence.toString() },
+          payload: {
+            fence: cancelled.fence.toString(),
+            previousState: job.state,
+          },
         },
       });
       return cancelled;
@@ -919,7 +932,6 @@ export async function retryReview(input: { actorId: string; jobId: string }) {
           state: "QUEUED",
           finishedAt: null,
           failureCode: null,
-          queuedAt: new Date(),
           claimToken: null,
           leaseExpiresAt: null,
           retryNotBefore: null,

@@ -17,8 +17,12 @@ function statusRecord(
   return {
     id: reviewJobId,
     state: "QUEUED",
+    laneOwner: false,
     retryNotBefore: null,
     failureCode: null,
+    failureReasonCode: null,
+    failureStageOrdinal: null,
+    failureStageRole: null,
     proposal: null,
     steps: Array.from({ length: REVIEW_STAGE_TOTAL }, (_, index) => ({
       ordinal: index + 1,
@@ -35,7 +39,7 @@ describe("public review-status snapshots", () => {
     const snapshot = buildReviewStatusSnapshot(statusRecord());
     expect(reviewStatusSnapshotSchema.parse(snapshot)).toEqual(snapshot);
     expect(snapshot).toMatchObject({
-      schemaVersion: "review-status-v2",
+      schemaVersion: "review-status-v3",
       reviewJobId,
       state: "QUEUED",
       completedStages: 0,
@@ -47,8 +51,10 @@ describe("public review-status snapshots", () => {
         state: "READY",
         attempt: null,
       },
+      laneState: "WAITING",
       retry: null,
       terminal: null,
+      failure: null,
       proposalReady: false,
     });
     expect(snapshot.stages).toHaveLength(REVIEW_STAGE_TOTAL);
@@ -92,6 +98,17 @@ describe("public review-status snapshots", () => {
       maximumAttempts: 3,
       scheduledAt: "2026-07-25T12:34:56.000Z",
     });
+    expect(snapshot.failure).toEqual({
+      failureClass: "PROVIDER_TRANSIENT",
+      reasonCode: "PROVIDER_TRANSIENT",
+      title: "The review provider was interrupted",
+      explanation: "The provider timed out or returned a temporary error.",
+      stage: {
+        ordinal: 1,
+        code: "surface-mapper",
+        displayName: "Mapping the review surfaces",
+      },
+    });
     const serialized = JSON.stringify(snapshot);
     expect(serialized).not.toMatch(
       /private prompt|evidence|stderr|secret-token|claimToken|internal-claim/iu,
@@ -99,6 +116,8 @@ describe("public review-status snapshots", () => {
     expect(Object.keys(snapshot).sort()).toEqual([
       "completedStages",
       "currentStage",
+      "failure",
+      "laneState",
       "proposalReady",
       "retry",
       "reviewJobId",
@@ -122,6 +141,50 @@ describe("public review-status snapshots", () => {
     const advanced = buildReviewStatusSnapshot(record);
     expect(advanced.snapshotId).not.toBe(first.snapshotId);
     expect(advanced.completedStages).toBe(1);
+  });
+
+  it("explains a focused candidate failure without exposing raw output", () => {
+    const record = statusRecord({
+      state: "FAILED",
+      laneOwner: true,
+      failureCode: "INVALID_OUTPUT",
+      failureReasonCode: "CANDIDATE_METADATA_JSON_INVALID",
+      failureStageOrdinal: 19,
+      failureStageRole: "bundle-writer",
+    });
+    record.steps = record.steps.map((step) =>
+      step.ordinal < 19
+        ? { ...step, state: "SUCCEEDED" }
+        : step.ordinal === 19
+          ? {
+              ...step,
+              state: "FAILED",
+              runs: [
+                {
+                  attempt: 1,
+                  failureClass: "OUTPUT_INVALID",
+                  retryable: true,
+                },
+              ],
+            }
+          : step,
+    );
+    const snapshot = buildReviewStatusSnapshot(record);
+    expect(snapshot).toMatchObject({
+      state: "FAILED",
+      laneState: "FOCUSED",
+      failure: {
+        failureClass: "OUTPUT_INVALID",
+        reasonCode: "CANDIDATE_METADATA_JSON_INVALID",
+        title: "A proposed metadata change was invalid",
+        stage: {
+          ordinal: 19,
+          code: "bundle-writer",
+          displayName: "Writing the proposal bundle",
+        },
+      },
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(/raw output|stderr|prompt/iu);
   });
 
   it("falls back to a bounded display name for an unknown safe role code", () => {

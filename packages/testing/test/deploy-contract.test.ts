@@ -116,6 +116,12 @@ describe("production deployment contract", () => {
       "ALTER ROLE situation_studio_owner NOLOGIN",
       "ops/grant-runtime-roles.sql",
       "has_table_privilege",
+      "lane_owner",
+      "failure_reason_code",
+      "failure_phase",
+      "failure_stage_ordinal",
+      "failure_stage_role",
+      "review_jobs_one_lane_owner",
     ])
       position(source, fragment);
   });

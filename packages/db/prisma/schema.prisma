@@ -476,6 +476,7 @@ model ReviewJob {
   queuedAt           DateTime        @default(now()) @map("queued_at") @db.Timestamptz(3)
   startedAt          DateTime?       @map("started_at") @db.Timestamptz(3)
   finishedAt         DateTime?       @map("finished_at") @db.Timestamptz(3)
+  laneOwner          Boolean         @default(false) @map("lane_owner")
   claimToken         String?         @map("claim_token") @db.Uuid
   leaseExpiresAt     DateTime?       @map("lease_expires_at") @db.Timestamptz(3)
   retryNotBefore     DateTime?       @map("retry_not_before") @db.Timestamptz(3)
@@ -483,6 +484,10 @@ model ReviewJob {
   cancelledById      String?         @map("cancelled_by_id") @db.Uuid
   cancellationReason String?         @map("cancellation_reason") @db.VarChar(500)
   failureCode        String?         @map("failure_code") @db.VarChar(100)
+  failureReasonCode  String?         @map("failure_reason_code") @db.VarChar(100)
+  failurePhase       String?         @map("failure_phase") @db.VarChar(40)
+  failureStageOrdinal Int?           @map("failure_stage_ordinal")
+  failureStageRole   String?         @map("failure_stage_role") @db.VarChar(100)
   situation          Situation       @relation(fields: [situationId], references: [id], onDelete: Restrict)
   inputRevision      DraftRevision   @relation(fields: [inputRevisionId], references: [id], onDelete: Restrict)
   steps              ReviewStep[]
@@ -490,6 +495,7 @@ model ReviewJob {
 
   @@index([state, queuedAt], map: "review_jobs_queue_idx")
   @@index([state, retryNotBefore, queuedAt], map: "review_jobs_retry_schedule_idx")
+  @@index([laneOwner, state, queuedAt], map: "review_jobs_lane_queue_idx")
   @@index([situationId, state], map: "review_jobs_situation_state_idx")
   @@map("review_jobs")
 }

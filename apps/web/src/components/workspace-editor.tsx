@@ -741,14 +741,30 @@ export function WorkspaceEditor({
                   Cancel review
                 </button>
               ) : review && reviewStatus?.state === "FAILED" ? (
-                <button
-                  className="secondaryButton"
-                  type="button"
-                  disabled={pending || publicationLocked}
-                  onClick={() => void mutate(`/api/reviews/${review.id}/retry`)}
-                >
-                  Retry review
-                </button>
+                <>
+                  <button
+                    className="secondaryButton"
+                    type="button"
+                    disabled={pending || publicationLocked}
+                    onClick={() =>
+                      void mutate(`/api/reviews/${review.id}/retry`)
+                    }
+                  >
+                    Retry review
+                  </button>
+                  <button
+                    className="secondaryButton"
+                    type="button"
+                    disabled={pending || publicationLocked}
+                    onClick={() =>
+                      void mutate(`/api/reviews/${review.id}/cancel`, {
+                        reason: "Editor stopped failed review",
+                      })
+                    }
+                  >
+                    Stop review and continue queue
+                  </button>
+                </>
               ) : (
                 <button
                   className="secondaryButton"
@@ -1387,10 +1403,18 @@ export function WorkspaceEditor({
                     className={`jobState state-${
                       reviewStatus.retry
                         ? "retrying"
-                        : reviewStatus.state.toLowerCase()
+                        : reviewStatus.state === "QUEUED" &&
+                            reviewStatus.laneState === "WAITING"
+                          ? "waiting"
+                          : reviewStatus.state.toLowerCase()
                     }`}
                   >
-                    {reviewStatus.retry ? "RETRYING" : reviewStatus.state}
+                    {reviewStatus.retry
+                      ? "RETRYING"
+                      : reviewStatus.state === "QUEUED" &&
+                          reviewStatus.laneState === "WAITING"
+                        ? "WAITING"
+                        : reviewStatus.state}
                   </span>
                   <strong>{reviewStatus.totalStages}-stage agent review</strong>
                   <span className="reviewProgressText">
@@ -1449,16 +1473,22 @@ export function WorkspaceEditor({
                   ) : null}
                   {isActiveReviewState(reviewStatus.state) ? (
                     <p className="reviewServerActivity">
-                      <i
-                        className="reviewActivityIndicator"
-                        aria-hidden="true"
-                      />
+                      {reviewStatus.laneState === "FOCUSED" ? (
+                        <i
+                          className="reviewActivityIndicator"
+                          aria-hidden="true"
+                        />
+                      ) : null}
                       <span>
-                        {liveReview.connection === "reconnecting"
-                          ? "Reconnecting… Review continues safely on the server."
-                          : liveReview.connection === "connecting"
-                            ? "Connecting to live updates… Review continues safely on the server."
-                            : "Review continues safely on the server."}
+                        {reviewStatus.laneState === "WAITING"
+                          ? "Waiting for the focused review to finish. This review will not start early."
+                          : reviewStatus.retry
+                            ? "This review keeps the review lane. No later review will start during the retry wait."
+                            : liveReview.connection === "reconnecting"
+                              ? "Reconnecting… Review continues safely on the server."
+                              : liveReview.connection === "connecting"
+                                ? "Connecting to live updates… Review continues safely on the server."
+                                : "Review continues safely on the server."}
                       </span>
                     </p>
                   ) : null}
@@ -1466,15 +1496,17 @@ export function WorkspaceEditor({
                     <p className="reviewRetryStatus">
                       <strong>Automatic retry scheduled</strong>
                       <span>
-                        {
+                        {reviewStatus.failure?.title ??
                           SAFE_REVIEW_FAILURE_LABELS[
                             reviewStatus.retry.failureClass
-                          ]
-                        }
+                          ]}
                         {" · "}
                         attempt {reviewStatus.retry.attempt} of{" "}
                         {reviewStatus.retry.maximumAttempts}
                       </span>
+                      {reviewStatus.failure?.explanation ? (
+                        <span>{reviewStatus.failure.explanation}</span>
+                      ) : null}
                       <span className="retrySchedule">
                         {retryCountdown(
                           reviewStatus.retry.scheduledAt,
@@ -1500,10 +1532,20 @@ export function WorkspaceEditor({
                     <p className="reviewTerminalStatus reviewTerminalFailure">
                       <strong>Review stopped safely.</strong>
                       <span>
-                        {reviewStatus.terminal?.failureClass
-                          ? `${SAFE_REVIEW_FAILURE_LABELS[reviewStatus.terminal.failureClass]}. `
-                          : ""}
-                        Use Retry review when you are ready.
+                        {reviewStatus.failure?.title ??
+                          (reviewStatus.terminal?.failureClass
+                            ? SAFE_REVIEW_FAILURE_LABELS[
+                                reviewStatus.terminal.failureClass
+                              ]
+                            : "Review processing stopped")}
+                      </span>
+                      {reviewStatus.failure?.explanation ? (
+                        <span>{reviewStatus.failure.explanation}</span>
+                      ) : null}
+                      <span>
+                        {reviewStatus.laneState === "FOCUSED"
+                          ? "The review queue is paused here. Retry this review, or stop it to continue with the next review."
+                          : "Retry this review when you are ready."}
                       </span>
                     </p>
                   ) : reviewStatus.state === "CANCELLED" ? (

@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+  publicationFailureDetailSchema,
+  type PublicationFailureDetail,
+} from "@situation-studio/domain";
 import { database } from "@/server/database";
 import {
   publicationStatusSnapshotSchema,
@@ -45,6 +49,7 @@ type PublicationStatusEvent = {
   sequence: number;
   kind: string;
   createdAt?: Date;
+  payload?: unknown;
 };
 
 export type PublicationStatusRecord = {
@@ -58,9 +63,54 @@ function snapshotIdentity(value: object) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+const FAILURE_DETAIL_EVENT_KINDS = new Set([
+  "RESTORE_STARTED",
+  "FAILED",
+  "RECOVERY_REQUIRED",
+]);
+
+function failureDetailFromEvents(
+  events: PublicationStatusEvent[],
+  field: "failureDetail" | "recoveryFailureDetail",
+) {
+  for (const event of [...events].reverse()) {
+    if (!FAILURE_DETAIL_EVENT_KINDS.has(event.kind)) continue;
+    if (
+      !event.payload ||
+      typeof event.payload !== "object" ||
+      Array.isArray(event.payload)
+    )
+      continue;
+    const parsed = publicationFailureDetailSchema.safeParse(
+      (event.payload as Record<string, unknown>)[field],
+    );
+    if (parsed.success) return parsed.data;
+  }
+  return null;
+}
+
+function restoredMessage(failure: PublicationFailureDetail | null) {
+  if (!failure)
+    return "The new release did not pass live verification, so Leadership remains on the previous verified version.";
+  const checks = `${failure.attempts} ${failure.attempts === 1 ? "check" : "checks"}`;
+  switch (failure.reason) {
+    case "HTTP_STATUS":
+      return failure.lastHttpStatus
+        ? `Leadership content health returned HTTP ${failure.lastHttpStatus} after ${checks}, so the previous verified version was restored. Your saved draft and checkout are unchanged.`
+        : `Leadership content health returned an error after ${checks}, so the previous verified version was restored. Your saved draft and checkout are unchanged.`;
+    case "IDENTITY_MISMATCH":
+      return `Leadership content health did not report the new release after ${checks}, so the previous verified version was restored. Your saved draft and checkout are unchanged.`;
+    case "UNAVAILABLE":
+      return `Leadership content health was unavailable after ${checks}, so the previous verified version was restored. Your saved draft and checkout are unchanged.`;
+    case "INVALID_RESPONSE":
+      return `Leadership content health returned an unusable response after ${checks}, so the previous verified version was restored. Your saved draft and checkout are unchanged.`;
+  }
+}
+
 function terminalDetails(
   state: PublicationJobState,
   failureCode: string | null,
+  failure: PublicationFailureDetail | null,
 ) {
   switch (state) {
     case "SUCCEEDED":
@@ -84,8 +134,7 @@ function terminalDetails(
         state,
         tone: "WARNING" as const,
         title: "Previous version restored",
-        message:
-          "The new release did not pass live verification, so Leadership remains on the previous verified version.",
+        message: restoredMessage(failure),
       };
     case "RECOVERY_REQUIRED":
       return {
@@ -179,7 +228,12 @@ export function buildPublicationStatusSnapshot(
   );
   const eventKinds = new Set(events.map((event) => event.kind));
   const restoring = eventKinds.has("RESTORE_STARTED");
-  const terminal = terminalDetails(state, record.failureCode);
+  const failure = failureDetailFromEvents(events, "failureDetail");
+  const recoveryFailure =
+    state === "RECOVERY_REQUIRED"
+      ? failureDetailFromEvents(events, "recoveryFailureDetail")
+      : null;
+  const terminal = terminalDetails(state, record.failureCode, failure);
   const completedStages = completedStageCount(state, eventKinds);
   const failedStageIndex =
     terminal && state !== "SUCCEEDED"
@@ -233,6 +287,8 @@ export function buildPublicationStatusSnapshot(
     stages,
     currentStage,
     terminal,
+    failure,
+    recoveryFailure,
   };
   return publicationStatusSnapshotSchema.parse({
     ...base,
@@ -255,6 +311,7 @@ export async function loadPublicationStatusSnapshot(
           sequence: true,
           kind: true,
           createdAt: true,
+          payload: true,
         },
       },
     },

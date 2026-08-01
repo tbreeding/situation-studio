@@ -38,6 +38,9 @@ describe("review role prompt policy compatibility", () => {
       expect(prompt).toContain("#new-variant-id");
       expect(prompt).toContain("sourceReferences");
       expect(prompt).toContain("MANUAL");
+      expect(prompt).toContain(
+        "String values such as title or description must include JSON double quotes",
+      );
     }
   });
 

@@ -68,7 +68,7 @@ input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 summary:focus-visible,
-[tabindex="-1"]:focus-visible {
+[tabindex]:focus-visible {
   outline: 3px solid #89b8a5;
   outline-offset: 2px;
 }
@@ -371,6 +371,15 @@ button {
   border-radius: 50%;
   background: #3e9272;
   box-shadow: 0 0 0 4px rgb(62 146 114 / 12%);
+}
+
+.inventorySummary .productionSignalError {
+  color: var(--danger);
+}
+
+.productionSignalError i {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px rgb(166 66 51 / 12%);
 }
 
 .inventorySurface {
@@ -1076,12 +1085,48 @@ button {
 
 .publicationOutcome {
   display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
   gap: 0.5rem;
   padding: 0.8rem 2rem;
   border-bottom: 1px solid #d9cfc0;
   background: #f7f2e9;
   color: #665947;
   font-size: 0.74rem;
+}
+
+.publicationOutcome > details {
+  flex-basis: 100%;
+  padding-top: 0.15rem;
+}
+
+.publicationOutcome > details > summary {
+  width: fit-content;
+  font-weight: 720;
+  cursor: pointer;
+}
+
+.publicationOutcome > details > p {
+  max-width: 58rem;
+  margin: 0.65rem 0;
+  line-height: 1.5;
+}
+
+.publicationOutcome > details dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.35rem 0.8rem;
+  margin: 0;
+}
+
+.publicationOutcome > details dt {
+  font-weight: 720;
+}
+
+.publicationOutcome > details dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .publicationOutcome-error {
@@ -1234,7 +1279,7 @@ button {
 
 .editorCard > header > span,
 .previewColumn > header > span {
-  color: #868c88;
+  color: var(--muted);
   font-size: 0.66rem;
   font-weight: 650;
 }
@@ -1287,7 +1332,7 @@ button {
 .sectionEditors textarea:disabled,
 .rawEditor textarea:disabled {
   background: #f5f4f0;
-  color: #707873;
+  color: var(--muted);
 }
 
 .sectionEditors details {
@@ -1314,7 +1359,7 @@ button {
 }
 
 .sectionEditors summary > span {
-  color: #9a9f9b;
+  color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.65rem;
 }
@@ -1325,7 +1370,7 @@ button {
 }
 
 .sectionEditors summary small {
-  color: #949a96;
+  color: var(--muted);
   font-size: 0.62rem;
 }
 
@@ -1379,6 +1424,10 @@ button {
   padding: 2.8rem clamp(1.5rem, 4vw, 4rem);
   background:
     linear-gradient(rgb(255 255 255 / 65%), rgb(255 255 255 / 65%)), #f7f4ec;
+}
+
+.previewFrame:focus-visible {
+  outline-offset: -3px;
 }
 
 .previewEyebrow {

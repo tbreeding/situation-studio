@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const PUBLICATION_STATUS_SCHEMA_VERSION =
-  "publication-status-v1" as const;
+  "publication-status-v3" as const;
 export const PUBLICATION_STATUS_EVENT_NAME = "publication-status" as const;
 export const PUBLICATION_STAGE_TOTAL = 5 as const;
 
@@ -69,6 +69,28 @@ const publicPublicationTerminalSchema = z.object({
   message: z.string().min(1).max(280),
 });
 
+export const publicPublicationFailureDetailSchema = z
+  .object({
+    schemaVersion: z.literal("publication-failure-detail-v1"),
+    phase: z.literal("RUNTIME_IDENTITY"),
+    source: z.literal("LEADERSHIP_CONTENT_HEALTH"),
+    reason: z.enum([
+      "HTTP_STATUS",
+      "IDENTITY_MISMATCH",
+      "UNAVAILABLE",
+      "INVALID_RESPONSE",
+    ]),
+    attempts: z.number().int().min(1).max(100),
+    elapsedMs: z.number().int().min(0).max(600_000),
+    lastHttpStatus: z.number().int().min(100).max(599).nullable(),
+    lastObservedReleaseId: z.uuid().nullable(),
+    lastObservedManifestHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .nullable(),
+  })
+  .strict();
+
 export const publicationStatusSnapshotSchema = z
   .object({
     schemaVersion: z.literal(PUBLICATION_STATUS_SCHEMA_VERSION),
@@ -81,6 +103,8 @@ export const publicationStatusSnapshotSchema = z
       .length(PUBLICATION_STAGE_TOTAL),
     currentStage: publicPublicationActivitySchema.nullable(),
     terminal: publicPublicationTerminalSchema.nullable(),
+    failure: publicPublicationFailureDetailSchema.nullable(),
+    recoveryFailure: publicPublicationFailureDetailSchema.nullable(),
     snapshotId: z.string().regex(/^[a-f0-9]{64}$/u),
   })
   .superRefine((snapshot, context) => {
@@ -106,11 +130,30 @@ export const publicationStatusSnapshotSchema = z
         message: "Terminal state must match the publication state.",
         path: ["terminal", "state"],
       });
+    if (
+      snapshot.state === "SUCCEEDED" &&
+      (snapshot.failure || snapshot.recoveryFailure)
+    )
+      context.addIssue({
+        code: "custom",
+        message: "A successful publication cannot contain failure details.",
+        path: ["failure"],
+      });
+    if (snapshot.state !== "RECOVERY_REQUIRED" && snapshot.recoveryFailure)
+      context.addIssue({
+        code: "custom",
+        message:
+          "Recovery failure details are only valid when manual recovery is required.",
+        path: ["recoveryFailure"],
+      });
   });
 
 export type PublicationJobState = z.infer<typeof publicationJobStateSchema>;
 export type PublicationStatusSnapshot = z.infer<
   typeof publicationStatusSnapshotSchema
+>;
+export type PublicPublicationFailureDetail = z.infer<
+  typeof publicPublicationFailureDetailSchema
 >;
 
 export function isActivePublicationState(state: PublicationJobState) {
@@ -120,6 +163,10 @@ export function isActivePublicationState(state: PublicationJobState) {
     state === "PROMOTING" ||
     state === "VERIFYING"
   );
+}
+
+export function isPublicationWorkspaceLocked(state: PublicationJobState) {
+  return isActivePublicationState(state) || state === "RECOVERY_REQUIRED";
 }
 
 export function isTerminalPublicationState(state: PublicationJobState) {

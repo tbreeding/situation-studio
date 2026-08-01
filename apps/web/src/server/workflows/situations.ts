@@ -27,6 +27,11 @@ import {
 import { REVIEW_POLICY_VERSION } from "@situation-studio/review-policy";
 import { LeadershipCapabilityError } from "@situation-studio/leadership-bridge";
 import { database } from "@/server/database";
+import {
+  PUBLICATION_BACKUP_NOT_READY_CODE,
+  publicationBackupStatus,
+  type PublicationBackupStatus,
+} from "@/server/health/publication-backup-policy";
 import { requireCompatibleLeadershipRuntime } from "@/server/leadership-compatibility";
 import { reconcileLeadershipRelease } from "@/server/leadership-sync";
 
@@ -49,6 +54,74 @@ const activePublicationStates = [
   "VERIFYING",
 ] as const;
 
+async function assertNoPublicationRecovery(transaction: Transaction) {
+  const recovery = await transaction.publicationJob.findFirst({
+    where: { state: "RECOVERY_REQUIRED" },
+    select: { id: true },
+  });
+  if (recovery)
+    throw new WorkflowError(
+      "Editorial changes are locked while publication recovery is required.",
+      409,
+      "PUBLICATION_RECOVERY_REQUIRED",
+    );
+}
+
+async function publicationBackupStatusForTransaction(
+  transaction: Transaction,
+): Promise<PublicationBackupStatus> {
+  const latestVerifiedBackup = await transaction.backupReceipt.findFirst({
+    where: {
+      state: "VERIFIED",
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: {
+      destinationId: true,
+      encrypted: true,
+      objectKey: true,
+      checksum: true,
+      byteLength: true,
+      verifiedAt: true,
+    },
+  });
+  const latestRestoreDrill = await transaction.backupReceipt.findFirst({
+    where: {
+      state: "VERIFIED",
+      OR: [
+        { restoreDrillAt: { not: null } },
+        { restoreDrillResult: { not: null } },
+      ],
+    },
+    orderBy: [
+      { restoreDrillAt: { sort: "desc", nulls: "first" } },
+      { createdAt: "desc" },
+      { id: "desc" },
+    ],
+    select: {
+      destinationId: true,
+      encrypted: true,
+      objectKey: true,
+      checksum: true,
+      byteLength: true,
+      verifiedAt: true,
+      createdAt: true,
+      restoreDrillAt: true,
+      restoreDrillResult: true,
+    },
+  });
+  return publicationBackupStatus({
+    latestVerifiedBackup,
+    latestRestoreDrill,
+  });
+}
+
+export async function publicationBackupReadiness() {
+  return database().$transaction(
+    (transaction) => publicationBackupStatusForTransaction(transaction),
+    { isolationLevel: "Serializable" },
+  );
+}
+
 function assertManagedSituationMdx(body: string) {
   try {
     assertSafeManagedMdx(body, "situation draft");
@@ -67,6 +140,7 @@ async function assertNoActivePublication(
   transaction: Transaction,
   situationId: string,
 ) {
+  await assertNoPublicationRecovery(transaction);
   const publication = await transaction.publicationJob.findFirst({
     where: { situationId, state: { in: [...activePublicationStates] } },
     select: { id: true },
@@ -350,6 +424,7 @@ export async function createSituation(input: {
 }) {
   return database().$transaction(
     async (transaction) => {
+      await assertNoPublicationRecovery(transaction);
       const situation = await transaction.situation.create({
         data: {
           slug: input.slug,
@@ -397,6 +472,7 @@ export async function checkoutSituation(input: {
   try {
     return await database().$transaction(
       async (transaction) => {
+        await assertNoPublicationRecovery(transaction);
         const situation = await transaction.situation.findUniqueOrThrow({
           where: { id: input.situationId },
         });
@@ -745,6 +821,21 @@ export async function queueReview(input: {
         });
         if (!checkout)
           throw new WorkflowError("The checkout is no longer active.");
+        const focusedReview = await transaction.reviewJob.findFirst({
+          where: {
+            checkoutId: checkout.id,
+            checkoutFence: checkout.fence,
+            laneOwner: true,
+            state: { in: ["QUEUED", "RUNNING", "FAILED"] },
+          },
+          select: { id: true },
+        });
+        if (focusedReview)
+          throw new WorkflowError(
+            "This checkout already has the focused review. Finish, retry, or stop it before starting another review.",
+            409,
+            "REVIEW_FOCUSED_UNRESOLVED",
+          );
         await assertNoActivePublication(transaction, checkout.situationId);
         const revision = checkout.draft.revisions[0];
         if (!revision) throw new WorkflowError("Save the draft before review.");
@@ -881,79 +972,110 @@ export async function cancelReview(input: {
 
 export async function retryReview(input: { actorId: string; jobId: string }) {
   const runtimeCapabilities = await compatibleLeadershipRuntimeForWorkflow();
-  return database().$transaction(
-    async (transaction) => {
-      const job = await transaction.reviewJob.findFirst({
-        where: { id: input.jobId, state: "FAILED" },
-        include: {
-          steps: { orderBy: { ordinal: "asc" } },
-          inputRevision: {
-            include: { artifacts: { include: { content: true } } },
+  try {
+    return await database().$transaction(
+      async (transaction) => {
+        const job = await transaction.reviewJob.findFirst({
+          where: { id: input.jobId, state: "FAILED" },
+          include: {
+            steps: { orderBy: { ordinal: "asc" } },
+            inputRevision: {
+              include: { artifacts: { include: { content: true } } },
+            },
           },
-        },
-      });
-      if (!job)
-        throw new WorkflowError("The failed review is unavailable.", 404);
-      const body = job.inputRevision.artifacts.find(
-        (artifact) => artifact.kind === "SITUATION",
-      )?.content.textBody;
-      if (!body)
-        throw new WorkflowError("The reviewed situation body is unavailable.");
-      assertManagedSituationMdx(body);
-      const checkout = await transaction.situationCheckout.findFirst({
-        where: {
-          id: job.checkoutId,
-          holderId: input.actorId,
-          fence: job.checkoutFence,
-          releasedAt: null,
-        },
-      });
-      if (!checkout)
-        throw new WorkflowError("The original checkout is no longer active.");
-      await assertNoActivePublication(transaction, checkout.situationId);
-      const failed = job.steps.find((step) => step.state === "FAILED");
-      if (!failed)
-        throw new WorkflowError("The review has no failed resumable step.");
-      await transaction.reviewStep.update({
-        where: { id: failed.id },
-        data: { state: "READY", startedAt: null, finishedAt: null },
-      });
-      await transaction.reviewStep.updateMany({
-        where: {
-          jobId: job.id,
-          ordinal: { gt: failed.ordinal },
-          state: { not: "SUCCEEDED" },
-        },
-        data: { state: "PENDING", startedAt: null, finishedAt: null },
-      });
-      const queued = await transaction.reviewJob.update({
-        where: { id: job.id },
-        data: {
-          state: "QUEUED",
-          finishedAt: null,
-          failureCode: null,
-          claimToken: null,
-          leaseExpiresAt: null,
-          retryNotBefore: null,
-        },
-      });
-      await transaction.auditEvent.create({
-        data: {
-          actorId: input.actorId,
-          action: "REVIEW_RETRIED",
-          subjectType: "REVIEW_JOB",
-          subjectId: job.id,
-          payload: {
-            resumedOrdinal: failed.ordinal,
-            leadershipCapabilityDigest: runtimeCapabilities.capabilityDigest,
-            leadershipRuntimeCommit: runtimeCapabilities.deployment.commit,
+        });
+        if (!job)
+          throw new WorkflowError("The failed review is unavailable.", 404);
+        const body = job.inputRevision.artifacts.find(
+          (artifact) => artifact.kind === "SITUATION",
+        )?.content.textBody;
+        if (!body)
+          throw new WorkflowError(
+            "The reviewed situation body is unavailable.",
+          );
+        assertManagedSituationMdx(body);
+        const checkout = await transaction.situationCheckout.findFirst({
+          where: {
+            id: job.checkoutId,
+            holderId: input.actorId,
+            fence: job.checkoutFence,
+            releasedAt: null,
           },
-        },
-      });
-      return queued;
-    },
-    { isolationLevel: "Serializable" },
-  );
+        });
+        if (!checkout)
+          throw new WorkflowError("The original checkout is no longer active.");
+        await assertNoActivePublication(transaction, checkout.situationId);
+        const failed = job.steps.find((step) => step.state === "FAILED");
+        if (!failed)
+          throw new WorkflowError("The review has no failed resumable step.");
+        const laneOwner = await transaction.reviewJob.findFirst({
+          where: { laneOwner: true },
+          select: { id: true },
+        });
+        if (laneOwner && laneOwner.id !== job.id)
+          throw new WorkflowError(
+            "Another review owns the focused review lane. Finish or stop it before retrying this review.",
+            409,
+            "REVIEW_LANE_BUSY",
+          );
+        if (!job.laneOwner)
+          await transaction.reviewJob.update({
+            where: { id: job.id },
+            data: { laneOwner: true },
+          });
+        await transaction.reviewStep.update({
+          where: { id: failed.id },
+          data: { state: "READY", startedAt: null, finishedAt: null },
+        });
+        await transaction.reviewStep.updateMany({
+          where: {
+            jobId: job.id,
+            ordinal: { gt: failed.ordinal },
+            state: { not: "SUCCEEDED" },
+          },
+          data: { state: "PENDING", startedAt: null, finishedAt: null },
+        });
+        const queued = await transaction.reviewJob.update({
+          where: { id: job.id },
+          data: {
+            state: "QUEUED",
+            finishedAt: null,
+            failureCode: null,
+            claimToken: null,
+            leaseExpiresAt: null,
+            retryNotBefore: null,
+            laneOwner: true,
+          },
+        });
+        await transaction.auditEvent.create({
+          data: {
+            actorId: input.actorId,
+            action: "REVIEW_RETRIED",
+            subjectType: "REVIEW_JOB",
+            subjectId: job.id,
+            payload: {
+              resumedOrdinal: failed.ordinal,
+              leadershipCapabilityDigest: runtimeCapabilities.capabilityDigest,
+              leadershipRuntimeCommit: runtimeCapabilities.deployment.commit,
+            },
+          },
+        });
+        return queued;
+      },
+      { isolationLevel: "Serializable" },
+    );
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    )
+      throw new WorkflowError(
+        "Another review owns the focused review lane. Finish or stop it before retrying this review.",
+        409,
+        "REVIEW_LANE_BUSY",
+      );
+    throw error;
+  }
 }
 
 export async function requestPublication(input: {
@@ -989,6 +1111,14 @@ export async function requestPublication(input: {
         throw new WorkflowError("The checkout is no longer active.");
       await assertNoActivePublication(transaction, checkout.situationId);
       await assertNoActiveReview(transaction, checkout.situationId);
+      const backupStatus =
+        await publicationBackupStatusForTransaction(transaction);
+      if (!backupStatus.ready)
+        throw new WorkflowError(
+          backupStatus.message,
+          503,
+          PUBLICATION_BACKUP_NOT_READY_CODE,
+        );
       const revision = checkout.draft.revisions[0];
       const body = revision?.artifacts.find(
         (artifact) => artifact.kind === "SITUATION",
@@ -2222,7 +2352,7 @@ export async function workspaceForSlug(slug: string) {
         },
       },
       reviewJobs: {
-        orderBy: { queuedAt: "desc" },
+        orderBy: [{ laneOwner: "desc" }, { queuedAt: "desc" }],
         take: 1,
         include: {
           inputRevision: {
@@ -2273,6 +2403,7 @@ export async function workspaceForSlug(slug: string) {
               sequence: true,
               kind: true,
               createdAt: true,
+              payload: true,
             },
           },
         },
@@ -2287,4 +2418,13 @@ export async function workspaceForSlug(slug: string) {
       variants: { include: { content: true }, orderBy: { createdAt: "desc" } },
     },
   });
+}
+
+export async function publicationRecoveryRequired() {
+  return Boolean(
+    await database().publicationJob.findFirst({
+      where: { state: "RECOVERY_REQUIRED" },
+      select: { id: true },
+    }),
+  );
 }

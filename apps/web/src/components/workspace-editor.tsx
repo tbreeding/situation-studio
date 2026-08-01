@@ -44,9 +44,11 @@ import {
 } from "@/review-status-contract";
 import {
   isActivePublicationState,
+  isPublicationWorkspaceLocked,
   isTerminalPublicationState,
   publicationStatusSnapshotSchema,
   PUBLICATION_STATUS_EVENT_NAME,
+  type PublicPublicationFailureDetail,
   type PublicationStatusSnapshot,
 } from "@/publication-status-contract";
 
@@ -165,6 +167,76 @@ function shortHash(value: string | null) {
   return value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "Not published";
 }
 
+function publicationFailureExplanation(
+  failure: PublicPublicationFailureDetail,
+) {
+  switch (failure.reason) {
+    case "HTTP_STATUS":
+      return failure.lastHttpStatus
+        ? `The live content health check returned HTTP ${failure.lastHttpStatus} instead of a release identity.`
+        : "The live content health check returned an error instead of a release identity.";
+    case "IDENTITY_MISMATCH":
+      return "The live content health check responded, but it did not report the release that was just activated.";
+    case "UNAVAILABLE":
+      return "The live content health check could not be reached or completed.";
+    case "INVALID_RESPONSE":
+      return "The live content health check responded, but its release identity could not be used.";
+  }
+}
+
+function elapsedTimeLabel(elapsedMs: number) {
+  if (elapsedMs < 1_000)
+    return `${elapsedMs} ${elapsedMs === 1 ? "millisecond" : "milliseconds"}`;
+  const seconds = (elapsedMs / 1_000).toFixed(1).replace(/\.0$/u, "");
+  return `${seconds} ${seconds === "1" ? "second" : "seconds"}`;
+}
+
+function PublicationFailureEvidence({
+  failure,
+  summary,
+  conclusion,
+}: {
+  failure: PublicPublicationFailureDetail;
+  summary: string;
+  conclusion: string;
+}) {
+  return (
+    <details>
+      <summary>{summary}</summary>
+      <p>
+        {publicationFailureExplanation(failure)} {conclusion}
+      </p>
+      <dl>
+        <dt>Source</dt>
+        <dd>Leadership content health</dd>
+        <dt>Checks</dt>
+        <dd>{failure.attempts}</dd>
+        <dt>Verification time</dt>
+        <dd>{elapsedTimeLabel(failure.elapsedMs)}</dd>
+        {failure.lastHttpStatus ? (
+          <>
+            <dt>Last HTTP status</dt>
+            <dd>{failure.lastHttpStatus}</dd>
+          </>
+        ) : null}
+        <dt>Last observed identity</dt>
+        <dd>
+          {failure.lastObservedReleaseId ? (
+            <>
+              Release {failure.lastObservedReleaseId}
+              {failure.lastObservedManifestHash
+                ? ` · manifest ${shortHash(failure.lastObservedManifestHash)}`
+                : ""}
+            </>
+          ) : (
+            "No usable release identity was returned."
+          )}
+        </dd>
+      </dl>
+    </details>
+  );
+}
+
 export function WorkspaceEditor({
   initialTab,
   situation,
@@ -178,6 +250,8 @@ export function WorkspaceEditor({
   csrfToken,
   review,
   publication,
+  globalRecoveryRequired,
+  publicationBackup,
   history,
   context,
 }: {
@@ -204,6 +278,8 @@ export function WorkspaceEditor({
   csrfToken: string;
   review: Review | null;
   publication: PublicationStatusSnapshot | null;
+  globalRecoveryRequired: boolean;
+  publicationBackup: { ready: boolean; message: string };
   history: HistoryItem[];
   context: ContextItem[];
 }) {
@@ -232,13 +308,18 @@ export function WorkspaceEditor({
     livePublication.serverSnapshotId === serverPublicationSnapshot.snapshotId
       ? livePublication.snapshot
       : serverPublicationSnapshot;
+  const publicationActive = publicationStatus
+    ? isActivePublicationState(publicationStatus.state)
+    : false;
   const mine = checkout?.holderId === currentUserId;
   const reviewLocked = reviewStatus
     ? isActiveReviewState(reviewStatus.state)
     : false;
-  const publicationLocked = publicationStatus
-    ? isActivePublicationState(publicationStatus.state)
-    : false;
+  const publicationLocked =
+    globalRecoveryRequired ||
+    (publicationStatus
+      ? isPublicationWorkspaceLocked(publicationStatus.state)
+      : false);
   const workspaceLocked = reviewLocked || publicationLocked;
   const editable = Boolean(mine && !workspaceLocked);
   const [tab, setTab] = useState<WorkspaceTab>(initialTab);
@@ -689,10 +770,16 @@ export function WorkspaceEditor({
             ) : null}
             {publicationLocked ? (
               <span className="activityLabel">
-                Publishing
-                {publicationStatus?.currentStage
-                  ? ` · ${publicationStatus.currentStage.displayName}`
-                  : ""}
+                {globalRecoveryRequired &&
+                publicationStatus?.state !== "RECOVERY_REQUIRED"
+                  ? "Studio publication recovery required"
+                  : publicationStatus?.state === "RECOVERY_REQUIRED"
+                    ? "Publication recovery required"
+                    : `Publishing${
+                        publicationStatus?.currentStage
+                          ? ` · ${publicationStatus.currentStage.displayName}`
+                          : ""
+                      }`}
               </span>
             ) : null}
           </div>
@@ -845,7 +932,15 @@ export function WorkspaceEditor({
                 ref={submitButton}
                 className="primaryButton"
                 type="button"
-                disabled={pending || workspaceLocked || saveState === "error"}
+                disabled={
+                  pending ||
+                  workspaceLocked ||
+                  saveState === "error" ||
+                  !publicationBackup.ready
+                }
+                aria-describedby={
+                  publicationBackup.ready ? undefined : "publicationBackupBlock"
+                }
                 onClick={() => setConfirmSubmit(true)}
               >
                 Submit to production
@@ -870,7 +965,36 @@ export function WorkspaceEditor({
         </div>
       </header>
 
-      {publicationLocked && publicationStatus?.currentStage ? (
+      {!publicationBackup.ready ? (
+        <section
+          id="publicationBackupBlock"
+          className="publicationOutcome publicationOutcome-warning"
+          role="status"
+        >
+          <strong>Production submission paused</strong>
+          <span>
+            {publicationBackup.message} Your saved draft and checkout are
+            unaffected.
+          </span>
+        </section>
+      ) : null}
+
+      {globalRecoveryRequired &&
+      publicationStatus?.state !== "RECOVERY_REQUIRED" ? (
+        <section
+          className="publicationOutcome publicationOutcome-error"
+          role="alert"
+        >
+          <strong>Studio publication recovery required</strong>
+          <span>
+            The live Leadership identity for another publication is not
+            verified. Editorial changes stay locked until an administrator
+            restores and verifies a known release.
+          </span>
+        </section>
+      ) : null}
+
+      {publicationActive && publicationStatus?.currentStage ? (
         <section
           className="publicationProgress"
           role="status"
@@ -926,6 +1050,30 @@ export function WorkspaceEditor({
         >
           <strong>{publicationStatus.terminal.title}</strong>
           <span>{publicationStatus.terminal.message}</span>
+          {publicationStatus.failure ? (
+            <PublicationFailureEvidence
+              failure={publicationStatus.failure}
+              summary={
+                publicationStatus.state === "RECOVERY_REQUIRED"
+                  ? "Why live verification failed"
+                  : "Why verification failed"
+              }
+              conclusion={
+                publicationStatus.state === "RESTORED"
+                  ? "The previous verified version is still live."
+                  : publicationStatus.state === "RECOVERY_REQUIRED"
+                    ? "Leadership's current live release identity is not verified."
+                    : "Production was not changed."
+              }
+            />
+          ) : null}
+          {publicationStatus.recoveryFailure ? (
+            <PublicationFailureEvidence
+              failure={publicationStatus.recoveryFailure}
+              summary="Why automatic recovery failed"
+              conclusion="Leadership's current live release identity is not verified. An administrator must restore and verify a known release before editing resumes."
+            />
+          ) : null}
         </section>
       ) : null}
 
@@ -976,13 +1124,31 @@ export function WorkspaceEditor({
             </div>
           ) : publicationLocked ? (
             <div className="readOnlyBanner">
-              <strong>
-                {publicationStatus?.currentStage?.displayName ??
-                  "Publication in progress"}
-                .
-              </strong>{" "}
-              {publicationStatus?.currentStage?.description} Editing returns
-              when Leadership verification completes.
+              {globalRecoveryRequired &&
+              publicationStatus?.state !== "RECOVERY_REQUIRED" ? (
+                <>
+                  <strong>Studio publication recovery required.</strong> The
+                  live Leadership identity for another publication is not
+                  verified. Editing returns after an administrator restores and
+                  verifies a known release.
+                </>
+              ) : publicationStatus?.state === "RECOVERY_REQUIRED" ? (
+                <>
+                  <strong>Publication recovery required.</strong> Editing
+                  returns after an administrator restores and verifies a known
+                  Leadership release.
+                </>
+              ) : (
+                <>
+                  <strong>
+                    {publicationStatus?.currentStage?.displayName ??
+                      "Publication in progress"}
+                    .
+                  </strong>{" "}
+                  {publicationStatus?.currentStage?.description} Editing returns
+                  when Leadership verification completes.
+                </>
+              )}
             </div>
           ) : reviewLocked ? (
             <div className="readOnlyBanner">
@@ -1363,7 +1529,12 @@ export function WorkspaceEditor({
               </div>
               <span>Studio bytes</span>
             </header>
-            <div className="previewFrame">
+            <div
+              className="previewFrame"
+              role="region"
+              aria-label="Draft preview"
+              tabIndex={0}
+            >
               <p className="previewEyebrow">{bundle.metadata.primarySkill}</p>
               <h1>{bundle.metadata.title}</h1>
               <p className="previewDescription">

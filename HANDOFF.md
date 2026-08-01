@@ -186,6 +186,156 @@ bundle writer so the writer and downstream audits can run again.
 The deployed 2026-07-29 release still uses the earlier behavior described in
 the historical retry-provider record that follows.
 
+#### 2026-08-01 read-only production review inventory
+
+At 19:32 UTC, all five active checkouts and their draft resume anchors remained
+intact. No review was queued or running, no publication required recovery, and
+no publication attempt had a null finish time.
+
+- `high-performer-hurting-team`, job
+  `954d2835-8d2a-41e0-b06e-91582827a045`: failed after 23 of 24 stages because
+  proposal assembly treated the uppercase `ADJUDICATOR:` prefix in a retained
+  finding link as different from the canonical lowercase role code. The
+  case-normalization fix makes this the shortest and safest first review to
+  resume.
+- `stop-taking-delegated-work-back`, job
+  `3ebfc8ba-533f-44e2-acf7-1da4cf02feee`: failed at bundle writer after 18 of
+  24 stages because the replacement `description` was returned as plain text
+  rather than a JSON string.
+- `defensive-about-feedback`, job
+  `2c3cb00a-4294-4273-adff-9faa9792289d`: failed at bundle writer after 18 of
+  24 stages because the replacement `title` was returned as plain text rather
+  than a JSON string.
+- `tears-during-difficult-conversation`: its 24-stage review succeeded; the
+  later publication was restored as documented below, and its checkout and
+  revision-2 draft remain active.
+- `dominates-team-meetings`: its 24-stage review succeeded and its checkout
+  remains active.
+
+The unreleased candidate now JSON-encodes plain replacements only when the
+target is an existing string-valued metadata field; malformed non-string or
+unknown metadata still fails closed. A selected historical retry atomically
+focuses that same job without replacing its ID, steps, runs, queue time, or
+enqueue audit. A different lane owner produces `REVIEW_LANE_BUSY` without
+mutating either review.
+
+### Unreleased publication prevention and diagnostics
+
+The 2026-08-01 production publication for
+`tears-during-difficult-conversation` (job
+`50969dba-d82c-4cc8-92ac-9c1d110c0892`) advanced Leadership from release
+`481e9d38-6aef-4c31-81b0-6d8fabd6e8e1` to candidate
+`2a923324-6837-495f-b256-12d04932b97d`, received HTTP 503 from content health
+during every live probe, and automatically restored the prior release. The
+checkout and saved draft remained active. Reproduction against the exact
+deployed Leadership commit proved the candidate was deterministically invalid:
+its managed `PracticeEmbed` had lost
+`variant="emotion-without-diagnosis"`, so it no longer matched the situation
+frontmatter. The old Studio release did not run Leadership's complete canonical
+snapshot validator before pointer promotion and retained only the generic
+`VERIFICATION_FAILED_RESTORED` classification.
+
+Commit `3683021` closes that path before promotion by validating the complete
+assembled candidate with the same content contract as Leadership and by
+rejecting automatic proposal changes that alter managed `PracticeEmbed` or
+`PreparedAction` tags. The current unreleased working candidate additionally
+uses a 45-second bounded content-health convergence window, renews the
+publication lease and publisher heartbeat on every probe, never accepts a
+known-mismatching runtime identity, and renews the Studio lease throughout the
+separate Leadership release transaction. It rechecks the exact claim,
+checkout, and situation fences both immediately before pointer promotion and
+after promotion immediately before commit, so a replacement publisher rolls
+the entire Leadership transaction back. It persists only an allowlisted
+status, attempt count, elapsed time, and observed identity. When automatic restoration
+also has retained runtime-health evidence, the original live-verification
+evidence and restoration evidence remain distinct so the workspace can explain
+both boundaries without exposing raw responses, URLs, headers, errors, or
+stacks. Historical generic jobs remain unchanged because those details were not
+retained at the time.
+
+A `RECOVERY_REQUIRED` publication is now a global editorial lock rather than
+only a publication-worker fence. The inventory and every workspace remain
+inspectable, but new situations, new checkouts, saves, check-ins, review
+requests or retries, proposal decisions, restoration or retirement drafts, and
+publication requests fail closed until publisher reconciliation verifies a
+known Leadership release. The workspace does not claim that the previous
+release is live while recovery remains unresolved.
+
+The follow-up deployment path now stops web intake and review execution, waits
+for every publication attempt to finish even if its job has already entered a
+terminal state, refuses any recovery fence, and then stops the idle publisher.
+Before the additive lane migration it captures a content-body-free core state
+for every active checkout, draft resume anchor, revision/artifact reference,
+review job, step, run, proposal, candidate, and proposal decision. It separately
+derives the expected normalized queue timestamps and focused owner from the
+pre-migration audit/job facts. After migration it compares both the core
+before/after hashes and expected/actual lane hashes and writes an
+`active-review-state-continuity-v2` receipt only when both match. Migration,
+continuity, local-health, or required public-gate failure restores the exact
+previous release and must prove that its local live and ready checks pass; an
+unverified rollback is a critical deployment failure. This candidate has not
+been pushed or deployed. A fresh 2026-08-01 read-only production inventory
+again found all three Studio processes and both health routes healthy, five
+unchanged active checkouts, no queued/running review, no active or
+recovery-required publication, and no unfinished publication attempt.
+Deployment remains blocked because readiness still reports backup
+state `deferred`: three encrypted-backup receipts remain `QUEUED`, and the host
+has no backup environment, backup operator, scheduler, verified off-host
+receipt, or restore drill. The runbook requires those exact facts and the
+approval packet before cutover. The host also has no PostgreSQL client on its
+current system PATH; the dedicated backup operator must receive the reviewed
+Node/PostgreSQL/GPG/SSH/flock/timeout toolchain and its approved encryption and
+decryption key material before the legacy worker or recorder can run.
+
+The current candidate now enforces that prerequisite rather than relying on
+the runbook alone. Follow-up deployment preflight requires the dedicated backup
+user and protected environment, exact queue/nightly schedules, mandatory
+off-host configuration, and a committed read-only database proof of a recent
+encrypted backup with receipt-bound off-site replication plus a passed restore
+drill before it creates a release. The direct query remains compatible with the
+currently deployed release's deferred/older health shape. Publication
+submission independently checks the same complete receipt fields and off-site
+attestation, a maximum 26-hour backup age, materially future timestamps, and the
+latest recorded restore-drill result inside the same serializable transaction
+that would create the publication job. If the proof is absent, editing and
+review remain available, the submit control shows the safe reason, and no
+publication or audit mutation occurs.
+
+The deployed worker predates the new destination marker even though its backup
+command already verifies off-site replication. The first follow-up therefore
+uses the reviewed `ops/attest-legacy-offsite-backup.sh` transition after a real
+legacy receipt exists: it live-verifies the exact configured remote object and
+appends an attested receipt while preserving the original verification time.
+Deployment also recomputes that destination binding, rechecks the remote
+checksum/length, and requires candidate `web.env` to use backup readiness mode
+`required`. Missing `current` is not treated as a first deploy when immutable
+release history remains. A genuine first deployment now separately proves
+candidate `web.env` is explicitly `deferred` before creating any release.
+Backup processing is single-flight and time-bounded, recovers abandoned
+`RUNNING` claims through a fenced failure, and requires an exact-one fenced
+success update. Before inspecting or claiming work, both the queue runner and
+follow-up deployment require the source and receipt URLs to normalize to the
+same single unambiguous host, port, and `situation_studio` database. Follow-up
+deployment also holds a token-fenced atomic host lease through rollback and,
+after quiescing all application processes, preclaims an exact backup receipt
+whose append-only audit anchor contains the approved release and review-state
+hashes. Migration cannot start until that receipt is newly encrypted,
+off-site verified against the preflight-frozen destinations and resolved key
+fingerprint, and the exact artifact decrypts to a readable PostgreSQL custom
+archive while the review projections remain unchanged across the dump. The
+configuration fence is checked before the preclaimed worker can transition the
+receipt. Once stateful cutover starts, signals, lost SSH acknowledgements, or
+unverified rollback retain the deployment lease for explicit recovery instead
+of allowing another deployment to compound ambiguous state. Restore results are recorded
+through the exact complete receipt only after current local and configured
+remote checksum/length verification, and an empty restored production dataset
+is rejected;
+the shared policy rejects drills older than 30 days, earlier than their receipt,
+or materially in the future. The deferred-release bootstrap uses a separately
+approved SHA-256 of the candidate recorder, verifies those bytes twice, invokes
+only the immutable current release's restore script, and emits both identities
+with the receipt result for the approval packet.
+
 The retry-provider implementation now:
 
 - automatically retries only explicitly retryable provider failures, with
@@ -275,4 +425,5 @@ on 2026-07-25 found both endpoints healthy.
 The user explicitly deferred backup configuration for the initial launch on
 2026-07-24. Production readiness reports `backup.state = "deferred"` rather
 than fabricating a receipt. Backup configuration becomes required again before
-any content-publication approval.
+any content-publication approval, and the current candidate now enforces that
+requirement in both publication submission and follow-up deployment preflight.

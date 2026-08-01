@@ -52,7 +52,21 @@ gpg --batch --quiet --decrypt "${STUDIO_RESTORE_DRILL_BACKUP}" |
     --set=ON_ERROR_STOP=1 \
     --quiet
 
-psql -v ON_ERROR_STOP=1 -Atc "
+psql -v ON_ERROR_STOP=1 -qAt <<'SQL'
+  DO $restore_dataset$
+  BEGIN
+    IF NOT EXISTS (
+         SELECT 1 FROM _prisma_migrations WHERE finished_at IS NOT NULL
+       )
+       OR NOT EXISTS (SELECT 1 FROM situations)
+       OR NOT EXISTS (SELECT 1 FROM production_situation_versions)
+       OR NOT EXISTS (SELECT 1 FROM content_blobs) THEN
+      RAISE EXCEPTION
+        'Restore drill rejected an empty Studio production dataset.';
+    END IF;
+  END
+  $restore_dataset$;
+
   SELECT json_build_object(
     'database', current_database(),
     'migrations', (SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL),
@@ -61,4 +75,4 @@ psql -v ON_ERROR_STOP=1 -Atc "
     'contentBlobs', (SELECT count(*) FROM content_blobs),
     'auditEvents', (SELECT count(*) FROM audit_events)
   );
-"
+SQL

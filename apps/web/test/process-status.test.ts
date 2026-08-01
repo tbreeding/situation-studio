@@ -47,7 +47,11 @@ describe("backup readiness", () => {
     expect(
       backupReadiness({
         mode: "deferred",
-        verifiedAtAgeSeconds: null,
+        publicationStatus: {
+          ready: false,
+          state: "BACKUP_MISSING",
+          message: "missing",
+        },
       }),
     ).toEqual({ state: "deferred", degraded: false });
   });
@@ -56,19 +60,31 @@ describe("backup readiness", () => {
     expect(
       backupReadiness({
         mode: undefined,
-        verifiedAtAgeSeconds: null,
+        publicationStatus: {
+          ready: false,
+          state: "BACKUP_MISSING",
+          message: "missing",
+        },
       }),
     ).toEqual({ state: "not-yet-verified", degraded: true });
     expect(
       backupReadiness({
         mode: "required",
-        verifiedAtAgeSeconds: 26 * 60 * 60 + 1,
+        publicationStatus: {
+          ready: false,
+          state: "BACKUP_STALE",
+          message: "stale",
+        },
       }),
     ).toEqual({ state: "stale", degraded: true });
     expect(
       backupReadiness({
         mode: "required",
-        verifiedAtAgeSeconds: 60,
+        publicationStatus: {
+          ready: true,
+          state: "READY",
+          message: "ready",
+        },
       }),
     ).toEqual({ state: "verified", degraded: false });
   });
@@ -77,7 +93,11 @@ describe("backup readiness", () => {
     expect(
       backupReadiness({
         mode: "optional",
-        verifiedAtAgeSeconds: null,
+        publicationStatus: {
+          ready: true,
+          state: "READY",
+          message: "ready",
+        },
       }),
     ).toEqual({ state: "not-yet-verified", degraded: true });
   });

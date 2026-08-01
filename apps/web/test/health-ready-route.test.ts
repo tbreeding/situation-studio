@@ -77,16 +77,24 @@ describe("readiness backup and restore-drill evidence", () => {
 
   it("keeps prior passed drill evidence when a newer nightly backup is verified", async () => {
     const latestBackup = {
+      destinationId: `offsite-verified:${"f".repeat(64)}`,
       encrypted: true,
+      objectKey: "situation-studio-20260729T115900Z.dump.gpg",
+      checksum: "a".repeat(64),
+      byteLength: 4_096n,
       verifiedAt: new Date(now.getTime() - 60_000),
     };
     const priorPassedRestoreDrill = {
+      ...latestBackup,
+      objectKey: "situation-studio-20260728T115900Z.dump.gpg",
+      verifiedAt: new Date(now.getTime() - 86_460_000),
+      createdAt: new Date(now.getTime() - 86_460_000),
       restoreDrillAt: new Date(now.getTime() - 86_400_000),
       restoreDrillResult: "PASSED",
     };
     mocks.backupReceiptFindFirst.mockImplementation(
-      async (query: { where: { restoreDrillAt?: { not: null } } }) =>
-        query.where.restoreDrillAt ? priorPassedRestoreDrill : latestBackup,
+      async (query: { where: { OR?: unknown[] } }) =>
+        query.where.OR ? priorPassedRestoreDrill : latestBackup,
     );
 
     const response = await GET();
@@ -95,30 +103,46 @@ describe("readiness backup and restore-drill evidence", () => {
     expect(response.status).toBe(200);
     expect(body.backup).toEqual({
       state: "verified",
+      publicationReady: true,
+      evidenceState: "READY",
       ageSeconds: 60,
       encrypted: true,
       restoreDrill: "passed",
       restoreDrillAgeSeconds: 86_400,
     });
     expect(mocks.backupReceiptFindFirst).toHaveBeenNthCalledWith(1, {
-      where: {
-        state: "VERIFIED",
-        verifiedAt: { not: null },
-      },
-      orderBy: [{ verifiedAt: "desc" }, { createdAt: "desc" }],
+      where: { state: "VERIFIED" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       select: {
+        destinationId: true,
         encrypted: true,
+        objectKey: true,
+        checksum: true,
+        byteLength: true,
         verifiedAt: true,
       },
     });
     expect(mocks.backupReceiptFindFirst).toHaveBeenNthCalledWith(2, {
       where: {
         state: "VERIFIED",
-        restoreDrillAt: { not: null },
-        restoreDrillResult: { not: null },
+        OR: [
+          { restoreDrillAt: { not: null } },
+          { restoreDrillResult: { not: null } },
+        ],
       },
-      orderBy: [{ restoreDrillAt: "desc" }, { createdAt: "desc" }],
+      orderBy: [
+        { restoreDrillAt: { sort: "desc", nulls: "first" } },
+        { createdAt: "desc" },
+        { id: "desc" },
+      ],
       select: {
+        destinationId: true,
+        encrypted: true,
+        objectKey: true,
+        checksum: true,
+        byteLength: true,
+        verifiedAt: true,
+        createdAt: true,
         restoreDrillAt: true,
         restoreDrillResult: true,
       },
@@ -127,11 +151,15 @@ describe("readiness backup and restore-drill evidence", () => {
 
   it("preserves the existing not-yet-passed state and reports a null drill age", async () => {
     mocks.backupReceiptFindFirst.mockImplementation(
-      async (query: { where: { restoreDrillAt?: { not: null } } }) =>
-        query.where.restoreDrillAt
+      async (query: { where: { OR?: unknown[] } }) =>
+        query.where.OR
           ? null
           : {
+              destinationId: `offsite-verified:${"f".repeat(64)}`,
               encrypted: true,
+              objectKey: "situation-studio-20260729T115900Z.dump.gpg",
+              checksum: "a".repeat(64),
+              byteLength: 4_096n,
               verifiedAt: new Date(now.getTime() - 60_000),
             },
     );
@@ -139,8 +167,11 @@ describe("readiness backup and restore-drill evidence", () => {
     const response = await GET();
     const body = await response.json();
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
     expect(body.backup).toMatchObject({
+      state: "not-yet-verified",
+      publicationReady: false,
+      evidenceState: "RESTORE_DRILL_MISSING",
       restoreDrill: "not-yet-passed",
       restoreDrillAgeSeconds: null,
     });
@@ -148,14 +179,25 @@ describe("readiness backup and restore-drill evidence", () => {
 
   it("reports a newer failed drill instead of hiding it behind an older pass", async () => {
     mocks.backupReceiptFindFirst.mockImplementation(
-      async (query: { where: { restoreDrillAt?: { not: null } } }) =>
-        query.where.restoreDrillAt
+      async (query: { where: { OR?: unknown[] } }) =>
+        query.where.OR
           ? {
+              destinationId: `offsite-verified:${"f".repeat(64)}`,
+              encrypted: true,
+              objectKey: "situation-studio-20260729T115700Z.dump.gpg",
+              checksum: "b".repeat(64),
+              byteLength: 4_096n,
+              verifiedAt: new Date(now.getTime() - 180_000),
+              createdAt: new Date(now.getTime() - 180_000),
               restoreDrillAt: new Date(now.getTime() - 120_000),
               restoreDrillResult: "FAILED",
             }
           : {
+              destinationId: `offsite-verified:${"f".repeat(64)}`,
               encrypted: true,
+              objectKey: "situation-studio-20260729T115900Z.dump.gpg",
+              checksum: "a".repeat(64),
+              byteLength: 4_096n,
               verifiedAt: new Date(now.getTime() - 60_000),
             },
     );
@@ -163,8 +205,49 @@ describe("readiness backup and restore-drill evidence", () => {
     const response = await GET();
     const body = await response.json();
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
     expect(body.backup).toMatchObject({
+      state: "not-yet-verified",
+      publicationReady: false,
+      evidenceState: "RESTORE_DRILL_FAILED",
+      restoreDrill: "not-yet-passed",
+      restoreDrillAgeSeconds: 120,
+    });
+  });
+
+  it("fails closed when the latest recorded drill attempt is partial", async () => {
+    mocks.backupReceiptFindFirst.mockImplementation(
+      async (query: { where: { OR?: unknown[] } }) =>
+        query.where.OR
+          ? {
+              destinationId: `offsite-verified:${"f".repeat(64)}`,
+              encrypted: true,
+              objectKey: "situation-studio-20260729T115700Z.dump.gpg",
+              checksum: "b".repeat(64),
+              byteLength: 4_096n,
+              verifiedAt: new Date(now.getTime() - 180_000),
+              createdAt: new Date(now.getTime() - 180_000),
+              restoreDrillAt: new Date(now.getTime() - 120_000),
+              restoreDrillResult: null,
+            }
+          : {
+              destinationId: `offsite-verified:${"f".repeat(64)}`,
+              encrypted: true,
+              objectKey: "situation-studio-20260729T115900Z.dump.gpg",
+              checksum: "a".repeat(64),
+              byteLength: 4_096n,
+              verifiedAt: new Date(now.getTime() - 60_000),
+            },
+    );
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.backup).toMatchObject({
+      state: "not-yet-verified",
+      publicationReady: false,
+      evidenceState: "RESTORE_DRILL_INCOMPLETE",
       restoreDrill: "not-yet-passed",
       restoreDrillAgeSeconds: 120,
     });

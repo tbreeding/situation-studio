@@ -523,213 +523,333 @@ function sourceKind(kind: "BOOTSTRAP_IMPORT" | "EXTERNAL_IMPORT") {
   return kind as ProductionSourceKind;
 }
 
+type StudioTransaction = Parameters<
+  Parameters<DatabaseClient["$transaction"]>[0]
+>[0];
+
+const publicationReconciliationFenceStates = [
+  "REQUESTED",
+  "ASSEMBLING",
+  "PROMOTING",
+  "VERIFYING",
+  "RECOVERY_REQUIRED",
+] as const;
+
+async function importLeadershipReleaseInTransaction(
+  transaction: StudioTransaction,
+  snapshot: LeadershipReleaseSnapshot,
+  kind: "BOOTSTRAP_IMPORT" | "EXTERNAL_IMPORT",
+) {
+  const observation =
+    (await transaction.leadershipReleaseObservation.findUnique({
+      where: { releaseId: snapshot.identity.releaseId },
+    })) ??
+    (await transaction.leadershipReleaseObservation.create({
+      data: {
+        releaseId: snapshot.identity.releaseId,
+        manifestHash: snapshot.identity.manifestHash,
+        pointerGeneration: BigInt(snapshot.identity.generation),
+        state: snapshot.identity.state,
+        sourceKind:
+          kind === "BOOTSTRAP_IMPORT"
+            ? "READ_ONLY_BOOTSTRAP"
+            : "EXTERNAL_PRODUCTION_IMPORT",
+        manifest: snapshot.identity.manifest as Prisma.InputJsonValue,
+        publishedAt: snapshot.identity.publishedAt,
+      },
+    }));
+  let imported = 0;
+  for (const item of snapshot.situations) {
+    const existingSituation = await transaction.situation.findUnique({
+      where: { slug: item.slug },
+    });
+    const situation =
+      existingSituation ??
+      (await transaction.situation.create({
+        data: {
+          id: item.bundle.situationId,
+          slug: item.slug,
+          title: item.title,
+          visibility: item.bundle.visibility,
+        },
+      }));
+    const stableBundle = situationBundleSchema.parse({
+      ...item.bundle,
+      situationId: situation.id,
+      artifacts: item.bundle.artifacts.map((artifact) => ({
+        ...artifact,
+        ownerSituationId:
+          artifact.visibility === "GLOBAL" ? null : situation.id,
+      })),
+    });
+    const stableBundleHash = bundleHash(stableBundle);
+    const existingVersion =
+      await transaction.productionSituationVersion.findFirst({
+        where: {
+          situationId: situation.id,
+          bundleHash: stableBundleHash,
+        },
+      });
+    if (!existingVersion) {
+      const bodyHash = stableBundle.bodyHash;
+      await transaction.contentBlob.createMany({
+        data: {
+          hash: bodyHash,
+          encoding: "UTF8",
+          mediaType: "text/mdx; charset=utf-8",
+          byteLength: new TextEncoder().encode(item.body).byteLength,
+          textBody: item.body,
+        },
+        skipDuplicates: true,
+      });
+      for (const artifact of item.artifacts)
+        await transaction.contentBlob.createMany({
+          data: {
+            hash: artifact.content_hash,
+            encoding: artifact.encoding,
+            mediaType: artifact.media_type,
+            byteLength: artifact.byte_length,
+            textBody: artifact.text_body,
+            binaryBody: artifact.binary_body
+              ? Uint8Array.from(artifact.binary_body)
+              : null,
+          },
+          skipDuplicates: true,
+        });
+      for (const artifact of stableBundle.artifacts)
+        await transaction.scopedArtifactVariant.createMany({
+          data: {
+            ownerSituationId: situation.id,
+            logicalId: artifact.logicalId,
+            kind: artifact.kind,
+            visibility: artifact.visibility,
+            forkedFromLogicalId:
+              artifact.forkedFromLogicalId ??
+              (() => {
+                throw new Error("Imported scoped artifact lacks lineage.");
+              })(),
+            forkedFromContentHash:
+              artifact.forkedFromContentHash ??
+              (() => {
+                throw new Error("Imported scoped artifact lacks base hash.");
+              })(),
+            contentHash: artifact.contentHash,
+          },
+          skipDuplicates: true,
+        });
+      const exactArtifacts = item.artifacts
+        .map((artifact) => {
+          const kind = artifactKind(artifact.type);
+          if (!kind) return null;
+          const relationship = stableBundle.relationships.find(
+            (candidate) => candidate.logicalId === artifact.logical_id,
+          );
+          return {
+            logicalId:
+              artifact.logical_id === `situation:${item.slug}`
+                ? `leadership:${artifact.logical_id}`
+                : artifact.logical_id,
+            kind,
+            visibility: relationship?.visibility ?? "GLOBAL",
+            contentHash: artifact.content_hash,
+            metadata: {
+              source: "leadership-release-artifact",
+              originalLogicalId: artifact.logical_id,
+              mediaType: artifact.media_type,
+              encoding: artifact.encoding,
+            },
+          };
+        })
+        .filter((artifact) => artifact !== null);
+      const version = await transaction.productionSituationVersion.create({
+        data: {
+          situationId: situation.id,
+          observationId: observation.id,
+          bundleHash: stableBundleHash,
+          bundleManifest: stableBundle as Prisma.InputJsonValue,
+          contractVersion: stableBundle.contractVersion,
+          validationPolicy: stableBundle.validationPolicyVersion,
+          sourceKind: sourceKind(kind),
+          productionAt: snapshot.identity.publishedAt ?? new Date(),
+          changeSummary:
+            kind === "BOOTSTRAP_IMPORT"
+              ? "Imported existing Leadership production"
+              : "External production import",
+          artifacts: {
+            create: [
+              {
+                logicalId: `situation:${item.slug}`,
+                kind: "SITUATION",
+                visibility: "GLOBAL",
+                contentHash: bodyHash,
+                position: 0,
+                metadata: { source: "leadership-read-only" },
+              },
+              ...exactArtifacts.map((artifact, position) => ({
+                ...artifact,
+                position: position + 1,
+              })),
+            ],
+          },
+        },
+      });
+      imported += 1;
+      if (snapshot.identity.state === "OFFICIAL")
+        await transaction.situation.update({
+          where: { id: situation.id },
+          data: {
+            title: item.title,
+            visibility: stableBundle.visibility,
+            productionBundleHash: version.bundleHash,
+            productionReleaseId: snapshot.identity.releaseId,
+            productionAt: version.productionAt,
+          },
+        });
+    } else {
+      if (snapshot.identity.state === "OFFICIAL")
+        await transaction.situation.update({
+          where: { id: situation.id },
+          data: {
+            title: item.title,
+            visibility: stableBundle.visibility,
+            productionBundleHash: existingVersion.bundleHash,
+            productionReleaseId: snapshot.identity.releaseId,
+            productionAt: existingVersion.productionAt,
+          },
+        });
+    }
+  }
+  if (snapshot.identity.state === "OFFICIAL")
+    await transaction.leadershipSyncCursor.upsert({
+      where: { id: "official" },
+      create: {
+        id: "official",
+        lastReleaseId: snapshot.identity.releaseId,
+        lastManifestHash: snapshot.identity.manifestHash,
+        lastPointerGeneration: BigInt(snapshot.identity.generation),
+        lastSuccessfulAt: new Date(),
+      },
+      update: {
+        lastReleaseId: snapshot.identity.releaseId,
+        lastManifestHash: snapshot.identity.manifestHash,
+        lastPointerGeneration: BigInt(snapshot.identity.generation),
+        lastSuccessfulAt: new Date(),
+        lastErrorCode: null,
+      },
+    });
+  return { observationId: observation.id, imported };
+}
+
 export async function importLeadershipRelease(
   studio: DatabaseClient,
   snapshot: LeadershipReleaseSnapshot,
   kind: "BOOTSTRAP_IMPORT" | "EXTERNAL_IMPORT" = "EXTERNAL_IMPORT",
 ) {
   return studio.$transaction(
+    (transaction) =>
+      importLeadershipReleaseInTransaction(transaction, snapshot, kind),
+    { isolationLevel: "Serializable" },
+  );
+}
+
+export type LeadershipReleaseReconciliationGuard = Readonly<{
+  publicationJobCount: number;
+}>;
+
+export async function captureLeadershipReleaseReconciliationGuard(
+  studio: DatabaseClient,
+) {
+  return studio.$transaction(
     async (transaction) => {
-      const observation =
-        (await transaction.leadershipReleaseObservation.findUnique({
-          where: { releaseId: snapshot.identity.releaseId },
-        })) ??
-        (await transaction.leadershipReleaseObservation.create({
-          data: {
-            releaseId: snapshot.identity.releaseId,
-            manifestHash: snapshot.identity.manifestHash,
-            pointerGeneration: BigInt(snapshot.identity.generation),
-            state: snapshot.identity.state,
-            sourceKind:
-              kind === "BOOTSTRAP_IMPORT"
-                ? "READ_ONLY_BOOTSTRAP"
-                : "EXTERNAL_PRODUCTION_IMPORT",
-            manifest: snapshot.identity.manifest as Prisma.InputJsonValue,
-            publishedAt: snapshot.identity.publishedAt,
-          },
-        }));
-      let imported = 0;
-      for (const item of snapshot.situations) {
-        const existingSituation = await transaction.situation.findUnique({
-          where: { slug: item.slug },
-        });
-        const situation =
-          existingSituation ??
-          (await transaction.situation.create({
-            data: {
-              id: item.bundle.situationId,
-              slug: item.slug,
-              title: item.title,
-              visibility: item.bundle.visibility,
-            },
-          }));
-        const stableBundle = situationBundleSchema.parse({
-          ...item.bundle,
-          situationId: situation.id,
-          artifacts: item.bundle.artifacts.map((artifact) => ({
-            ...artifact,
-            ownerSituationId:
-              artifact.visibility === "GLOBAL" ? null : situation.id,
-          })),
-        });
-        const stableBundleHash = bundleHash(stableBundle);
-        const existingVersion =
-          await transaction.productionSituationVersion.findFirst({
-            where: {
-              situationId: situation.id,
-              bundleHash: stableBundleHash,
-            },
-          });
-        if (!existingVersion) {
-          const bodyHash = stableBundle.bodyHash;
-          await transaction.contentBlob.createMany({
-            data: {
-              hash: bodyHash,
-              encoding: "UTF8",
-              mediaType: "text/mdx; charset=utf-8",
-              byteLength: new TextEncoder().encode(item.body).byteLength,
-              textBody: item.body,
-            },
-            skipDuplicates: true,
-          });
-          for (const artifact of item.artifacts)
-            await transaction.contentBlob.createMany({
-              data: {
-                hash: artifact.content_hash,
-                encoding: artifact.encoding,
-                mediaType: artifact.media_type,
-                byteLength: artifact.byte_length,
-                textBody: artifact.text_body,
-                binaryBody: artifact.binary_body
-                  ? Uint8Array.from(artifact.binary_body)
-                  : null,
-              },
-              skipDuplicates: true,
-            });
-          for (const artifact of stableBundle.artifacts)
-            await transaction.scopedArtifactVariant.createMany({
-              data: {
-                ownerSituationId: situation.id,
-                logicalId: artifact.logicalId,
-                kind: artifact.kind,
-                visibility: artifact.visibility,
-                forkedFromLogicalId:
-                  artifact.forkedFromLogicalId ??
-                  (() => {
-                    throw new Error("Imported scoped artifact lacks lineage.");
-                  })(),
-                forkedFromContentHash:
-                  artifact.forkedFromContentHash ??
-                  (() => {
-                    throw new Error(
-                      "Imported scoped artifact lacks base hash.",
-                    );
-                  })(),
-                contentHash: artifact.contentHash,
-              },
-              skipDuplicates: true,
-            });
-          const exactArtifacts = item.artifacts
-            .map((artifact) => {
-              const kind = artifactKind(artifact.type);
-              if (!kind) return null;
-              const relationship = stableBundle.relationships.find(
-                (candidate) => candidate.logicalId === artifact.logical_id,
-              );
-              return {
-                logicalId:
-                  artifact.logical_id === `situation:${item.slug}`
-                    ? `leadership:${artifact.logical_id}`
-                    : artifact.logical_id,
-                kind,
-                visibility: relationship?.visibility ?? "GLOBAL",
-                contentHash: artifact.content_hash,
-                metadata: {
-                  source: "leadership-release-artifact",
-                  originalLogicalId: artifact.logical_id,
-                  mediaType: artifact.media_type,
-                  encoding: artifact.encoding,
-                },
-              };
-            })
-            .filter((artifact) => artifact !== null);
-          const version = await transaction.productionSituationVersion.create({
-            data: {
-              situationId: situation.id,
-              observationId: observation.id,
-              bundleHash: stableBundleHash,
-              bundleManifest: stableBundle as Prisma.InputJsonValue,
-              contractVersion: stableBundle.contractVersion,
-              validationPolicy: stableBundle.validationPolicyVersion,
-              sourceKind: sourceKind(kind),
-              productionAt: snapshot.identity.publishedAt ?? new Date(),
-              changeSummary:
-                kind === "BOOTSTRAP_IMPORT"
-                  ? "Imported existing Leadership production"
-                  : "External production import",
-              artifacts: {
-                create: [
-                  {
-                    logicalId: `situation:${item.slug}`,
-                    kind: "SITUATION",
-                    visibility: "GLOBAL",
-                    contentHash: bodyHash,
-                    position: 0,
-                    metadata: { source: "leadership-read-only" },
-                  },
-                  ...exactArtifacts.map((artifact, position) => ({
-                    ...artifact,
-                    position: position + 1,
-                  })),
-                ],
-              },
-            },
-          });
-          imported += 1;
-          if (snapshot.identity.state === "OFFICIAL")
-            await transaction.situation.update({
-              where: { id: situation.id },
-              data: {
-                title: item.title,
-                visibility: stableBundle.visibility,
-                productionBundleHash: version.bundleHash,
-                productionReleaseId: snapshot.identity.releaseId,
-                productionAt: version.productionAt,
-              },
-            });
-        } else {
-          if (snapshot.identity.state === "OFFICIAL")
-            await transaction.situation.update({
-              where: { id: situation.id },
-              data: {
-                title: item.title,
-                visibility: stableBundle.visibility,
-                productionBundleHash: existingVersion.bundleHash,
-                productionReleaseId: snapshot.identity.releaseId,
-                productionAt: existingVersion.productionAt,
-              },
-            });
-        }
-      }
-      if (snapshot.identity.state === "OFFICIAL")
-        await transaction.leadershipSyncCursor.upsert({
+      const publicationJobCount = await transaction.publicationJob.count();
+      const guard = { publicationJobCount } as const;
+      const publicationFence = await transaction.publicationJob.findFirst({
+        where: { state: { in: [...publicationReconciliationFenceStates] } },
+        select: { id: true, state: true },
+      });
+      return publicationFence
+        ? {
+            state: "BLOCKED" as const,
+            guard,
+            publicationJobId: publicationFence.id,
+            publicationState: publicationFence.state,
+          }
+        : { state: "READY" as const, guard };
+    },
+    { isolationLevel: "Serializable" },
+  );
+}
+
+export async function recordLeadershipReleaseObservationFailure(
+  studio: DatabaseClient,
+  guard: LeadershipReleaseReconciliationGuard,
+) {
+  return studio.$transaction(
+    async (transaction) => {
+      const publicationFence = await transaction.publicationJob.findFirst({
+        where: { state: { in: [...publicationReconciliationFenceStates] } },
+        select: { id: true },
+      });
+      if (publicationFence) return false;
+      const publicationJobCount = await transaction.publicationJob.count();
+      if (publicationJobCount !== guard.publicationJobCount) return false;
+      await transaction.leadershipSyncCursor.updateMany({
+        where: { id: "official" },
+        data: { lastErrorCode: "LEADERSHIP_OBSERVATION_FAILED" },
+      });
+      return true;
+    },
+    { isolationLevel: "Serializable" },
+  );
+}
+
+export async function reconcileOfficialLeadershipRelease(
+  studio: DatabaseClient,
+  snapshot: LeadershipReleaseSnapshot,
+  guard: LeadershipReleaseReconciliationGuard,
+) {
+  return studio.$transaction(
+    async (transaction) => {
+      // Leadership may temporarily point at an unverified candidate. Keep this
+      // fence in the same transaction as every observation and pointer write.
+      const publicationFence = await transaction.publicationJob.findFirst({
+        where: { state: { in: [...publicationReconciliationFenceStates] } },
+        select: { id: true, state: true },
+      });
+      if (publicationFence)
+        return {
+          state: "BLOCKED" as const,
+          publicationJobId: publicationFence.id,
+          publicationState: publicationFence.state,
+        };
+      const publicationJobCount = await transaction.publicationJob.count();
+      if (publicationJobCount !== guard.publicationJobCount)
+        return {
+          state: "STALE_GUARD" as const,
+          guardedPublicationJobCount: guard.publicationJobCount,
+          observedPublicationJobCount: publicationJobCount,
+        };
+
+      const cursor = await transaction.leadershipSyncCursor.findUnique({
+        where: { id: "official" },
+      });
+      if (
+        cursor?.lastReleaseId === snapshot.identity.releaseId &&
+        cursor.lastManifestHash === snapshot.identity.manifestHash
+      ) {
+        await transaction.leadershipSyncCursor.update({
           where: { id: "official" },
-          create: {
-            id: "official",
-            lastReleaseId: snapshot.identity.releaseId,
-            lastManifestHash: snapshot.identity.manifestHash,
-            lastPointerGeneration: BigInt(snapshot.identity.generation),
-            lastSuccessfulAt: new Date(),
-          },
-          update: {
-            lastReleaseId: snapshot.identity.releaseId,
-            lastManifestHash: snapshot.identity.manifestHash,
-            lastPointerGeneration: BigInt(snapshot.identity.generation),
-            lastSuccessfulAt: new Date(),
-            lastErrorCode: null,
-          },
+          data: { lastSuccessfulAt: new Date(), lastErrorCode: null },
         });
-      return { observationId: observation.id, imported };
+        return { state: "CURRENT" as const };
+      }
+
+      const imported = await importLeadershipReleaseInTransaction(
+        transaction,
+        snapshot,
+        "EXTERNAL_IMPORT",
+      );
+      return { state: "IMPORTED" as const, ...imported };
     },
     { isolationLevel: "Serializable" },
   );

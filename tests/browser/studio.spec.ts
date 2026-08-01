@@ -22,6 +22,7 @@ if (!databaseUrl || !adminPassword)
   );
 
 const database = new Client({ connectionString: databaseUrl });
+const browserBackupReceiptId = randomUUID();
 
 type ReviewFixtureInput = {
   situationId: string;
@@ -280,12 +281,88 @@ async function expectNoPageOverflow(page: Page) {
   ).toBe(true);
 }
 
+async function cleanupBrowserFixture(
+  checkoutId: string,
+  publicationJobIds: string[] = [],
+) {
+  await database.query("BEGIN");
+  try {
+    if (publicationJobIds.length > 0) {
+      await database.query(
+        "DELETE FROM publication_events WHERE job_id = ANY($1::uuid[])",
+        [publicationJobIds],
+      );
+      await database.query(
+        "DELETE FROM publication_jobs WHERE id = ANY($1::uuid[])",
+        [publicationJobIds],
+      );
+    }
+    await database.query(
+      `UPDATE review_steps
+          SET state = 'CANCELLED',
+              finished_at = COALESCE(finished_at, now())
+        WHERE job_id IN (
+                SELECT id FROM review_jobs WHERE checkout_id = $1
+              )
+          AND state IN ('PENDING', 'READY', 'RUNNING')`,
+      [checkoutId],
+    );
+    await database.query(
+      `UPDATE review_jobs
+          SET state = 'CANCELLED',
+              lane_owner = false,
+              claim_token = NULL,
+              lease_expires_at = NULL,
+              retry_not_before = NULL,
+              cancelled_at = COALESCE(cancelled_at, now()),
+              cancellation_reason = COALESCE(
+                cancellation_reason,
+                'Browser fixture cleanup'
+              ),
+              finished_at = COALESCE(finished_at, now())
+        WHERE checkout_id = $1
+          AND state IN ('QUEUED', 'RUNNING', 'FAILED')`,
+      [checkoutId],
+    );
+    await database.query(
+      `UPDATE situation_checkouts
+          SET released_at = COALESCE(released_at, now()),
+              release_reason = COALESCE(
+                release_reason,
+                'Browser fixture cleanup'
+              )
+        WHERE id = $1`,
+      [checkoutId],
+    );
+    await database.query("COMMIT");
+  } catch (error) {
+    await database.query("ROLLBACK");
+    throw error;
+  }
+}
+
 test.afterAll(async () => {
-  await database.end();
+  try {
+    await database.query("DELETE FROM backup_receipts WHERE id = $1", [
+      browserBackupReceiptId,
+    ]);
+  } finally {
+    await database.end();
+  }
 });
 
 test.beforeAll(async () => {
   await database.connect();
+  await database.query(
+    `INSERT INTO backup_receipts (
+       id, state, destination_id, object_key, checksum, encrypted, byte_length,
+       verified_at, restore_drill_at, restore_drill_result
+     ) VALUES (
+       $1, 'VERIFIED', 'offsite-verified:${"c".repeat(64)}',
+       'situation-studio-browser.dump.gpg', $2, true, 1, now(), now(), 'PASSED'
+     )`,
+    [browserBackupReceiptId, "d".repeat(64)],
+  );
 });
 
 test("rejects off-site return destinations and exposes no public signup", async ({
@@ -847,138 +924,149 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
   await expect(page).toHaveURL(
     new RegExp(`/situations/${situation.slug}$`, "u"),
   );
-  const streamConnected = page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/reviews/") &&
-      response.url().endsWith("/events") &&
-      response.status() === 200,
+  const checkoutResult = await database.query<{ id: string }>(
+    `SELECT id
+       FROM situation_checkouts
+      WHERE situation_id = $1
+        AND released_at IS NULL`,
+    [situation.id],
   );
-  await page.getByRole("button", { name: "Run agent review" }).click();
-  await expect(page.getByText("Review queued")).toBeVisible();
-  const streamResponse = await streamConnected;
-  expect(streamResponse.headers()["content-type"]).toContain(
-    "text/event-stream",
-  );
-  expect(streamResponse.headers()["cache-control"]).toContain("no-transform");
+  const browserCheckout = checkoutResult.rows[0];
+  if (!browserCheckout)
+    throw new Error("Browser retry-state checkout is unavailable.");
+  try {
+    const streamConnected = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/reviews/") &&
+        response.url().endsWith("/events") &&
+        response.status() === 200,
+    );
+    await page.getByRole("button", { name: "Run agent review" }).click();
+    await expect(page.getByText("Review queued")).toBeVisible();
+    const streamResponse = await streamConnected;
+    expect(streamResponse.headers()["content-type"]).toContain(
+      "text/event-stream",
+    );
+    expect(streamResponse.headers()["cache-control"]).toContain("no-transform");
 
-  const jobResult = await database.query<{
-    id: string;
-    input_revision_id: string;
-  }>(
-    `SELECT id, input_revision_id
+    const jobResult = await database.query<{
+      id: string;
+      input_revision_id: string;
+    }>(
+      `SELECT id, input_revision_id
        FROM review_jobs
       WHERE situation_id = $1
         AND state = 'QUEUED'
       ORDER BY queued_at DESC
       LIMIT 1`,
-    [situation.id],
-  );
-  const job = jobResult.rows[0];
-  if (!job) throw new Error("Browser retry-state review was not queued.");
-  const stepResult = await database.query<{
-    id: string;
-    role_code: string;
-    ordinal: number;
-  }>(
-    `SELECT id, role_code, ordinal
+      [situation.id],
+    );
+    const job = jobResult.rows[0];
+    if (!job) throw new Error("Browser retry-state review was not queued.");
+    const stepResult = await database.query<{
+      id: string;
+      role_code: string;
+      ordinal: number;
+    }>(
+      `SELECT id, role_code, ordinal
        FROM review_steps
       WHERE job_id = $1
       ORDER BY ordinal
       LIMIT 2`,
-    [job.id],
-  );
-  const firstStep = stepResult.rows[0];
-  const activeStep = stepResult.rows[1];
-  if (!firstStep || !activeStep)
-    throw new Error("Browser live-review steps are unavailable.");
+      [job.id],
+    );
+    const firstStep = stepResult.rows[0];
+    const activeStep = stepResult.rows[1];
+    if (!firstStep || !activeStep)
+      throw new Error("Browser live-review steps are unavailable.");
 
-  await page.getByRole("tab", { name: "Review" }).click();
-  const progress = page.getByRole("progressbar", {
-    name: "Agent review progress",
-  });
-  await expect(progress).toHaveAttribute("aria-valuenow", "0");
-  const pageIdentity = await page.evaluate(() => {
-    const identity = crypto.randomUUID();
-    Object.assign(window, { __studioLiveReviewIdentity: identity });
-    return identity;
-  });
+    await page.getByRole("tab", { name: "Review" }).click();
+    const progress = page.getByRole("progressbar", {
+      name: "Agent review progress",
+    });
+    await expect(progress).toHaveAttribute("aria-valuenow", "0");
+    const pageIdentity = await page.evaluate(() => {
+      const identity = crypto.randomUUID();
+      Object.assign(window, { __studioLiveReviewIdentity: identity });
+      return identity;
+    });
 
-  await database.query(
-    `UPDATE review_jobs
+    await database.query(
+      `UPDATE review_jobs
         SET state = 'RUNNING',
             lane_owner = true,
             started_at = now(),
             claim_token = $2,
             lease_expires_at = now() + interval '2 minutes'
       WHERE id = $1`,
-    [job.id, randomUUID()],
-  );
-  await database.query(
-    `UPDATE review_steps
+      [job.id, randomUUID()],
+    );
+    await database.query(
+      `UPDATE review_steps
         SET state = 'SUCCEEDED',
             output_hash = $2,
             finished_at = now()
       WHERE id = $1`,
-    [firstStep.id, "b".repeat(64)],
-  );
-  await database.query(
-    `UPDATE review_steps
+      [firstStep.id, "b".repeat(64)],
+    );
+    await database.query(
+      `UPDATE review_steps
         SET state = 'RUNNING',
             started_at = now()
       WHERE id = $1`,
-    [activeStep.id],
-  );
-  await database.query(
-    `INSERT INTO agent_runs (
+      [activeStep.id],
+    );
+    await database.query(
+      `INSERT INTO agent_runs (
        id, step_id, attempt, requested_provider, requested_model,
        reasoning_effort, evidence_hash, started_at
      ) VALUES (
        $1, $2, 1, 'codex', 'gpt-5.6-sol', 'high', $3, now()
      )`,
-    [randomUUID(), activeStep.id, "a".repeat(64)],
-  );
+      [randomUUID(), activeStep.id, "a".repeat(64)],
+    );
 
-  await expect(progress).toHaveAttribute("aria-valuenow", "1", {
-    timeout: 10_000,
-  });
-  await expect(progress).toHaveAttribute(
-    "aria-valuetext",
-    "1 of 24 stages complete",
-  );
-  await expect(
-    page.getByText("1 of 24 stages complete", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Nonviolent communication critique", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Review continues safely on the server."),
-  ).toBeVisible();
-  expect(
-    await page.evaluate(
-      () =>
-        (
-          window as typeof window & {
-            __studioLiveReviewIdentity?: string;
-          }
-        ).__studioLiveReviewIdentity,
-    ),
-  ).toBe(pageIdentity);
-  await expect(page.locator(".stageRail i.active")).toHaveCSS(
-    "animation-name",
-    "none",
-  );
-  expect(
-    await page
-      .locator(".reviewActivityIndicator")
-      .evaluate(
-        (element) => getComputedStyle(element, "::after").animationName,
+    await expect(progress).toHaveAttribute("aria-valuenow", "1", {
+      timeout: 10_000,
+    });
+    await expect(progress).toHaveAttribute(
+      "aria-valuetext",
+      "1 of 24 stages complete",
+    );
+    await expect(
+      page.getByText("1 of 24 stages complete", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Nonviolent communication critique", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Review continues safely on the server."),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __studioLiveReviewIdentity?: string;
+            }
+          ).__studioLiveReviewIdentity,
       ),
-  ).toBe("none");
+    ).toBe(pageIdentity);
+    await expect(page.locator(".stageRail i.active")).toHaveCSS(
+      "animation-name",
+      "none",
+    );
+    expect(
+      await page
+        .locator(".reviewActivityIndicator")
+        .evaluate(
+          (element) => getComputedStyle(element, "::after").animationName,
+        ),
+    ).toBe("none");
 
-  const scheduledAt = new Date(Date.now() + 15 * 60_000);
-  await database.query(
-    `UPDATE review_jobs
+    const scheduledAt = new Date(Date.now() + 15 * 60_000);
+    await database.query(
+      `UPDATE review_jobs
         SET state = 'QUEUED',
             retry_not_before = $2,
             failure_code = 'TRANSIENT',
@@ -989,109 +1077,111 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
             claim_token = NULL,
             lease_expires_at = NULL
       WHERE id = $1`,
-    [job.id, scheduledAt],
-  );
-  await database.query(
-    `UPDATE review_steps
+      [job.id, scheduledAt],
+    );
+    await database.query(
+      `UPDATE review_steps
         SET state = 'READY',
             started_at = NULL,
             finished_at = NULL
       WHERE id = $1`,
-    [activeStep.id],
-  );
-  await database.query(
-    `UPDATE agent_runs
+      [activeStep.id],
+    );
+    await database.query(
+      `UPDATE agent_runs
         SET provider_attempts = $2::jsonb,
             failure_class = 'PROVIDER_TRANSIENT',
             retryable = true,
             finished_at = now()
       WHERE step_id = $1
         AND attempt = 1`,
-    [
-      activeStep.id,
-      JSON.stringify([
-        {
-          provider: "codex",
-          model: "gpt-5.6-sol",
-          durationMs: 90_000,
-          outcome: "TIMED_OUT",
-          failureClass: "TRANSIENT",
-          retryable: true,
-        },
-      ]),
-    ],
-  );
+      [
+        activeStep.id,
+        JSON.stringify([
+          {
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            durationMs: 90_000,
+            outcome: "TIMED_OUT",
+            failureClass: "TRANSIENT",
+            retryable: true,
+          },
+        ]),
+      ],
+    );
 
-  await expect(page.getByText("RETRYING", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Nonviolent communication critique", { exact: true }),
-  ).toBeVisible();
-  const retryStatus = page.locator(".reviewRetryStatus");
-  await expect(retryStatus).toContainText(
-    "The review provider was interrupted",
-  );
-  await expect(retryStatus).toContainText("attempt 1 of 3");
-  await expect(retryStatus.locator("time")).toHaveAttribute(
-    "datetime",
-    scheduledAt.toISOString(),
-  );
-  await expect(page.locator('[aria-live="polite"]')).toContainText(
-    "will retry automatically",
-  );
-  await expectNoCriticalAccessibilityViolations(page);
+    await expect(page.getByText("RETRYING", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Nonviolent communication critique", { exact: true }),
+    ).toBeVisible();
+    const retryStatus = page.locator(".reviewRetryStatus");
+    await expect(retryStatus).toContainText(
+      "The review provider was interrupted",
+    );
+    await expect(retryStatus).toContainText("attempt 1 of 3");
+    await expect(retryStatus.locator("time")).toHaveAttribute(
+      "datetime",
+      scheduledAt.toISOString(),
+    );
+    await expect(page.locator('[aria-live="polite"]')).toContainText(
+      "will retry automatically",
+    );
+    await expectNoCriticalAccessibilityViolations(page);
 
-  await database.query(
-    `UPDATE review_jobs
+    await database.query(
+      `UPDATE review_jobs
         SET state = 'FAILED',
             finished_at = now(),
             retry_not_before = NULL
       WHERE id = $1`,
-    [job.id],
-  );
-  await database.query(
-    `UPDATE review_steps
+      [job.id],
+    );
+    await database.query(
+      `UPDATE review_steps
         SET state = 'FAILED',
             finished_at = now()
       WHERE id = $1`,
-    [activeStep.id],
-  );
-  await expect(page.getByRole("button", { name: "Retry review" })).toBeVisible({
-    timeout: 10_000,
-  });
-  await expect(page.getByText("Review stopped safely.")).toBeVisible();
+      [activeStep.id],
+    );
+    await expect(
+      page.getByRole("button", { name: "Retry review" }),
+    ).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByText("Review stopped safely.")).toBeVisible();
 
-  const retryStreamConnected = page.waitForResponse(
-    (response) =>
-      response.url().endsWith(`/api/reviews/${job.id}/events`) &&
-      response.status() === 200,
-  );
-  await page.getByRole("button", { name: "Retry review" }).click();
-  await retryStreamConnected;
-  await expect(page.getByText("QUEUED", { exact: true })).toBeVisible();
+    const retryStreamConnected = page.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/api/reviews/${job.id}/events`) &&
+        response.status() === 200,
+    );
+    await page.getByRole("button", { name: "Retry review" }).click();
+    await retryStreamConnected;
+    await expect(page.getByText("QUEUED", { exact: true })).toBeVisible();
 
-  await database.query(
-    `UPDATE review_steps
+    await database.query(
+      `UPDATE review_steps
         SET state = 'SUCCEEDED',
             output_hash = COALESCE(output_hash, $2),
             finished_at = now()
       WHERE job_id = $1`,
-    [job.id, "c".repeat(64)],
-  );
-  const proposalSummary = `Browser live proposal ${Date.now()}`;
-  await database.query(
-    `INSERT INTO review_proposals (
+      [job.id, "c".repeat(64)],
+    );
+    const proposalSummary = `Browser live proposal ${Date.now()}`;
+    await database.query(
+      `INSERT INTO review_proposals (
        id, job_id, input_revision_id, summary, findings, proposal_hash
      ) VALUES ($1, $2, $3, $4, '[]'::jsonb, $5)`,
-    [
-      randomUUID(),
-      job.id,
-      job.input_revision_id,
-      proposalSummary,
-      randomUUID().replaceAll("-", "").repeat(2),
-    ],
-  );
-  await database.query(
-    `UPDATE review_jobs
+      [
+        randomUUID(),
+        job.id,
+        job.input_revision_id,
+        proposalSummary,
+        randomUUID().replaceAll("-", "").repeat(2),
+      ],
+    );
+    await database.query(
+      `UPDATE review_jobs
         SET state = 'SUCCEEDED',
             finished_at = now(),
             lane_owner = false,
@@ -1100,33 +1190,350 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
             claim_token = NULL,
             lease_expires_at = NULL
       WHERE id = $1`,
-    [job.id],
-  );
-  await expect(page.getByText("Review complete.", { exact: true })).toBeVisible(
-    {
+      [job.id],
+    );
+    await expect(page.locator(".workspacePage > .srOnly")).toContainText(
+      "Review complete.",
+      { timeout: 10_000 },
+    );
+    await expect(page.getByText("No suggested changes")).toBeVisible({
       timeout: 10_000,
-    },
-  );
-  await expect(page.getByText(proposalSummary)).toBeVisible({
-    timeout: 10_000,
-  });
+    });
+    await page.getByText("View overall review rationale").click();
+    await expect(page.getByText(proposalSummary)).toBeVisible();
 
-  const cancellationStream = page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/reviews/") &&
-      response.url().endsWith("/events") &&
-      response.status() === 200 &&
-      response.url() !== streamResponse.url(),
+    const cancellationStream = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/reviews/") &&
+        response.url().endsWith("/events") &&
+        response.status() === 200 &&
+        response.url() !== streamResponse.url(),
+    );
+    await page.getByRole("button", { name: "Run agent review" }).click();
+    await cancellationStream;
+    await page.getByRole("button", { name: "Cancel review" }).click();
+    await expect(
+      page.getByRole("button", { name: "Run agent review" }),
+    ).toBeVisible();
+    await expect(page.getByText("Review cancelled.")).toBeVisible();
+    await page.getByRole("button", { name: "Check in" }).click();
+    await expect(page).toHaveURL("http://localhost:3015/");
+  } finally {
+    await cleanupBrowserFixture(browserCheckout.id);
+  }
+});
+
+test("restored publication explains bounded live-verification evidence", async ({
+  page,
+}) => {
+  const candidate = await database.query<{ id: string; slug: string }>(
+    `SELECT situation.id, situation.slug
+       FROM situations situation
+      WHERE NOT EXISTS (
+              SELECT 1
+                FROM situation_checkouts checkout
+               WHERE checkout.situation_id = situation.id
+                 AND checkout.released_at IS NULL
+            )
+      ORDER BY situation.slug
+      LIMIT 1`,
   );
-  await page.getByRole("button", { name: "Run agent review" }).click();
-  await cancellationStream;
-  await page.getByRole("button", { name: "Cancel review" }).click();
-  await expect(
-    page.getByRole("button", { name: "Run agent review" }),
-  ).toBeVisible();
-  await expect(page.getByText("Review cancelled.")).toBeVisible();
-  await page.getByRole("button", { name: "Check in" }).click();
-  await expect(page).toHaveURL("http://localhost:3015/");
+  const situation = candidate.rows[0];
+  if (!situation)
+    throw new Error("Browser publication fixture situation is unavailable.");
+
+  await signIn(page);
+  await page
+    .locator("article.inventoryRow")
+    .filter({ hasText: situation.slug })
+    .getByRole("button", { name: "Check out" })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/situations/${situation.slug}$`, "u"),
+  );
+
+  const workspace = await database.query<{
+    checkout_id: string;
+    checkout_fence: string;
+    revision_id: string;
+    bundle_hash: string;
+  }>(
+    `SELECT checkout.id AS checkout_id,
+            checkout.fence::text AS checkout_fence,
+            revision.id AS revision_id,
+            revision.bundle_hash
+       FROM situation_checkouts checkout
+       JOIN drafts draft ON draft.id = checkout.draft_id
+       JOIN LATERAL (
+         SELECT candidate.*
+           FROM draft_revisions candidate
+          WHERE candidate.draft_id = draft.id
+          ORDER BY candidate.revision DESC
+          LIMIT 1
+       ) revision ON true
+      WHERE checkout.situation_id = $1
+        AND checkout.released_at IS NULL`,
+    [situation.id],
+  );
+  const active = workspace.rows[0];
+  if (!active) throw new Error("Browser publication checkout is unavailable.");
+
+  const jobId = randomUUID();
+  const recoveryJobId = randomUUID();
+  try {
+    await database.query("BEGIN");
+    try {
+      await database.query(
+        `INSERT INTO publication_jobs (
+         id, publication_id, situation_id, target_revision_id, checkout_id,
+         checkout_fence, source_kind, state, target_bundle_hash,
+         base_bundle_hash, observed_release_id, leadership_release_id,
+         leadership_manifest_hash, previous_release_id, started_at,
+         finished_at, failure_code
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, 'MANUAL', 'RESTORED', $7, $7, $8, $8,
+         $9, $10, now() - interval '1 minute', now(),
+         'RUNTIME_HEALTH_UNAVAILABLE_RESTORED'
+       )`,
+        [
+          jobId,
+          randomUUID(),
+          situation.id,
+          active.revision_id,
+          active.checkout_id,
+          active.checkout_fence,
+          active.bundle_hash,
+          randomUUID(),
+          "a".repeat(64),
+          randomUUID(),
+        ],
+      );
+      const events = [
+        ["REQUESTED", {}],
+        ["POINTER_OBSERVED", {}],
+        ["SNAPSHOT_BUILT", {}],
+        ["VALIDATED", {}],
+        ["POINTER_ADVANCED", {}],
+        [
+          "RESTORE_STARTED",
+          {
+            reason: "RUNTIME_HEALTH_UNAVAILABLE",
+            failureDetail: {
+              schemaVersion: "publication-failure-detail-v1",
+              phase: "RUNTIME_IDENTITY",
+              source: "LEADERSHIP_CONTENT_HEALTH",
+              reason: "HTTP_STATUS",
+              attempts: 24,
+              elapsedMs: 11_750,
+              lastHttpStatus: 503,
+              lastObservedReleaseId: null,
+              lastObservedManifestHash: null,
+            },
+            rawError: "private publisher diagnostic",
+          },
+        ],
+        ["RESTORED", {}],
+      ] as const;
+      for (const [index, [kind, payload]] of events.entries())
+        await database.query(
+          `INSERT INTO publication_events (id, job_id, sequence, kind, payload)
+         VALUES ($1, $2, $3, $4, $5::jsonb)`,
+          [randomUUID(), jobId, index + 1, kind, JSON.stringify(payload)],
+        );
+      await database.query("COMMIT");
+    } catch (error) {
+      await database.query("ROLLBACK");
+      throw error;
+    }
+
+    await page.goto(`/situations/${situation.slug}?tab=review`);
+    const outcome = page
+      .getByRole("alert")
+      .filter({ hasText: "Previous version restored" });
+    await expect(outcome).toContainText("Previous version restored");
+    await expect(outcome).toContainText(
+      "Leadership content health returned HTTP 503 after 24 checks",
+    );
+    await outcome.getByText("Why verification failed").click();
+    await expect(outcome).toContainText(
+      "The live content health check returned HTTP 503",
+    );
+    await expect(outcome).toContainText("11.8 seconds");
+    await expect(outcome).toContainText(
+      "No usable release identity was returned.",
+    );
+    await expect(outcome).not.toContainText("private publisher diagnostic");
+    await expectNoCriticalAccessibilityViolations(page);
+    await expectNoPageOverflow(page);
+
+    await database.query("BEGIN");
+    try {
+      await database.query(
+        `INSERT INTO publication_jobs (
+         id, publication_id, situation_id, target_revision_id, checkout_id,
+         checkout_fence, source_kind, state, target_bundle_hash,
+         base_bundle_hash, observed_release_id, leadership_release_id,
+         leadership_manifest_hash, previous_release_id, started_at,
+         failure_code, created_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, 'MANUAL', 'RECOVERY_REQUIRED', $7, $7,
+         $8, $8, $9, $10, now() - interval '1 minute',
+         'AUTOMATIC_RESTORATION_FAILED', clock_timestamp() + interval '1 second'
+       )`,
+        [
+          recoveryJobId,
+          randomUUID(),
+          situation.id,
+          active.revision_id,
+          active.checkout_id,
+          active.checkout_fence,
+          active.bundle_hash,
+          randomUUID(),
+          "b".repeat(64),
+          randomUUID(),
+        ],
+      );
+      const recoveryEvents = [
+        ["REQUESTED", {}],
+        ["POINTER_OBSERVED", {}],
+        ["SNAPSHOT_BUILT", {}],
+        ["VALIDATED", {}],
+        ["POINTER_ADVANCED", {}],
+        [
+          "RESTORE_STARTED",
+          {
+            failureDetail: {
+              schemaVersion: "publication-failure-detail-v1",
+              phase: "RUNTIME_IDENTITY",
+              source: "LEADERSHIP_CONTENT_HEALTH",
+              reason: "HTTP_STATUS",
+              attempts: 24,
+              elapsedMs: 11_750,
+              lastHttpStatus: 503,
+              lastObservedReleaseId: null,
+              lastObservedManifestHash: null,
+            },
+          },
+        ],
+        [
+          "RECOVERY_REQUIRED",
+          {
+            failureDetail: {
+              schemaVersion: "publication-failure-detail-v1",
+              phase: "RUNTIME_IDENTITY",
+              source: "LEADERSHIP_CONTENT_HEALTH",
+              reason: "HTTP_STATUS",
+              attempts: 24,
+              elapsedMs: 11_750,
+              lastHttpStatus: 503,
+              lastObservedReleaseId: null,
+              lastObservedManifestHash: null,
+            },
+            recoveryFailureDetail: {
+              schemaVersion: "publication-failure-detail-v1",
+              phase: "RUNTIME_IDENTITY",
+              source: "LEADERSHIP_CONTENT_HEALTH",
+              reason: "IDENTITY_MISMATCH",
+              attempts: 8,
+              elapsedMs: 4_250,
+              lastHttpStatus: 200,
+              lastObservedReleaseId: randomUUID(),
+              lastObservedManifestHash: "c".repeat(64),
+            },
+            rawError: "private recovery diagnostic",
+          },
+        ],
+      ] as const;
+      for (const [index, [kind, payload]] of recoveryEvents.entries())
+        await database.query(
+          `INSERT INTO publication_events (id, job_id, sequence, kind, payload)
+         VALUES ($1, $2, $3, $4, $5::jsonb)`,
+          [
+            randomUUID(),
+            recoveryJobId,
+            index + 1,
+            kind,
+            JSON.stringify(payload),
+          ],
+        );
+      await database.query("COMMIT");
+    } catch (error) {
+      await database.query("ROLLBACK");
+      throw error;
+    }
+
+    await page.reload();
+    const recoveryOutcome = page
+      .getByRole("alert")
+      .filter({ hasText: "Publication needs attention" });
+    await expect(recoveryOutcome).toContainText(
+      "Automatic recovery could not be verified",
+    );
+    await recoveryOutcome.getByText("Why live verification failed").click();
+    await recoveryOutcome.getByText("Why automatic recovery failed").click();
+    await expect(recoveryOutcome).toContainText(
+      "Leadership's current live release identity is not verified",
+    );
+    await expect(recoveryOutcome).toContainText(
+      "An administrator must restore and verify a known release",
+    );
+    await expect(recoveryOutcome).not.toContainText(
+      "The previous verified version is still live",
+    );
+    await expect(recoveryOutcome).not.toContainText(
+      "private recovery diagnostic",
+    );
+    await expect(page.getByRole("button", { name: "Check in" })).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Run agent review" }),
+    ).toBeDisabled();
+    await page.getByRole("tab", { name: "Edit" }).click();
+    await expect(page.getByLabel("Title")).toBeDisabled();
+    await expect(
+      page.getByText("Publication recovery required."),
+    ).toBeVisible();
+    await expectNoCriticalAccessibilityViolations(page);
+    await expectNoPageOverflow(page);
+
+    await page.goto("/");
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: "Studio publication recovery is required." }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("New situation", { exact: true }),
+    ).toHaveAttribute("aria-disabled", "true");
+    const availableCheckoutButtons = page.getByRole("button", {
+      name: "Check out",
+    });
+    expect(await availableCheckoutButtons.count()).toBeGreaterThan(0);
+    await expect(availableCheckoutButtons.first()).toBeDisabled();
+    await expectNoCriticalAccessibilityViolations(page);
+    await expectNoPageOverflow(page);
+
+    await page.goto(`/situations/${situation.slug}?tab=review`);
+
+    await database.query("BEGIN");
+    try {
+      await database.query("DELETE FROM publication_events WHERE job_id = $1", [
+        recoveryJobId,
+      ]);
+      await database.query("DELETE FROM publication_jobs WHERE id = $1", [
+        recoveryJobId,
+      ]);
+      await database.query("COMMIT");
+    } catch (error) {
+      await database.query("ROLLBACK");
+      throw error;
+    }
+    await page.reload();
+
+    await page.getByRole("button", { name: "Check in" }).click();
+    await expect(page).toHaveURL("http://localhost:3015/");
+  } finally {
+    await cleanupBrowserFixture(active.checkout_id, [jobId, recoveryJobId]);
+  }
 });
 
 test("throttles indistinguishable invalid logins", async ({

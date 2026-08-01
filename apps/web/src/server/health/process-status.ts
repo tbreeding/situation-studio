@@ -1,3 +1,5 @@
+import type { PublicationBackupStatus } from "@/server/health/publication-backup-policy";
+
 export type SafeProcessState =
   | "fresh"
   | "stale"
@@ -29,14 +31,14 @@ export function safeProcessState(input: {
 
 export function backupReadiness(input: {
   mode: string | undefined;
-  verifiedAtAgeSeconds: number | null;
+  publicationStatus: PublicationBackupStatus;
 }): { state: BackupReadinessState; degraded: boolean } {
   if (input.mode === "deferred") return { state: "deferred", degraded: false };
   if (input.mode && input.mode !== "required")
     return { state: "not-yet-verified", degraded: true };
-  if (input.verifiedAtAgeSeconds === null)
-    return { state: "not-yet-verified", degraded: true };
-  if (input.verifiedAtAgeSeconds > 26 * 60 * 60)
+  if (input.publicationStatus.ready)
+    return { state: "verified", degraded: false };
+  if (input.publicationStatus.state === "BACKUP_STALE")
     return { state: "stale", degraded: true };
-  return { state: "verified", degraded: false };
+  return { state: "not-yet-verified", degraded: true };
 }

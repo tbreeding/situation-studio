@@ -71,7 +71,10 @@ first incomplete stage for two bounded automatic retries. The persisted
 not-before timestamp survives worker restarts. A durable focused-lane marker
 keeps that review ahead of every later job during backoff. A terminal failure
 also retains the lane until the editor retries the review, stops it, or closes
-the checkout. Every attempt remains an immutable `AgentRun`, including bounded
+the checkout. Retrying a historical failed review atomically makes that exact
+retained job the lane owner; a different existing owner produces a conflict
+instead of silently queueing the selected retry. Every attempt remains an
+immutable `AgentRun`, including bounded
 per-provider duration, safe outcome, and failure-class metadata. System failure
 and retry audits contain bounded reason codes, stage and phase details, and no
 provider output or raw error text.
@@ -121,16 +124,58 @@ The publisher:
    Leadership target;
 2. rebases automatically when only unrelated content changed;
 3. persists a complete canonical candidate snapshot in Studio;
-4. inserts, validates, and promotes one complete immutable Leadership release
+4. validates the complete manifest and exact candidate bodies with the same
+   canonical content contract used by Leadership, before production changes;
+5. inserts, validates, and promotes one complete immutable Leadership release
    inside an expected-generation transaction;
-5. verifies the database and running Leadership application report the exact
-   release ID and manifest hash;
-6. records the Studio production occurrence and receipt, then checks in.
+6. verifies within a bounded convergence window that the database and running
+   Leadership application report the exact release ID and manifest hash, while
+   renewing the publication lease and publisher heartbeat; and
+7. records the Studio production occurrence and receipt, then checks in.
 
 Retries reconcile by Studio publication ID, Leadership release ID, manifest
 hash, and pointer generation. If runtime verification fails after promotion,
 the publisher restores and verifies the prior full release. Failed restoration
-sets the global `RECOVERY_REQUIRED` fence.
+sets the global `RECOVERY_REQUIRED` fence. While that fence exists, Studio
+allows inspection of saved work but rejects new situations, new checkouts, and
+editorial mutations across every workspace until publisher reconciliation
+verifies a known Leadership release.
+
+Before a reclaimed job starts another attempt, the publisher transactionally
+marks any preserved unfinished attempt `PUBLISHER_PROCESS_INTERRUPTED` and then
+creates the next numbered attempt. Connection setup is inside the same managed
+failure boundary. Once promotion has been attempted, any error before the
+candidate identity is authoritatively observed reloads the Studio job and
+enters `RECOVERY_REQUIRED`; a lost Leadership commit acknowledgement can never
+be downgraded to an ordinary terminal failure.
+
+Publication claims and recovery-fence transitions share one PostgreSQL advisory
+transaction lock, and only one unexpired publication owner can run globally.
+Every authoritative transition compares the attempt's claim token and expected
+state; a lease-lost worker exits without changing Studio or restoring
+Leadership. While the separate Leadership release transaction assembles and
+validates a candidate, a bounded heartbeat renews the Studio lease. The exact
+claim, checkout, and situation fences are rechecked inside that transaction
+immediately before pointer promotion and again immediately before commit; any
+replacement claim rolls the Leadership transaction back. Success commits the
+production occurrence, receipt, checkout and draft changes, terminal events,
+and attempt evidence in one Studio transaction.
+If that commit acknowledgement is lost, the publisher reloads the matching
+receipt and keeps the candidate live. Automatic restoration first enters the
+global recovery fence, so a crash after restoring Leadership is reconciled
+instead of re-promoting the failed candidate.
+
+Terminal events retain only a strictly bounded health source, reason, status,
+attempt count, elapsed time, and observed immutable identity for the
+editor-facing explanation. A `RECOVERY_REQUIRED` event keeps the original
+live-verification detail separate from any retained automatic-restoration
+failure detail and does not assert which release is live. Raw responses, URLs,
+errors, headers, and stacks are never projected.
+
+The read-only Leadership observer uses the same publication fence. It discards
+an external snapshot if a publication is active, requires recovery, or starts
+while that snapshot is being read, so an unverified or stale release cannot be
+recorded as Studio production history.
 
 Creation changes `UNPUBLISHED` drafts to a canonical public production bundle.
 Retirement retains content but marks the release-scoped typed situation
@@ -146,6 +191,57 @@ SHA-256 receipts, mode-0600 storage, and a disposable-database restore drill.
 Health surfaces expose liveness, database readiness, queue state, process
 heartbeats, backup age, and recovery fencing without exposing secrets or
 internal publication steps to editors.
+
+Publication requests recheck, inside their serializable transaction, that the
+latest verified backup is complete, encrypted, carries a receipt-bound
+attestation of checksum-verified off-site replication, is no more than 26 hours
+old, and is paired with a restore drill on that exact complete receipt that
+passed no more than 30 days ago and no earlier than the backup verification.
+Missing, stale, unlinked, or materially future evidence pauses only production
+submission and leaves saved editorial work available. Follow-up deployment independently requires the
+protected backup operator environment, exact schedules, mandatory off-host
+configuration, and the same evidence through a committed read-only database
+policy query before creating a release. That query remains compatible with a
+current release whose health response still reports the initial backup
+deferral, while preflight independently requires the candidate's web
+environment to switch to required mode. A genuine first-release preflight
+instead proves that the candidate environment still uses the explicitly
+approved deferred mode before any release is created. A one-time append-only transition can
+attest a legacy worker receipt only after rechecking the exact object on the
+currently configured off-site target; normal workers persist that binding
+directly.
+
+The backup queue first proves that the source and receipt URLs normalize to the
+same host, port, and `situation_studio` database, then uses one
+destination-scoped operating-system lock, marks abandoned `RUNNING` claims
+failed before selecting new work, bounds database, dump, encryption, and
+network commands, and records terminal state only through the exact claimed
+receipt and start-time fence. Follow-up deployment independently repeats that
+database-identity proof. Restore-drill recording uses the same receipt identity
+and current destination binding, rechecks both local and remote checksum and
+byte length, rejects an empty restored production dataset, and writes `PASSED`
+or `FAILED` only if those facts remain unchanged. For the deferred-release transition, the recorder may
+run from an approved candidate copy before cutover only when its bytes match a
+separately supplied SHA-256; it still invokes the restore script from the
+recorded immutable current release and reports both identities.
+
+A follow-up deployment first quiesces web and review intake, waits for all
+unfinished publication attempts to persist their terminal evidence, rejects a
+recovery fence, and stops the publisher. Its
+token-fenced atomic deployment lease serializes every remote mutation through
+verification or rollback and fails closed on an existing or incomplete lease.
+Before migration, one preclaimed receipt and append-only audit anchor bind the
+approved release and active-review projection hashes to a new synchronous,
+encrypted off-site backup. The exact artifact must decrypt and expose a valid
+PostgreSQL custom-format catalog, its receipt must be verified after the
+database-clock quiescence fence against the preflight-frozen destinations and
+encryption-key fingerprint, and both projections must remain unchanged across
+the dump. Its
+`active-review-state-continuity-v2` receipt contains matching before/after
+hashes for active checkout, draft, revision, and review state plus matching
+expected/actual hashes for queue-time normalization and focused-lane ownership.
+Cutover failure restores the exact previous immutable release and succeeds as a
+rollback only after both local live and ready checks pass.
 
 The schema and transition detail is in
 [checkpoint 1](checkpoints/01-contract-and-data-model.md). Production remains

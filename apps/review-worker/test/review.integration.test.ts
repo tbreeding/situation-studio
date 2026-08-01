@@ -1783,6 +1783,331 @@ describe("checkout fencing and the complete durable review DAG", () => {
     });
   });
 
+  it("focuses a selected historical failed review ahead of older queued work without replacing its history", async () => {
+    const waiting = await workflows.createSituation({
+      actorId: editorTwoId,
+      slug: "integration-review-selected-retry-waiting",
+      title: "Older work waiting behind a selected retry",
+    });
+    const waitingJob = await workflows.queueReview({
+      actorId: editorTwoId,
+      checkoutId: waiting.checkout.id,
+      fence: waiting.checkout.fence,
+    });
+    const selected = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-review-selected-retry",
+      title: "A historical failed review selected for retry",
+    });
+    const selectedJob = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: selected.checkout.id,
+      fence: selected.checkout.fence,
+    });
+    const failedStep = selectedJob.steps.find((step) => step.ordinal === 1);
+    if (!failedStep)
+      throw new Error("Selected retry fixture has no first step.");
+    const failedAt = new Date();
+    const waitingQueuedAt = new Date(failedAt.getTime() - 60_000);
+    const selectedQueuedAt = new Date(failedAt.getTime() - 30_000);
+    await database.reviewJob.update({
+      where: { id: waitingJob.id },
+      data: { queuedAt: waitingQueuedAt },
+    });
+    const retainedRun = await database.agentRun.create({
+      data: {
+        stepId: failedStep.id,
+        attempt: 1,
+        requestedProvider: "codex",
+        resolvedProvider: "codex",
+        requestedModel: "gpt-5.6-sol",
+        resolvedModel: "gpt-5.6-sol",
+        reasoningEffort: "high",
+        evidenceHash: "b".repeat(64),
+        failureClass: "PROVIDER_TRANSIENT",
+        retryable: true,
+        startedAt: new Date(failedAt.getTime() - 1_000),
+        finishedAt: failedAt,
+      },
+    });
+    await database.$transaction([
+      database.reviewStep.update({
+        where: { id: failedStep.id },
+        data: {
+          state: "FAILED",
+          startedAt: new Date(failedAt.getTime() - 1_000),
+          finishedAt: failedAt,
+        },
+      }),
+      database.reviewJob.update({
+        where: { id: selectedJob.id },
+        data: {
+          state: "FAILED",
+          queuedAt: selectedQueuedAt,
+          finishedAt: failedAt,
+          failureCode: "TRANSIENT",
+          laneOwner: false,
+        },
+      }),
+    ]);
+    const stepIdsBefore = [...selectedJob.steps]
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((step) => step.id);
+    const queuedAudit = await database.auditEvent.findFirstOrThrow({
+      where: {
+        action: "REVIEW_QUEUED",
+        subjectId: selectedJob.id,
+      },
+    });
+
+    const retried = await workflows.retryReview({
+      actorId: editorOneId,
+      jobId: selectedJob.id,
+    });
+
+    expect(retried).toMatchObject({
+      id: selectedJob.id,
+      state: "QUEUED",
+      laneOwner: true,
+      queuedAt: selectedQueuedAt,
+      finishedAt: null,
+      failureCode: null,
+    });
+    const preserved = await database.reviewJob.findUniqueOrThrow({
+      where: { id: selectedJob.id },
+      include: {
+        steps: {
+          orderBy: { ordinal: "asc" },
+          include: { runs: { orderBy: { attempt: "asc" } } },
+        },
+      },
+    });
+    expect(preserved.steps.map((step) => step.id)).toEqual(stepIdsBefore);
+    expect(preserved.steps[0]).toMatchObject({ state: "READY" });
+    expect(
+      preserved.steps.slice(1).every((step) => step.state === "PENDING"),
+    ).toBe(true);
+    expect(preserved.steps[0]?.runs).toEqual([retainedRun]);
+    expect(
+      await database.auditEvent.findUnique({ where: { id: queuedAudit.id } }),
+    ).toEqual(queuedAudit);
+    expect(
+      await database.auditEvent.count({
+        where: { action: "REVIEW_RETRIED", subjectId: selectedJob.id },
+      }),
+    ).toBe(1);
+
+    const selectedClaim = await claimNextReview(database);
+    expect(selectedClaim?.id).toBe(selectedJob.id);
+    await workflows.cancelReview({
+      actorId: editorOneId,
+      jobId: selectedJob.id,
+      reason: "Integration cleanup after selected retry proof",
+    });
+    const waitingClaim = await claimNextReview(database);
+    expect(waitingClaim?.id).toBe(waitingJob.id);
+    await workflows.cancelReview({
+      actorId: editorTwoId,
+      jobId: waitingJob.id,
+      reason: "Integration cleanup after waiting-order proof",
+    });
+  });
+
+  it("rejects a selected retry when another review owns the lane without mutating either review", async () => {
+    const focused = await workflows.createSituation({
+      actorId: editorTwoId,
+      slug: "integration-review-retry-lane-owner",
+      title: "A review already holding the focus lane",
+    });
+    const focusedJob = await workflows.queueReview({
+      actorId: editorTwoId,
+      checkoutId: focused.checkout.id,
+      fence: focused.checkout.fence,
+    });
+    await database.reviewJob.update({
+      where: { id: focusedJob.id },
+      data: { laneOwner: true },
+    });
+    const selected = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-review-retry-lane-conflict",
+      title: "A failed review selected during another focus",
+    });
+    const selectedJob = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: selected.checkout.id,
+      fence: selected.checkout.fence,
+    });
+    const failedStep = selectedJob.steps.find((step) => step.ordinal === 1);
+    if (!failedStep)
+      throw new Error("Lane-conflict fixture has no resumable first step.");
+    const failedAt = new Date();
+    await database.$transaction([
+      database.reviewStep.update({
+        where: { id: failedStep.id },
+        data: { state: "FAILED", finishedAt: failedAt },
+      }),
+      database.reviewJob.update({
+        where: { id: selectedJob.id },
+        data: {
+          state: "FAILED",
+          finishedAt: failedAt,
+          failureCode: "TRANSIENT",
+          laneOwner: false,
+        },
+      }),
+    ]);
+    const [focusedBefore, selectedBefore, retriedAuditsBefore] =
+      await Promise.all([
+        database.reviewJob.findUniqueOrThrow({
+          where: { id: focusedJob.id },
+          include: { steps: { orderBy: { ordinal: "asc" } } },
+        }),
+        database.reviewJob.findUniqueOrThrow({
+          where: { id: selectedJob.id },
+          include: { steps: { orderBy: { ordinal: "asc" } } },
+        }),
+        database.auditEvent.count({
+          where: { action: "REVIEW_RETRIED", subjectId: selectedJob.id },
+        }),
+      ]);
+
+    await expect(
+      workflows.retryReview({
+        actorId: editorOneId,
+        jobId: selectedJob.id,
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "REVIEW_LANE_BUSY",
+      message:
+        "Another review owns the focused review lane. Finish or stop it before retrying this review.",
+    });
+
+    const [focusedAfter, selectedAfter, retriedAuditsAfter] = await Promise.all(
+      [
+        database.reviewJob.findUniqueOrThrow({
+          where: { id: focusedJob.id },
+          include: { steps: { orderBy: { ordinal: "asc" } } },
+        }),
+        database.reviewJob.findUniqueOrThrow({
+          where: { id: selectedJob.id },
+          include: { steps: { orderBy: { ordinal: "asc" } } },
+        }),
+        database.auditEvent.count({
+          where: { action: "REVIEW_RETRIED", subjectId: selectedJob.id },
+        }),
+      ],
+    );
+    expect(focusedAfter).toEqual(focusedBefore);
+    expect(selectedAfter).toEqual(selectedBefore);
+    expect(retriedAuditsAfter).toBe(retriedAuditsBefore);
+
+    await workflows.cancelReview({
+      actorId: editorOneId,
+      jobId: selectedJob.id,
+      reason: "Integration cleanup after retry lane conflict",
+    });
+    await workflows.cancelReview({
+      actorId: editorTwoId,
+      jobId: focusedJob.id,
+      reason: "Integration cleanup after focused lane conflict",
+    });
+  });
+
+  it("rejects a stale request behind the unresolved focused review without hiding or mutating it", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-review-stale-request-behind-focus",
+      title: "A stale request behind the unresolved focused review",
+    });
+    const focusedJob = await workflows.queueReview({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    const firstStep = focusedJob.steps.find((step) => step.ordinal === 1);
+    if (!firstStep)
+      throw new Error("Stale-request fixture has no first review step.");
+    const failedAt = new Date();
+    await database.$transaction([
+      database.reviewStep.update({
+        where: { id: firstStep.id },
+        data: { state: "FAILED", finishedAt: failedAt },
+      }),
+      database.reviewJob.update({
+        where: { id: focusedJob.id },
+        data: {
+          state: "FAILED",
+          laneOwner: true,
+          finishedAt: failedAt,
+          failureCode: "APPLICATION",
+          failureReasonCode: "REVIEW_APPLICATION_FAILED",
+          failurePhase: "RUN_STAGE",
+          failureStageOrdinal: 1,
+          failureStageRole: firstStep.roleCode,
+        },
+      }),
+    ]);
+    const [jobCountBefore, auditCountBefore, focusedBefore] = await Promise.all(
+      [
+        database.reviewJob.count({
+          where: { checkoutId: created.checkout.id },
+        }),
+        database.auditEvent.count({
+          where: { action: "REVIEW_QUEUED" },
+        }),
+        database.reviewJob.findUniqueOrThrow({
+          where: { id: focusedJob.id },
+          include: { steps: { orderBy: { ordinal: "asc" } } },
+        }),
+      ],
+    );
+
+    await expect(
+      workflows.queueReview({
+        actorId: editorOneId,
+        checkoutId: created.checkout.id,
+        fence: created.checkout.fence,
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "REVIEW_FOCUSED_UNRESOLVED",
+      message:
+        "This checkout already has the focused review. Finish, retry, or stop it before starting another review.",
+    });
+
+    const [jobCountAfter, auditCountAfter, focusedAfter, workspace] =
+      await Promise.all([
+        database.reviewJob.count({
+          where: { checkoutId: created.checkout.id },
+        }),
+        database.auditEvent.count({
+          where: {
+            action: "REVIEW_QUEUED",
+            subjectType: "REVIEW_JOB",
+          },
+        }),
+        database.reviewJob.findUniqueOrThrow({
+          where: { id: focusedJob.id },
+          include: { steps: { orderBy: { ordinal: "asc" } } },
+        }),
+        workflows.workspaceForSlug(
+          "integration-review-stale-request-behind-focus",
+        ),
+      ]);
+    expect(jobCountAfter).toBe(jobCountBefore);
+    expect(focusedAfter).toEqual(focusedBefore);
+    expect(workspace?.reviewJobs[0]?.id).toBe(focusedJob.id);
+    expect(auditCountAfter).toBe(auditCountBefore);
+
+    await workflows.cancelReview({
+      actorId: editorOneId,
+      jobId: focusedJob.id,
+      reason: "Integration cleanup after stale request proof",
+    });
+  });
+
   it("keeps an explicitly non-retryable provider failure terminal", async () => {
     const created = await workflows.createSituation({
       actorId: editorOneId,

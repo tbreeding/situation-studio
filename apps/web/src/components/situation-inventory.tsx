@@ -29,10 +29,12 @@ export function SituationInventory({
   items,
   currentUserId,
   csrfToken,
+  globalRecoveryRequired,
 }: {
   items: InventoryItem[];
   currentUserId: string;
   csrfToken: string;
+  globalRecoveryRequired: boolean;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -117,6 +119,13 @@ export function SituationInventory({
           {error}
         </p>
       ) : null}
+      {globalRecoveryRequired ? (
+        <p className="inlineAlert" role="alert">
+          Studio publication recovery is required. You can inspect saved work,
+          but new checkouts and editorial changes stay locked until an
+          administrator verifies a known Leadership release.
+        </p>
+      ) : null}
       <div
         className="inventoryTable"
         role="region"
@@ -171,7 +180,7 @@ export function SituationInventory({
                   <button
                     className="secondaryButton"
                     type="button"
-                    disabled={pending}
+                    disabled={pending || globalRecoveryRequired}
                     onClick={() => checkout(item)}
                   >
                     Check out

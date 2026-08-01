@@ -24,7 +24,7 @@ export async function POST(
   } catch (error) {
     if (error instanceof WorkflowError)
       return NextResponse.json(
-        { error: error.message },
+        { error: error.message, code: error.code },
         { status: error.status },
       );
     throw error;

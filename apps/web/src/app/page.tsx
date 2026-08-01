@@ -14,22 +14,28 @@ export const dynamic = "force-dynamic";
 export default async function Home() {
   const session = await requireSession("/");
   await reconcileLeadershipRelease();
-  const situations = await database().situation.findMany({
-    orderBy: { title: "asc" },
-    include: {
-      checkouts: {
-        where: { releasedAt: null },
-        include: { holder: { select: { id: true, displayName: true } } },
+  const [situations, globalRecoveryRequired] = await Promise.all([
+    database().situation.findMany({
+      orderBy: { title: "asc" },
+      include: {
+        checkouts: {
+          where: { releasedAt: null },
+          include: { holder: { select: { id: true, displayName: true } } },
+        },
+        drafts: {
+          where: { state: "ACTIVE" },
+          orderBy: { updatedAt: "desc" },
+          take: 1,
+        },
+        reviewJobs: { orderBy: { queuedAt: "desc" }, take: 1 },
+        publicationJobs: { orderBy: { createdAt: "desc" }, take: 1 },
       },
-      drafts: {
-        where: { state: "ACTIVE" },
-        orderBy: { updatedAt: "desc" },
-        take: 1,
-      },
-      reviewJobs: { orderBy: { queuedAt: "desc" }, take: 1 },
-      publicationJobs: { orderBy: { createdAt: "desc" }, take: 1 },
-    },
-  });
+    }),
+    database().publicationJob.findFirst({
+      where: { state: "RECOVERY_REQUIRED" },
+      select: { id: true },
+    }),
+  ]);
   const inventory: InventoryItem[] = situations.map((situation) => {
     const checkout = situation.checkouts[0];
     const draft = situation.drafts[0];
@@ -92,9 +98,15 @@ export default async function Home() {
               submit.
             </p>
           </div>
-          <Link className="primaryButton" href="/situations/new">
-            New situation
-          </Link>
+          {globalRecoveryRequired ? (
+            <span className="primaryButton" aria-disabled="true">
+              New situation
+            </span>
+          ) : (
+            <Link className="primaryButton" href="/situations/new">
+              New situation
+            </Link>
+          )}
         </header>
         <div
           className="inventorySummary"
@@ -119,14 +131,20 @@ export default async function Home() {
             </strong>{" "}
             drafts waiting
           </span>
-          <span className="productionSignal">
-            <i aria-hidden="true" /> Leadership observation healthy
+          <span
+            className={`productionSignal${globalRecoveryRequired ? " productionSignalError" : ""}`}
+          >
+            <i aria-hidden="true" />
+            {globalRecoveryRequired
+              ? "Leadership recovery required"
+              : "Leadership observation healthy"}
           </span>
         </div>
         <SituationInventory
           items={inventory}
           currentUserId={session.userId}
           csrfToken={session.csrfToken}
+          globalRecoveryRequired={Boolean(globalRecoveryRequired)}
         />
       </main>
     </AppShell>

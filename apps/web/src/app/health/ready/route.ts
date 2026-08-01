@@ -4,6 +4,7 @@ import {
   backupReadiness,
   safeProcessState,
 } from "@/server/health/process-status";
+import { publicationBackupStatus } from "@/server/health/publication-backup-policy";
 import { requireCompatibleLeadershipRuntime } from "@/server/leadership-compatibility";
 
 export const dynamic = "force-dynamic";
@@ -23,22 +24,38 @@ export async function GET() {
         database().backupReceipt.findFirst({
           where: {
             state: "VERIFIED",
-            verifiedAt: { not: null },
           },
-          orderBy: [{ verifiedAt: "desc" }, { createdAt: "desc" }],
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           select: {
+            destinationId: true,
             encrypted: true,
+            objectKey: true,
+            checksum: true,
+            byteLength: true,
             verifiedAt: true,
           },
         }),
         database().backupReceipt.findFirst({
           where: {
             state: "VERIFIED",
-            restoreDrillAt: { not: null },
-            restoreDrillResult: { not: null },
+            OR: [
+              { restoreDrillAt: { not: null } },
+              { restoreDrillResult: { not: null } },
+            ],
           },
-          orderBy: [{ restoreDrillAt: "desc" }, { createdAt: "desc" }],
+          orderBy: [
+            { restoreDrillAt: { sort: "desc", nulls: "first" } },
+            { createdAt: "desc" },
+            { id: "desc" },
+          ],
           select: {
+            destinationId: true,
+            encrypted: true,
+            objectKey: true,
+            checksum: true,
+            byteLength: true,
+            verifiedAt: true,
+            createdAt: true,
             restoreDrillAt: true,
             restoreDrillResult: true,
           },
@@ -67,9 +84,14 @@ export async function GET() {
     });
     const backupAge = ageSeconds(backup?.verifiedAt);
     const restoreDrillAge = ageSeconds(restoreDrillReceipt?.restoreDrillAt);
+    const backupPolicy = publicationBackupStatus({
+      latestVerifiedBackup: backup,
+      latestRestoreDrill: restoreDrillReceipt,
+      now: new Date(now),
+    });
     const backupStatus = backupReadiness({
       mode: process.env.SITUATION_STUDIO_BACKUP_READINESS_MODE,
-      verifiedAtAgeSeconds: backupAge,
+      publicationStatus: backupPolicy,
     });
     const degraded =
       recoveryRequired > 0 ||
@@ -101,6 +123,8 @@ export async function GET() {
         publisher: { recoveryRequired },
         backup: {
           state: backupStatus.state,
+          publicationReady: backupPolicy.ready,
+          evidenceState: backupPolicy.state,
           ageSeconds: backupAge,
           encrypted: backup?.encrypted ?? null,
           restoreDrill:

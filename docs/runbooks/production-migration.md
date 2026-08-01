@@ -26,6 +26,9 @@ configuration. Set `SITUATION_STUDIO_BACKUP_READINESS_MODE=deferred` only for
 this launch. The readiness response must report `backup.state = "deferred"`;
 do not create a synthetic receipt. No content publication is authorized, and
 backup configuration becomes a hard gate again before the first publication.
+That exception remains valid only for a genuine first release with no current
+Studio pointer. It is not accepted by any follow-up deployment or by the
+publication workflow.
 
 ## Read-only preflight
 
@@ -44,6 +47,15 @@ worker never receive Leadership publisher or backup credentials, and the
 publisher never receives login, session, CSRF, throttle, or review-provider
 secrets.
 
+Provision the backup operator's noninteractive PATH with the reviewed Node
+runtime, PostgreSQL client tools compatible with PostgreSQL 16 (`psql`,
+`pg_dump`, and `pg_restore`), GnuPG, OpenSSH/SCP, `flock`, GNU `timeout`, and
+`shasum`. Import the explicitly approved encryption recipient into that user's
+GPG home and make its corresponding decryption key available there for the
+restore drill; do not copy an administrator keyring. Follow-up preflight checks
+each command and both recipient capabilities as that isolated user before it
+accepts backup evidence.
+
 The review user has a dedicated home directory for subscription CLI state but
 no interactive login shell. Run `ops/install-review-clis.sh` as that user to
 install exactly Codex CLI `0.145.0` and Claude Code `2.1.218` under
@@ -61,10 +73,20 @@ once per minute. It claims one `QUEUED` receipt with `SKIP LOCKED`, streams
 `pg_dump` directly into GPG recipient encryption, verifies the final
 destination checksum, replicates the encrypted object to the approved off-RP1
 destination with a second checksum verification, and only then marks the
-receipt `VERIFIED`. `SITUATION_STUDIO_BACKUP_REQUIRE_OFFSITE=true` is mandatory
-in production. Failed commands mark the claimed receipt `FAILED` with a safe
-code. A scheduler should also insert a nightly `QUEUED` receipt; successful
-publications, restorations, and retirements already enqueue their own receipts.
+receipt `VERIFIED`. The worker replaces the queue label with an
+`offsite-verified:<sha256>` destination attestation derived from the verified
+off-site object location; local-only receipts remain explicitly `local-only`
+and cannot authorize publication. `STUDIO_BACKUP_REQUIRE_OFFSITE=true` is
+mandatory in production. Failed commands mark the claimed receipt `FAILED`
+with a safe code. A scheduler should also insert a nightly `QUEUED` receipt;
+successful publications, restorations, and retirements already enqueue their
+own receipts.
+The worker refuses to inspect or claim the queue unless
+`STUDIO_BACKUP_DATABASE_URL` and `STUDIO_BACKUP_QUEUE_DATABASE_URL` normalize
+to the same PostgreSQL hostname, port, and `situation_studio` database. The two
+URLs may use different least-privilege users, but they must not identify
+different servers or databases. Follow-up deployment preflight applies the
+same candidate-owned check before accepting any receipt.
 Use an off-host encrypted destination with independently approved retention.
 Never place the database URL or GPG private-key material in command arguments.
 
@@ -80,6 +102,53 @@ The scheduler entries expose only reviewed paths. The launcher verifies
 environment-file mode and ownership and clears the inherited environment; do
 not replace the paths with literal credentials.
 
+The initial deployed worker verifies and copies off-site objects but predates
+the receipt-bound destination marker. For the first follow-up only, let that
+exact current worker finish one recent backup, then run the exact approved
+`ops/attest-legacy-offsite-backup.sh` as the backup user with `backup.env`
+loaded. The script accepts only the two historical queue labels, recomputes the
+approved remote object's checksum and byte length, and appends an idempotent
+attestation receipt that preserves the original backup verification time. Save
+its JSON output with the approval packet. This is a controlled evidence
+transition, not a synthetic backup and not permission to edit an existing
+receipt. Run and record the restore drill against that exact object. All later
+receipts are written with the marker directly by the current queue worker.
+
+The queue worker also holds a destination-scoped `flock`, uses bounded dump,
+encryption, database, SSH, and copy operations, and converts an abandoned
+`RUNNING` claim to an explicit safe failure before claiming more work. Signals
+and command failures run the same receipt/start-time-fenced failure path; a
+success is accepted only when exactly one unchanged claim becomes `VERIFIED`.
+Do not run a second ad-hoc worker around this lock or manually rewrite a
+receipt.
+
+Run `ops/record-restore-drill.sh <receipt-uuid>` as the backup user for the
+exact newly verified or legacy-attested receipt. Supply the absolute `current`
+release link as `SITUATION_STUDIO_RELEASE`, the protected `backup.env` path as
+`SITUATION_STUDIO_PROCESS_ENV_FILE`, and the separately computed SHA-256 of the
+exact approved candidate recorder as
+`SITUATION_STUDIO_APPROVED_RESTORE_RECORDER_SHA256`. This digest is mandatory
+because the initial deferred release does not contain the new recorder: a
+regular candidate copy may run before deployment, but the script verifies its
+own bytes at start and again before recording success, and invokes only the
+restore script from the immutable current release. Recompute and reapprove the
+digest after any candidate edit.
+
+The recorder re-reads the protected backup environment, proves the receipt is
+complete and bound to the currently configured target, rechecks local and
+off-site checksum and byte length, and invokes the bounded restore drill
+against the configured empty `situation_studio_restore_drill_*` database. It
+records `PASSED` or `FAILED` only while the receipt's verified facts remain
+unchanged. Publication and deployment accept a passed drill only for that
+complete receipt, no earlier than its verification or creation, no more than
+30 days old, and not materially in the future. Save its JSON output—which
+includes the receipt ID, recorder digest, and current restore-script release
+commit—with the approval packet, then discard or recreate the disposable drill
+database before another run.
+The drill also fails unless the restored database contains migrations,
+situations, production versions, and content blobs; an empty schema or empty
+production dataset is never valid restore evidence.
+
 ## Ordered procedure after separate approval
 
 1. Re-read repository cleanliness, host identity, current service and database
@@ -88,11 +157,24 @@ not replace the paths with literal credentials.
 2. Create the approved service users, home/release/shared/backup directories,
    and mode-restricted per-process environment files. Install and authenticate
    the two pinned subscription CLIs under the dedicated review user and run
-   structured Codex and no-tools Claude smokes.
+   structured Codex and no-tools Claude smokes. Before any follow-up release,
+   set `SITUATION_STUDIO_BACKUP_READINESS_MODE=required` in `web.env`; the
+   launcher rejects the historical deferred mode for the candidate.
 3. Run `deploy.sh` with `SITUATION_STUDIO_PREFLIGHT_ONLY=1` and the exact
-   approved commit, host, origin, and host header. This proves the service
-   users, exact authenticated CLI versions, mode-restricted environment files,
-   disk, memory, and process manager boundary without creating a release.
+   approved commit, host, origin, and host header. This proves the application
+   service users, exact authenticated CLI versions, mode-restricted application
+   environment files, disk, memory, and process-manager boundary without
+   creating a release. On every follow-up release it also proves the backup
+   user and environment, exact schedules, current encrypted off-host backup,
+   and passed restore-drill evidence through the committed read-only database
+   policy that matches the publication guard. This direct proof intentionally
+   does not depend on candidate-only health-response fields, so it can safely
+   transition the initially deferred release. A genuine first release has no
+   current service from which to prove that evidence; `first-deploy-deferred`
+   skips only that impossible current-release check, while the publication gate
+   remains locked. Before any release directory is created, the candidate-owned
+   verifier requires `web.env` to be exactly `deferred` for a genuine first
+   release or exactly `required` for every follow-up.
 4. Record the explicit initial-launch backup deferral. Do not create a
    synthetic receipt or represent that a production backup exists.
 5. Re-read and record the pre-migration official pointer, manifest, artifact
@@ -131,14 +213,69 @@ no-store`. Unknown hosts receive 404, so this also proves the protected
 The immutable Studio release root is
 `/home/admin/projects/situation-studio/releases/<UTC release ID>`, with
 `/home/admin/projects/situation-studio/current` as the atomic pointer.
-For subsequent releases, `deploy.sh` applies pending additive Studio migrations
-before process cutover by temporarily enabling login for the schema owner with
-the protected `STUDIO_OWNER_MIGRATION_PASSWORD`. The helper restores the owner
-to `NOLOGIN` on success or failure, reapplies the reviewed runtime grants, and
-verifies the new columns and review-worker audit insert privilege. A failed
-application-health check rolls the processes back to the previous release;
-additive database migrations remain forward-only and must stay compatible with
-that release.
+For subsequent releases, `deploy.sh` installs and builds the immutable release,
+then stops web intake and review execution. Before stopping the publisher it
+waits until every publication attempt has a non-null finish time—even when its
+job already has a terminal state—and until no requested or active publication
+remains; it refuses cutover if recovery is required. This preserves terminal
+failure and recovery evidence before process shutdown.
+
+The launcher holds one atomic, random-token deployment lease at
+`shared/.deployment-lease` from the first production-host mutation through
+local and public verification or rollback. The deployment and shared roots
+must be owned by the deployment operator and must not be group- or
+world-writable. Every release, migration, pointer, process, rollback, and lease
+cleanup mutation rechecks the same token. An existing lease—including one that
+appears stale—blocks a second deployment and is never removed based on age.
+Immediately before stateful cutover, the launcher marks that lease unsafe to
+release. A signal, lost SSH acknowledgement, ambiguous remote failure, or
+unverified rollback deliberately leaves the lease in place and directs the
+operator to the recovery procedure below; the local launcher never races a
+possibly still-running remote cutover with a competing rollback. Lease release
+becomes safe again only after the candidate passes every applicable gate or the
+exact previous release is synchronously restored and locally verified.
+
+With Studio quiesced, the launcher captures a content-body-free core projection
+of active checkouts, draft resume anchors, revisions and artifact references,
+review jobs, steps, runs, proposals, candidates, and proposal decisions. It also
+derives the lane migration's expected normalized queue times from the earliest
+`REVIEW_QUEUED` audits, falling back to the stored queue time, and derives the
+expected focused owner from the pre-migration running jobs. After migration it
+hashes the same core projection and the actual queue times/lane owner. Cutover
+continues only when the core before/after hashes and expected/actual lane hashes
+both match, at which point the release records an
+`active-review-state-continuity-v2` receipt. Content bodies are not included in
+the receipt.
+
+On every follow-up deployment, after all three application processes are
+quiesced and before migration, the launcher creates one exact preclaimed backup
+receipt and an append-only `DEPLOYMENT_BACKUP_ANCHORED` audit event containing
+the approved commit, release ID, database-clock quiescence time, and both review
+projection hashes. The candidate worker synchronously creates a
+receipt-suffixed encrypted off-site backup, then decrypts that exact local
+artifact and has `pg_restore` read its custom-format catalog under timeouts.
+Cutover requires the exact start-time-fenced receipt to become `VERIFIED` after
+quiescence, match the preflight-frozen local/off-site destinations and resolved
+encryption-key fingerprint, and retain unchanged review and lane projections
+across the dump. The release records `.pre-migration-backup.json` only after all
+checks pass. The ordinary 26-hour publication policy remains in force; this is
+an additional, stricter deployment-only checkpoint. A genuine first release
+has no prior Studio state and therefore has no post-quiescence checkpoint.
+The isolated deployment-backup wrapper compares the frozen configuration hash
+before it invokes the preclaimed worker, so configuration drift cannot mint a
+new `VERIFIED` receipt before cutover aborts; the exact destination-ID check is
+repeated afterward as defense in depth.
+
+The schema helper temporarily enables login for the owner with the protected
+`STUDIO_OWNER_MIGRATION_PASSWORD`, restores the owner to `NOLOGIN` on success
+or failure, reapplies the reviewed runtime grants, and verifies the required
+schema and privileges. A migration, continuity, cutover, local-health, or
+required public-gate failure restores the exact previous immutable release and
+restarts all three processes from it. Rollback is successful only after the
+`current` symlink resolves to that release and both local `/health/live` and
+`/health/ready` pass; failure to prove either condition is a critical deployment
+failure. Additive database migrations remain forward-only and must stay
+compatible with the previous release.
 
 When the approved host is reached through a private address that is not the
 local SSH alias, set `SITUATION_STUDIO_DEPLOY_USER` explicitly. The launcher
@@ -149,6 +286,88 @@ and records that commit in the immutable release's `.release-commit` marker.
 root-owned PM2 daemon while each application process runs under its dedicated
 non-login operating-system user.
 
+## Deployment lease recovery
+
+Treat an abandoned `.deployment-lease` as a failed deployment requiring human
+reconciliation, not as a stale lock to expire. First perform only read-only
+checks on both the operator machine and production host:
+
+1. Confirm no local `deploy.sh` process, supervising terminal, CI job, or SSH
+   client for the deployment is still active. On the host, confirm no matching
+   deployment shell or SSH session remains. Reconcile with the named operator;
+   a network interruption may leave a live remote command after the local
+   client disappears. Use `pgrep -af 'deploy\.sh|ssh .*rpi1'` on the operator
+   machine and
+   `ps -eo pid,ppid,user,lstart,args | grep -E '[d]eploy\.sh|[b]ash -s --|[s]shd:.*@'`
+   plus `who` on the host; explain every match rather than assuming it is stale.
+2. Inspect the exact deployment and shared directories plus lease entries with
+   `stat -c '%U %a %n' /home/admin/projects/situation-studio{,/shared,/shared/.deployment-lease,/shared/.deployment-lease/token,/shared/.deployment-lease/metadata}`
+   and
+   `find /home/admin/projects/situation-studio/shared/.deployment-lease -mindepth 1 -maxdepth 1 -printf '%f\n'`.
+   The first two directories and lease must belong to the deployment operator;
+   the parents must not be group/world writable, the lease must be mode 0700,
+   and a complete lease has only mode-0600 regular `token` and `metadata`
+   files. Do not follow or replace links.
+3. Read `metadata` and correlate its commit, UTC release ID, start time, and
+   operator with the abandoned approved run. Inspect the exact `current`
+   symlink, its `.release-commit`, the candidate release marker and continuity
+   receipts, `sudo pm2 status`, and local live/ready responses. Decide whether
+   the previous or candidate release is actually running and healthy before
+   touching the lease. The read-only host commands are:
+
+   ```bash
+   sed -n '1,20p' /home/admin/projects/situation-studio/shared/.deployment-lease/metadata
+   readlink -f /home/admin/projects/situation-studio/current
+   cat /home/admin/projects/situation-studio/current/.release-commit
+   sudo pm2 status
+   curl -fsS http://127.0.0.1:3015/health/live
+   curl -fsS http://127.0.0.1:3015/health/ready
+   ```
+
+4. Obtain explicit human authorization naming the lease metadata, observed
+   token, current release, and desired recovery. Never infer authorization from
+   elapsed time, and never use recursive removal.
+5. For a complete lease, capture the 64-hex token, re-read and compare it
+   immediately before removal, then use the approved
+   `ops/manage-studio-deployment-lease.sh release <studio-root> <token>` helper.
+   The helper refuses a changed token, unsafe parent, unexpected entry, owner,
+   or mode. Do not copy a token from another run. Substitute the exact release
+   ID already reconciled from `metadata` and run:
+
+   ```bash
+   lease_token="$(cat /home/admin/projects/situation-studio/shared/.deployment-lease/token)"
+   [[ "${lease_token}" =~ ^[a-f0-9]{64}$ ]]
+   test "$(cat /home/admin/projects/situation-studio/shared/.deployment-lease/token)" = "${lease_token}"
+   /bin/bash /home/admin/projects/situation-studio/releases/<metadata-release-id>/ops/manage-studio-deployment-lease.sh release /home/admin/projects/situation-studio "${lease_token}"
+   ```
+
+   If that candidate helper was not extracted, transfer only a separately
+   checksum-verified copy from the exact approved commit and invoke it the same
+   way; do not fall back to an older `current` helper.
+
+6. If `mkdir` succeeded but token or metadata creation did not, the helper
+   reports an **incomplete or unsafe lease** and cannot token-release it. After
+   the same reconciliation and a separate explicit authorization naming this
+   incomplete acquisition, remove only verified regular `token` and/or
+   `metadata` files that actually exist, then `rmdir` the exact
+   `.deployment-lease` directory. Stop if any other entry, link, owner, or mode
+   is present. After the `find` output proves there are no other entries, use:
+
+   ```bash
+   incomplete_lease=/home/admin/projects/situation-studio/shared/.deployment-lease
+   for lease_entry in token metadata; do
+     if [[ -e "${incomplete_lease}/${lease_entry}" ]]; then
+       test -f "${incomplete_lease}/${lease_entry}"
+       test ! -L "${incomplete_lease}/${lease_entry}"
+       rm -- "${incomplete_lease}/${lease_entry}"
+     fi
+   done
+   rmdir -- "${incomplete_lease}"
+   ```
+
+After either recovery path, re-run the full read-only deployment preflight. Do
+not resume halfway through the abandoned deployment.
+
 ## Abort and rollback
 
 Before pointer promotion, abort by stopping the Studio processes and leaving
@@ -157,4 +376,5 @@ the official release and should not be rolled back in place. After a Studio
 publication pointer advance, use the generation-fenced automatic restoration
 boundary and verify both database and running Leadership identities. If that
 cannot be verified, leave `RECOVERY_REQUIRED` fenced and escalate; do not
-attempt an ad hoc edit.
+attempt an ad hoc edit. While fenced, editors may inspect saved work but Studio
+must reject new situations, new checkouts, and editorial mutations globally.

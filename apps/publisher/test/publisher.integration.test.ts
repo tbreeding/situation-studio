@@ -12,12 +12,14 @@ import {
   type DatabaseClient,
 } from "@situation-studio/db";
 import {
+  captureLeadershipReleaseReconciliationGuard,
   LeadershipCapabilityError,
   leadershipCapabilitySchemaVersion,
   leadershipTypedParityPredicate,
   importLeadershipRelease,
   readLeadershipReleaseHistory,
   readOfficialLeadershipRelease,
+  reconcileOfficialLeadershipRelease,
   requiredContentContractIdentity,
   requiredLeadershipFeatures,
   requiredSituationContractIdentity,
@@ -34,8 +36,10 @@ import {
   processPublicationJob,
   PublisherCandidateContractError,
   PublisherCrashInjectionError,
+  PublisherRuntimeHealthError,
   PublisherVerificationError,
   reconcilePublicationRecovery,
+  runtimeIdentityFromHealth,
   type PublisherBoundary,
 } from "../src/index";
 
@@ -168,6 +172,37 @@ describe("durable cross-database publisher", () => {
   let studio: DatabaseClient;
   let workflows: typeof import("@/server/workflows/situations");
   let lastPublisherError: unknown;
+  const publicationBackupReceiptId = "00000000-0000-4000-8000-000000000026";
+
+  async function putPublicationBackupEvidence(verifiedAt = new Date()) {
+    return studio.backupReceipt.upsert({
+      where: { id: publicationBackupReceiptId },
+      create: {
+        id: publicationBackupReceiptId,
+        state: "VERIFIED",
+        destinationId: `offsite-verified:${"e".repeat(64)}`,
+        objectKey: "situation-studio-integration.dump.gpg",
+        checksum: "b".repeat(64),
+        encrypted: true,
+        byteLength: 4_096n,
+        verifiedAt,
+        restoreDrillAt: new Date(),
+        restoreDrillResult: "PASSED",
+      },
+      update: {
+        state: "VERIFIED",
+        destinationId: `offsite-verified:${"e".repeat(64)}`,
+        objectKey: "situation-studio-integration.dump.gpg",
+        checksum: "b".repeat(64),
+        encrypted: true,
+        byteLength: 4_096n,
+        verifiedAt,
+        failureCode: null,
+        restoreDrillAt: new Date(),
+        restoreDrillResult: "PASSED",
+      },
+    });
+  }
 
   beforeAll(async () => {
     [studioContainer, leadershipContainer] = await Promise.all([
@@ -255,13 +290,20 @@ describe("durable cross-database publisher", () => {
     process.env.LEADERSHIP_RUNTIME_CAPABILITIES_URL = `data:application/json,${encodeURIComponent(
       JSON.stringify(compatibleCapabilities()),
     )}`;
+    await putPublicationBackupEvidence();
     workflows = await import("@/server/workflows/situations");
     expect(user.id).toMatch(/^[a-f0-9-]{36}$/u);
   });
 
   afterAll(async () => {
-    await studio?.$disconnect();
-    await Promise.all([studioContainer?.stop(), leadershipContainer?.stop()]);
+    try {
+      await studio?.backupReceipt.deleteMany({
+        where: { id: publicationBackupReceiptId },
+      });
+      await studio?.$disconnect();
+    } finally {
+      await Promise.all([studioContainer?.stop(), leadershipContainer?.stop()]);
+    }
   });
 
   async function requestChangedPublication(label: string) {
@@ -310,6 +352,7 @@ describe("durable cross-database publisher", () => {
   async function processAgainstCurrentRuntime(
     jobId: string,
     afterBoundary?: (boundary: PublisherBoundary) => Promise<void>,
+    claimToken?: string,
   ) {
     return processPublicationJob(
       {
@@ -329,6 +372,7 @@ describe("durable cross-database publisher", () => {
         afterBoundary,
       },
       jobId,
+      claimToken,
     );
   }
 
@@ -567,6 +611,113 @@ describe("durable cross-database publisher", () => {
         checkoutId: checkout.id,
         fence: checkout.fence,
       });
+    }
+  });
+
+  it("creates no publication evidence without a recent verified backup and passed restore drill", async () => {
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    const situation = await studio.situation.findUniqueOrThrow({
+      where: { slug: "defensive-about-feedback" },
+    });
+    const checkout = await workflows.checkoutSituation({
+      situationId: situation.id,
+      actorId: user.id,
+    });
+    let publicationJobId: string | null = null;
+    try {
+      await studio.backupReceipt.deleteMany({ where: { state: "VERIFIED" } });
+      const publicationCount = await studio.publicationJob.count();
+      const auditCount = await studio.auditEvent.count();
+
+      await expect(
+        workflows.requestPublication({
+          actorId: user.id,
+          checkoutId: checkout.id,
+          fence: checkout.fence,
+        }),
+      ).rejects.toMatchObject({
+        status: 503,
+        code: "PUBLICATION_BACKUP_NOT_READY",
+        message:
+          "Production submission is paused until a recent encrypted backup is verified.",
+      });
+      await expect(studio.publicationJob.count()).resolves.toBe(
+        publicationCount,
+      );
+      await expect(studio.auditEvent.count()).resolves.toBe(auditCount);
+
+      await putPublicationBackupEvidence(
+        new Date(Date.now() - (26 * 60 * 60 + 1) * 1_000),
+      );
+      await expect(
+        workflows.requestPublication({
+          actorId: user.id,
+          checkoutId: checkout.id,
+          fence: checkout.fence,
+        }),
+      ).rejects.toMatchObject({
+        status: 503,
+        code: "PUBLICATION_BACKUP_NOT_READY",
+        message:
+          "Production submission is paused because the latest verified encrypted backup is more than 26 hours old.",
+      });
+      await expect(studio.publicationJob.count()).resolves.toBe(
+        publicationCount,
+      );
+      await expect(studio.auditEvent.count()).resolves.toBe(auditCount);
+
+      await putPublicationBackupEvidence();
+      const job = await workflows.requestPublication({
+        actorId: user.id,
+        checkoutId: checkout.id,
+        fence: checkout.fence,
+      });
+      publicationJobId = job.id;
+      expect(job.state).toBe("REQUESTED");
+      await expect(studio.publicationJob.count()).resolves.toBe(
+        publicationCount + 1,
+      );
+      await expect(studio.auditEvent.count()).resolves.toBe(auditCount + 1);
+      await expect(
+        studio.auditEvent.findFirst({
+          where: {
+            action: "PUBLICATION_REQUESTED",
+            subjectId: job.id,
+          },
+        }),
+      ).resolves.not.toBeNull();
+      await processAgainstCurrentRuntime(job.id);
+      await expect(
+        studio.publicationJob.findUniqueOrThrow({
+          where: { id: job.id },
+          select: { state: true },
+        }),
+      ).resolves.toEqual({ state: "SUCCEEDED" });
+    } finally {
+      await putPublicationBackupEvidence();
+      if (publicationJobId) {
+        const pendingPublication = await studio.publicationJob.findFirst({
+          where: {
+            id: publicationJobId,
+            state: {
+              in: ["REQUESTED", "ASSEMBLING", "PROMOTING", "VERIFYING"],
+            },
+          },
+        });
+        if (pendingPublication)
+          await processAgainstCurrentRuntime(pendingPublication.id);
+      }
+      const activeCheckout = await studio.situationCheckout.findFirst({
+        where: { id: checkout.id, releasedAt: null },
+      });
+      if (activeCheckout)
+        await workflows.checkInSituation({
+          actorId: user.id,
+          checkoutId: checkout.id,
+          fence: checkout.fence,
+        });
     }
   });
 
@@ -1207,8 +1358,10 @@ describe("durable cross-database publisher", () => {
 
   it.each<PublisherBoundary>([
     "CANDIDATE_PERSISTED",
+    "LEADERSHIP_PROMOTION_COMMITTED",
     "LEADERSHIP_PROMOTED",
     "RUNTIME_VERIFIED",
+    "STUDIO_SUCCESS_FINALIZING",
   ])("reconciles an injected process crash after %s", async (boundary) => {
     const before = await leadershipIdentity(leadershipUrl);
     const job = await requestChangedPublication(
@@ -1236,7 +1389,16 @@ describe("durable cross-database publisher", () => {
     expect(persisted.attempts).toHaveLength(2);
     expect(
       persisted.attempts.filter((attempt) => attempt.finishedAt),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
+    expect(
+      persisted.attempts.find((attempt) => attempt.attempt === 1),
+    ).toMatchObject({
+      failureCode: "PUBLISHER_PROCESS_INTERRUPTED",
+      reconciledState: {
+        outcome: "INTERRUPTED_BEFORE_RETRY",
+        supersededByAttempt: 2,
+      },
+    });
     expect(persisted.receipt).toMatchObject({
       expectedReleaseId: after.releaseId,
       expectedManifestHash: after.manifestHash,
@@ -1256,6 +1418,781 @@ describe("durable cross-database publisher", () => {
     } finally {
       await client.end();
     }
+  });
+
+  it("yields a lease-lost attempt without mutating the replacement owner", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const job = await requestChangedPublication(
+      "Publisher claim handoff checkpoint.",
+    );
+    const firstClaim = await claimPublicationJob(studio);
+    expect(firstClaim?.id).toBe(job.id);
+    await expect(claimPublicationJob(studio)).resolves.toBeNull();
+    let replacementClaim: Awaited<ReturnType<typeof claimPublicationJob>> =
+      null;
+    await expect(
+      processAgainstCurrentRuntime(
+        job.id,
+        async (boundary) => {
+          if (boundary !== "CANDIDATE_PERSISTED" || replacementClaim) return;
+          const expired = await studio.publicationJob.updateMany({
+            where: { id: job.id, claimToken: firstClaim?.claimToken },
+            data: { leaseExpiresAt: new Date(0) },
+          });
+          expect(expired.count).toBe(1);
+          replacementClaim = await claimPublicationJob(studio);
+          expect(replacementClaim?.id).toBe(job.id);
+        },
+        firstClaim?.claimToken,
+      ),
+    ).rejects.toThrow(/lease|authority/iu);
+
+    await expect(leadershipIdentity(leadershipUrl)).resolves.toEqual(prior);
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        include: { attempts: { orderBy: { attempt: "asc" } } },
+      }),
+    ).resolves.toMatchObject({
+      state: "PROMOTING",
+      claimToken: replacementClaim?.claimToken,
+      finishedAt: null,
+      failureCode: null,
+      attempts: [expect.objectContaining({ finishedAt: null })],
+    });
+
+    await processAgainstCurrentRuntime(
+      job.id,
+      undefined,
+      replacementClaim?.claimToken,
+    );
+    const completed = await studio.publicationJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: { attempts: { orderBy: { attempt: "asc" } } },
+    });
+    expect(completed.state).toBe("SUCCEEDED");
+    expect(completed.attempts).toHaveLength(2);
+    expect(completed.attempts[0]).toMatchObject({
+      finishedAt: expect.any(Date),
+      failureCode: "PUBLISHER_PROCESS_INTERRUPTED",
+    });
+    expect(completed.attempts[1]).toMatchObject({
+      finishedAt: expect.any(Date),
+      failureCode: null,
+    });
+  });
+
+  it.each<PublisherBoundary>([
+    "LEADERSHIP_PROMOTION_READY",
+    "LEADERSHIP_PROMOTION_COMMIT_READY",
+  ])(
+    "rolls back Leadership promotion when the claim is replaced at %s",
+    async (claimLossBoundary) => {
+      const prior = await leadershipIdentity(leadershipUrl);
+      const job = await requestChangedPublication(
+        "Publisher final promotion fence checkpoint.",
+      );
+      const firstClaim = await claimPublicationJob(studio);
+      expect(firstClaim?.id).toBe(job.id);
+      let replacementClaim: Awaited<ReturnType<typeof claimPublicationJob>> =
+        null;
+
+      await expect(
+        processPublicationJob(
+          {
+            studio,
+            leadershipPublisherUrl,
+            ...runtimeContractDependencies(),
+            publicationLeaseHeartbeatMs: 120_000,
+            runtimeIdentity: async () => {
+              const identity = await leadershipIdentity(leadershipUrl);
+              return {
+                releaseId: identity.releaseId,
+                manifestHash: identity.manifestHash,
+              };
+            },
+            afterBoundary: async (boundary) => {
+              if (boundary !== claimLossBoundary || replacementClaim) return;
+              const expired = await studio.publicationJob.updateMany({
+                where: { id: job.id, claimToken: firstClaim?.claimToken },
+                data: { leaseExpiresAt: new Date(0) },
+              });
+              expect(expired.count).toBe(1);
+              replacementClaim = await claimPublicationJob(studio);
+              expect(replacementClaim?.id).toBe(job.id);
+            },
+          },
+          job.id,
+          firstClaim?.claimToken,
+        ),
+      ).rejects.toThrow(/lease|authority/iu);
+
+      await expect(leadershipIdentity(leadershipUrl)).resolves.toEqual(prior);
+      const leadership = new Client({ connectionString: leadershipUrl });
+      await leadership.connect();
+      try {
+        const releases = await leadership.query<{ count: string }>(
+          `
+          SELECT count(*)::text
+            FROM content_releases
+           WHERE studio_publication_id = $1
+        `,
+          [job.publicationId],
+        );
+        expect(releases.rows[0]?.count).toBe("0");
+      } finally {
+        await leadership.end();
+      }
+      await expect(
+        studio.publicationJob.findUniqueOrThrow({
+          where: { id: job.id },
+          include: { attempts: { orderBy: { attempt: "asc" } } },
+        }),
+      ).resolves.toMatchObject({
+        state: "PROMOTING",
+        claimToken: replacementClaim?.claimToken,
+        finishedAt: null,
+        failureCode: null,
+        attempts: [expect.objectContaining({ finishedAt: null })],
+      });
+
+      await processAgainstCurrentRuntime(
+        job.id,
+        undefined,
+        replacementClaim?.claimToken,
+      );
+      await expect(
+        studio.publicationJob.findUniqueOrThrow({
+          where: { id: job.id },
+          include: { attempts: { orderBy: { attempt: "asc" } } },
+        }),
+      ).resolves.toMatchObject({
+        state: "SUCCEEDED",
+        attempts: [
+          expect.objectContaining({
+            finishedAt: expect.any(Date),
+            failureCode: "PUBLISHER_PROCESS_INTERRUPTED",
+          }),
+          expect.objectContaining({
+            finishedAt: expect.any(Date),
+            failureCode: null,
+          }),
+        ],
+      });
+    },
+  );
+
+  it("finishes a promoted-state retry as needs-refresh when its base changed", async () => {
+    const job = await requestChangedPublication(
+      "Publisher persisted-candidate conflict checkpoint.",
+    );
+    let injected = false;
+    await expect(
+      processAgainstCurrentRuntime(job.id, async (boundary) => {
+        if (!injected && boundary === "CANDIDATE_PERSISTED") {
+          injected = true;
+          throw new PublisherCrashInjectionError(boundary);
+        }
+      }),
+    ).rejects.toThrow(PublisherCrashInjectionError);
+    expect(injected).toBe(true);
+    await studio.publicationJob.update({
+      where: { id: job.id },
+      data: { baseBundleHash: "f".repeat(64) },
+    });
+
+    await processAgainstCurrentRuntime(job.id);
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        include: { attempts: { orderBy: { attempt: "asc" } } },
+      }),
+    ).resolves.toMatchObject({
+      state: "NEEDS_REFRESH",
+      failureCode: "TARGET_CHANGED",
+      attempts: [
+        expect.objectContaining({
+          finishedAt: expect.any(Date),
+          failureCode: "PUBLISHER_PROCESS_INTERRUPTED",
+        }),
+        expect.objectContaining({
+          finishedAt: expect.any(Date),
+          failureCode: null,
+          reconciledState: { outcome: "NEEDS_REFRESH" },
+        }),
+      ],
+    });
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    await workflows.checkInSituation({
+      actorId: user.id,
+      checkoutId: job.checkoutId,
+      fence: job.checkoutFence,
+    });
+  });
+
+  it("rolls back all Studio success state before restoring Leadership", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const situationBefore = await studio.situation.findUniqueOrThrow({
+      where: { slug: "repeatedly-misses-deadlines" },
+      select: {
+        id: true,
+        productionReleaseId: true,
+        productionBundleHash: true,
+        productionAt: true,
+      },
+    });
+    const versionsBefore = await studio.productionSituationVersion.count({
+      where: { situationId: situationBefore.id },
+    });
+    const job = await requestChangedPublication(
+      "Publisher atomic Studio finalization checkpoint.",
+    );
+    let injected = false;
+    await processAgainstCurrentRuntime(job.id, async (boundary) => {
+      if (!injected && boundary === "STUDIO_SUCCESS_FINALIZING") {
+        injected = true;
+        throw new Error("Simulated Studio finalization write failure.");
+      }
+    });
+    expect(injected).toBe(true);
+
+    await expect(leadershipIdentity(leadershipUrl)).resolves.toMatchObject({
+      releaseId: prior.releaseId,
+      manifestHash: prior.manifestHash,
+      generation: prior.generation + 2n,
+    });
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        include: { attempts: true, receipt: true },
+      }),
+    ).resolves.toMatchObject({
+      state: "RESTORED",
+      receipt: null,
+      attempts: [
+        expect.objectContaining({
+          finishedAt: expect.any(Date),
+          failureCode: "POST_PROMOTION_VERIFICATION",
+        }),
+      ],
+    });
+    await expect(
+      studio.situation.findUniqueOrThrow({
+        where: { id: situationBefore.id },
+        select: {
+          id: true,
+          productionReleaseId: true,
+          productionBundleHash: true,
+          productionAt: true,
+        },
+      }),
+    ).resolves.toEqual(situationBefore);
+    await expect(
+      studio.productionSituationVersion.count({
+        where: { situationId: situationBefore.id },
+      }),
+    ).resolves.toBe(versionsBefore);
+    await expect(
+      studio.situationCheckout.count({
+        where: { id: job.checkoutId, releasedAt: null },
+      }),
+    ).resolves.toBe(1);
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    await workflows.checkInSituation({
+      actorId: user.id,
+      checkoutId: job.checkoutId,
+      fence: job.checkoutFence,
+    });
+  });
+
+  it("keeps an atomically committed Studio success when acknowledgement is lost", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const job = await requestChangedPublication(
+      "Publisher ambiguous Studio commit checkpoint.",
+    );
+    lastPublisherError = undefined;
+    let injected = false;
+    await processAgainstCurrentRuntime(job.id, async (boundary) => {
+      if (!injected && boundary === "STUDIO_SUCCESS_COMMITTED") {
+        injected = true;
+        throw new Error("Simulated lost Studio commit acknowledgement.");
+      }
+    });
+    expect(injected).toBe(true);
+    expect(lastPublisherError).toBeUndefined();
+
+    const current = await leadershipIdentity(leadershipUrl);
+    expect(current.generation).toBe(prior.generation + 1n);
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        include: { attempts: true, receipt: true },
+      }),
+    ).resolves.toMatchObject({
+      state: "SUCCEEDED",
+      leadershipReleaseId: current.releaseId,
+      receipt: expect.objectContaining({
+        expectedReleaseId: current.releaseId,
+        expectedManifestHash: current.manifestHash,
+      }),
+      attempts: [
+        expect.objectContaining({
+          finishedAt: expect.any(Date),
+          failureCode: null,
+          reconciledState: expect.objectContaining({ outcome: "SUCCEEDED" }),
+        }),
+      ],
+    });
+  });
+
+  it("fails closed when Leadership commits promotion before Studio can observe it", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const job = await requestChangedPublication(
+      "Publisher ambiguous promotion-commit checkpoint.",
+    );
+    let injected = false;
+    await processAgainstCurrentRuntime(job.id, async (boundary) => {
+      if (!injected && boundary === "LEADERSHIP_PROMOTION_COMMITTED") {
+        injected = true;
+        throw new Error(
+          "Simulated connection loss after promotion commit acknowledgement.",
+        );
+      }
+    });
+    expect(injected).toBe(true);
+
+    const promoted = await leadershipIdentity(leadershipUrl);
+    const persisted = await studio.publicationJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: {
+        attempts: { orderBy: { attempt: "asc" } },
+        candidateSnapshot: true,
+        receipt: true,
+      },
+    });
+    const candidate = persisted.candidateSnapshot;
+    expect(candidate).not.toBeNull();
+    expect(promoted).toMatchObject({
+      releaseId: candidate?.releaseId,
+      manifestHash: candidate?.manifestHash,
+      generation: prior.generation + 1n,
+    });
+    expect(persisted).toMatchObject({
+      state: "RECOVERY_REQUIRED",
+      failureCode: "PROMOTION_STATE_UNVERIFIED",
+      receipt: null,
+    });
+    expect(persisted.attempts).toHaveLength(1);
+    expect(persisted.attempts[0]).toMatchObject({
+      finishedAt: expect.any(Date),
+      failureCode: "PROMOTION_STATE_UNVERIFIED",
+      reconciledState: expect.objectContaining({
+        failureCode: "PUBLICATION_FAILED",
+        promoted: false,
+        promotionAttempted: true,
+        authoritativeJobReloaded: true,
+        promotionStateUnverified: true,
+      }),
+    });
+    await expect(claimPublicationJob(studio)).resolves.toBeNull();
+
+    if (!candidate)
+      throw new Error("Ambiguous promotion fixture has no candidate snapshot.");
+    const leadership = new Client({
+      connectionString: leadershipPublisherUrl,
+    });
+    await leadership.connect();
+    try {
+      await leadership.query(
+        `
+          SELECT *
+            FROM leadership_studio_restore_release(
+              $1, $2, $3, $4, $5::varchar(240)
+            )
+        `,
+        [
+          candidate.releaseId,
+          candidate.parentReleaseId,
+          job.publicationId,
+          promoted.generation.toString(),
+          "Restore ambiguous promotion integration fixture",
+        ],
+      );
+    } finally {
+      await leadership.end();
+    }
+    await expect(
+      reconcilePublicationRecovery({
+        studio,
+        leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
+        runtimeVerification: { attempts: 1, intervalMs: 0 },
+        runtimeIdentity: async () => {
+          const identity = await leadershipIdentity(leadershipUrl);
+          return {
+            releaseId: identity.releaseId,
+            manifestHash: identity.manifestHash,
+          };
+        },
+      }),
+    ).resolves.toBe(1);
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    await workflows.checkInSituation({
+      actorId: user.id,
+      checkoutId: job.checkoutId,
+      fence: job.checkoutFence,
+    });
+  });
+
+  it("finishes the attempt when the Leadership database connection fails", async () => {
+    const job = await requestChangedPublication(
+      "Publisher connection failure checkpoint.",
+    );
+    let observedFailure: unknown;
+    await processPublicationJob(
+      {
+        studio,
+        leadershipPublisherUrl:
+          "postgresql://publisher" +
+          ":publisher@127.0.0.1:1/leadership?connect_timeout=1",
+        ...runtimeContractDependencies(),
+        runtimeIdentity: async () => {
+          throw new Error("Runtime identity must not run without Leadership.");
+        },
+        onFailure: (error) => {
+          observedFailure = error;
+        },
+      },
+      job.id,
+    );
+    expect(observedFailure).toBeInstanceOf(Error);
+    await expect(
+      studio.publicationJob.findUniqueOrThrow({
+        where: { id: job.id },
+        include: { attempts: true },
+      }),
+    ).resolves.toMatchObject({
+      state: "FAILED",
+      failureCode: "PUBLICATION_FAILED",
+      attempts: [
+        expect.objectContaining({
+          finishedAt: expect.any(Date),
+          failureCode: "PUBLICATION_FAILED",
+        }),
+      ],
+    });
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    await workflows.checkInSituation({
+      actorId: user.id,
+      checkoutId: job.checkoutId,
+      fence: job.checkoutFence,
+    });
+  });
+
+  it("keeps a promoted candidate out of Studio while recovery is required", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const job = await requestChangedPublication(
+      "Leadership reconciliation recovery-fence checkpoint.",
+    );
+    let injected = false;
+    await expect(
+      processAgainstCurrentRuntime(job.id, async (boundary) => {
+        if (!injected && boundary === "LEADERSHIP_PROMOTED") {
+          injected = true;
+          throw new PublisherCrashInjectionError(boundary);
+        }
+      }),
+    ).rejects.toThrow(PublisherCrashInjectionError);
+    expect(injected).toBe(true);
+
+    const promoted = await leadershipIdentity(leadershipUrl);
+    const persisted = await studio.publicationJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: { candidateSnapshot: true },
+    });
+    const candidate = persisted.candidateSnapshot;
+    expect(candidate).not.toBeNull();
+    expect(promoted.releaseId).toBe(candidate?.releaseId);
+    expect(promoted.releaseId).not.toBe(prior.releaseId);
+
+    await studio.$transaction(async (transaction) => {
+      await transaction.publicationJob.update({
+        where: { id: job.id },
+        data: {
+          state: "RECOVERY_REQUIRED",
+          failureCode: "PROMOTION_STATE_UNVERIFIED",
+          claimToken: null,
+          leaseExpiresAt: null,
+        },
+      });
+      await transaction.publicationAttempt.updateMany({
+        where: { jobId: job.id, finishedAt: null },
+        data: {
+          finishedAt: new Date(),
+          failureCode: "PROMOTION_STATE_UNVERIFIED",
+        },
+      });
+    });
+
+    try {
+      const externalCandidate =
+        await readOfficialLeadershipRelease(leadershipReaderUrl);
+      expect(externalCandidate.identity).toMatchObject({
+        releaseId: candidate?.releaseId,
+        manifestHash: candidate?.manifestHash,
+        state: "OFFICIAL",
+      });
+      const [observationsBefore, versionsBefore, pointersBefore, cursorBefore] =
+        await Promise.all([
+          studio.leadershipReleaseObservation.findMany({
+            orderBy: { id: "asc" },
+            select: { id: true, releaseId: true },
+          }),
+          studio.productionSituationVersion.findMany({
+            orderBy: { id: "asc" },
+            select: { id: true, observationId: true, situationId: true },
+          }),
+          studio.situation.findMany({
+            orderBy: { id: "asc" },
+            select: {
+              id: true,
+              title: true,
+              visibility: true,
+              productionBundleHash: true,
+              productionReleaseId: true,
+              productionAt: true,
+            },
+          }),
+          studio.leadershipSyncCursor.findUnique({
+            where: { id: "official" },
+          }),
+        ]);
+
+      const recoveryGuard =
+        await captureLeadershipReleaseReconciliationGuard(studio);
+      expect(recoveryGuard).toMatchObject({
+        state: "BLOCKED",
+        publicationJobId: job.id,
+        publicationState: "RECOVERY_REQUIRED",
+      });
+      await expect(
+        reconcileOfficialLeadershipRelease(
+          studio,
+          externalCandidate,
+          recoveryGuard.guard,
+        ),
+      ).resolves.toMatchObject({
+        state: "BLOCKED",
+        publicationJobId: job.id,
+        publicationState: "RECOVERY_REQUIRED",
+      });
+      const { reconcileLeadershipRelease } =
+        await import("@/server/leadership-sync");
+      await expect(
+        reconcileLeadershipRelease({ force: true }),
+      ).resolves.toBeUndefined();
+
+      await expect(leadershipIdentity(leadershipUrl)).resolves.toEqual(
+        promoted,
+      );
+      await expect(
+        studio.leadershipReleaseObservation.findMany({
+          orderBy: { id: "asc" },
+          select: { id: true, releaseId: true },
+        }),
+      ).resolves.toEqual(observationsBefore);
+      await expect(
+        studio.productionSituationVersion.findMany({
+          orderBy: { id: "asc" },
+          select: { id: true, observationId: true, situationId: true },
+        }),
+      ).resolves.toEqual(versionsBefore);
+      await expect(
+        studio.situation.findMany({
+          orderBy: { id: "asc" },
+          select: {
+            id: true,
+            title: true,
+            visibility: true,
+            productionBundleHash: true,
+            productionReleaseId: true,
+            productionAt: true,
+          },
+        }),
+      ).resolves.toEqual(pointersBefore);
+      await expect(
+        studio.leadershipSyncCursor.findUnique({
+          where: { id: "official" },
+        }),
+      ).resolves.toEqual(cursorBefore);
+      await expect(
+        studio.leadershipReleaseObservation.findUnique({
+          where: { releaseId: promoted.releaseId },
+        }),
+      ).resolves.toBeNull();
+    } finally {
+      if (!candidate)
+        throw new Error("Promoted test publication has no candidate snapshot.");
+      const leadership = new Client({
+        connectionString: leadershipPublisherUrl,
+      });
+      await leadership.connect();
+      try {
+        const current = await leadershipIdentity(leadershipUrl);
+        if (current.releaseId === candidate.releaseId)
+          await leadership.query(
+            `
+              SELECT *
+                FROM leadership_studio_restore_release(
+                  $1, $2, $3, $4, $5::varchar(240)
+                )
+            `,
+            [
+              candidate.releaseId,
+              candidate.parentReleaseId,
+              job.publicationId,
+              current.generation.toString(),
+              "Restore reconciliation recovery-fence integration fixture",
+            ],
+          );
+      } finally {
+        await leadership.end();
+      }
+      await expect(
+        reconcilePublicationRecovery({
+          studio,
+          leadershipPublisherUrl,
+          ...runtimeContractDependencies(),
+          runtimeVerification: { attempts: 1, intervalMs: 0 },
+          runtimeIdentity: async () => {
+            const identity = await leadershipIdentity(leadershipUrl);
+            return {
+              releaseId: identity.releaseId,
+              manifestHash: identity.manifestHash,
+            };
+          },
+        }),
+      ).resolves.toBe(1);
+      const user = await studio.user.findUniqueOrThrow({
+        where: { username: "publisher-test-editor" },
+      });
+      await workflows.checkInSituation({
+        actorId: user.id,
+        checkoutId: job.checkoutId,
+        fence: job.checkoutFence,
+      });
+    }
+  });
+
+  it("rejects a Leadership snapshot when the publication set changed during its read", async () => {
+    const staleGuard =
+      await captureLeadershipReleaseReconciliationGuard(studio);
+    expect(staleGuard.state).toBe("READY");
+    const staleSnapshot =
+      await readOfficialLeadershipRelease(leadershipReaderUrl);
+
+    const job = await requestChangedPublication(
+      "Leadership reconciliation stale-guard checkpoint.",
+    );
+    await processAgainstCurrentRuntime(job.id);
+    const currentIdentity = await leadershipIdentity(leadershipUrl);
+    expect(currentIdentity.releaseId).not.toBe(
+      staleSnapshot.identity.releaseId,
+    );
+
+    const currentGuard =
+      await captureLeadershipReleaseReconciliationGuard(studio);
+    expect(currentGuard.state).toBe("READY");
+    const currentSnapshot =
+      await readOfficialLeadershipRelease(leadershipReaderUrl);
+    await expect(
+      reconcileOfficialLeadershipRelease(
+        studio,
+        currentSnapshot,
+        currentGuard.guard,
+      ),
+    ).resolves.toMatchObject({ state: "IMPORTED" });
+
+    const [observationsBefore, versionsBefore, pointersBefore, cursorBefore] =
+      await Promise.all([
+        studio.leadershipReleaseObservation.findMany({
+          orderBy: { id: "asc" },
+          select: { id: true, releaseId: true },
+        }),
+        studio.productionSituationVersion.findMany({
+          orderBy: { id: "asc" },
+          select: { id: true, observationId: true, situationId: true },
+        }),
+        studio.situation.findMany({
+          orderBy: { id: "asc" },
+          select: {
+            id: true,
+            title: true,
+            visibility: true,
+            productionBundleHash: true,
+            productionReleaseId: true,
+            productionAt: true,
+          },
+        }),
+        studio.leadershipSyncCursor.findUnique({
+          where: { id: "official" },
+        }),
+      ]);
+    expect(cursorBefore?.lastReleaseId).toBe(currentIdentity.releaseId);
+
+    await expect(
+      reconcileOfficialLeadershipRelease(
+        studio,
+        staleSnapshot,
+        staleGuard.guard,
+      ),
+    ).resolves.toEqual({
+      state: "STALE_GUARD",
+      guardedPublicationJobCount: staleGuard.guard.publicationJobCount,
+      observedPublicationJobCount: currentGuard.guard.publicationJobCount,
+    });
+
+    await expect(leadershipIdentity(leadershipUrl)).resolves.toEqual(
+      currentIdentity,
+    );
+    await expect(
+      studio.leadershipReleaseObservation.findMany({
+        orderBy: { id: "asc" },
+        select: { id: true, releaseId: true },
+      }),
+    ).resolves.toEqual(observationsBefore);
+    await expect(
+      studio.productionSituationVersion.findMany({
+        orderBy: { id: "asc" },
+        select: { id: true, observationId: true, situationId: true },
+      }),
+    ).resolves.toEqual(versionsBefore);
+    await expect(
+      studio.situation.findMany({
+        orderBy: { id: "asc" },
+        select: {
+          id: true,
+          title: true,
+          visibility: true,
+          productionBundleHash: true,
+          productionReleaseId: true,
+          productionAt: true,
+        },
+      }),
+    ).resolves.toEqual(pointersBefore);
+    await expect(
+      studio.leadershipSyncCursor.findUnique({
+        where: { id: "official" },
+      }),
+    ).resolves.toEqual(cursorBefore);
   });
 
   it("restores a promoted crash retry when capabilities become unavailable", async () => {
@@ -1438,6 +2375,59 @@ describe("durable cross-database publisher", () => {
     );
   });
 
+  it("classifies content-health status, payload, and timeout failures without raw details", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () =>
+        new Response("sensitive runtime body", {
+          status: 503,
+        })) as typeof fetch;
+      let statusError: unknown;
+      try {
+        await runtimeIdentityFromHealth("https://runtime.invalid/health");
+      } catch (error) {
+        statusError = error;
+      }
+      expect(statusError).toMatchObject({
+        name: "PublisherRuntimeHealthError",
+        reason: "HTTP_STATUS",
+        httpStatus: 503,
+      });
+      expect(String(statusError)).not.toMatch(/sensitive|runtime\.invalid/iu);
+
+      globalThis.fetch = (async () =>
+        new Response('{"not":"an identity"}', {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch;
+      await expect(
+        runtimeIdentityFromHealth("https://runtime.invalid/health"),
+      ).rejects.toMatchObject({
+        reason: "INVALID_RESPONSE",
+        httpStatus: null,
+      });
+
+      globalThis.fetch = ((_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) return;
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        })) as typeof fetch;
+      await expect(
+        runtimeIdentityFromHealth("https://runtime.invalid/health", {
+          timeoutMs: 5,
+        }),
+      ).rejects.toMatchObject({
+        reason: "UNAVAILABLE",
+        httpStatus: null,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("restores and verifies the prior official release after runtime verification fails", async () => {
     const prior = await leadershipIdentity(leadershipUrl);
     const job = await requestChangedPublication(
@@ -1476,7 +2466,108 @@ describe("durable cross-database publisher", () => {
       where: { id: job.id },
     });
     expect(persisted.state).toBe("RESTORED");
-    expect(persisted.failureCode).toBe("VERIFICATION_FAILED_RESTORED");
+    expect(persisted.failureCode).toBe("RUNTIME_IDENTITY_MISMATCH_RESTORED");
+    await expect(
+      studio.situationCheckout.count({
+        where: { id: job.checkoutId, releasedAt: null },
+      }),
+    ).resolves.toBe(1);
+    const user = await studio.user.findUniqueOrThrow({
+      where: { username: "publisher-test-editor" },
+    });
+    await workflows.checkInSituation({
+      actorId: user.id,
+      checkoutId: job.checkoutId,
+      fence: job.checkoutFence,
+    });
+  });
+
+  it("persists safe HTTP health diagnostics and renews the lease for restoration probes", async () => {
+    const prior = await leadershipIdentity(leadershipUrl);
+    const job = await requestChangedPublication(
+      "Publisher typed runtime-health failure checkpoint.",
+    );
+    const claim = await claimPublicationJob(studio);
+    expect(claim?.id).toBe(job.id);
+    let healthCalls = 0;
+    const probeLeases: Date[] = [];
+    await processPublicationJob(
+      {
+        studio,
+        leadershipPublisherUrl,
+        ...runtimeContractDependencies(),
+        runtimeVerification: { attempts: 1, intervalMs: 0 },
+        runtimeIdentity: async () => {
+          healthCalls += 1;
+          if (healthCalls === 1)
+            throw new PublisherRuntimeHealthError("HTTP_STATUS", 503);
+          const identity = await leadershipIdentity(leadershipUrl);
+          return {
+            releaseId: identity.releaseId,
+            manifestHash: identity.manifestHash,
+          };
+        },
+        onRuntimeIdentityProbe: async () => {
+          const current = await studio.publicationJob.findUniqueOrThrow({
+            where: { id: job.id },
+            select: { claimToken: true, leaseExpiresAt: true },
+          });
+          expect(current.claimToken).toBe(claim?.claimToken);
+          expect(current.leaseExpiresAt).not.toBeNull();
+          probeLeases.push(current.leaseExpiresAt!);
+        },
+      },
+      job.id,
+      claim?.claimToken,
+    );
+
+    expect(healthCalls).toBe(2);
+    expect(probeLeases).toHaveLength(2);
+    for (const lease of probeLeases)
+      expect(lease.getTime()).toBeGreaterThan(Date.now() + 170_000);
+
+    const persisted = await studio.publicationJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: {
+        attempts: { orderBy: { attempt: "desc" }, take: 1 },
+        events: { orderBy: { sequence: "asc" } },
+        receipt: true,
+      },
+    });
+    expect(persisted).toMatchObject({
+      state: "RESTORED",
+      failureCode: "RUNTIME_HEALTH_UNAVAILABLE_RESTORED",
+      receipt: null,
+    });
+    const failureDetail = {
+      schemaVersion: "publication-failure-detail-v1",
+      phase: "RUNTIME_IDENTITY",
+      source: "LEADERSHIP_CONTENT_HEALTH",
+      reason: "HTTP_STATUS",
+      attempts: 1,
+      lastHttpStatus: 503,
+      lastObservedReleaseId: null,
+      lastObservedManifestHash: null,
+    };
+    expect(persisted.events).toContainEqual(
+      expect.objectContaining({
+        kind: "RESTORE_STARTED",
+        payload: expect.objectContaining({
+          failureDetail: expect.objectContaining(failureDetail),
+        }),
+      }),
+    );
+    expect(persisted.attempts[0]?.reconciledState).toEqual(
+      expect.objectContaining({
+        failureCode: "RUNTIME_HEALTH_UNAVAILABLE",
+        promoted: true,
+        promotionStateUnverified: false,
+        failureDetail: expect.objectContaining(failureDetail),
+      }),
+    );
+    expect(JSON.stringify(persisted.attempts[0]?.reconciledState)).not.toMatch(
+      /database|leadershipUrl|stack|secret/iu,
+    );
     await expect(
       studio.situationCheckout.count({
         where: { id: job.checkoutId, releasedAt: null },
@@ -1690,6 +2781,8 @@ describe("durable cross-database publisher", () => {
     const recovery = await requestChangedPublication(
       "Publisher recovery reconciliation checkpoint.",
     );
+    const failedRuntimeIdentities = [crypto.randomUUID(), crypto.randomUUID()];
+    let failedRuntimeIdentityIndex = 0;
     await processPublicationJob(
       {
         studio,
@@ -1697,18 +2790,47 @@ describe("durable cross-database publisher", () => {
         ...runtimeContractDependencies(),
         runtimeVerification: { attempts: 1, intervalMs: 0 },
         runtimeIdentity: async () => ({
-          releaseId: crypto.randomUUID(),
+          releaseId:
+            failedRuntimeIdentities[failedRuntimeIdentityIndex++] ??
+            crypto.randomUUID(),
           manifestHash: "f".repeat(64),
         }),
       },
       recovery.id,
     );
-    await expect(
-      studio.publicationJob.findUniqueOrThrow({
-        where: { id: recovery.id },
-        select: { state: true },
+    const pendingRecovery = await studio.publicationJob.findUniqueOrThrow({
+      where: { id: recovery.id },
+      include: {
+        attempts: { orderBy: { attempt: "desc" }, take: 1 },
+        events: { orderBy: { sequence: "asc" } },
+      },
+    });
+    expect(pendingRecovery.state).toBe("RECOVERY_REQUIRED");
+    const recoveryRequiredEvent = pendingRecovery.events.find(
+      (event) => event.kind === "RECOVERY_REQUIRED",
+    );
+    expect(recoveryRequiredEvent?.payload).toEqual(
+      expect.objectContaining({
+        failureDetail: expect.objectContaining({
+          reason: "IDENTITY_MISMATCH",
+          lastObservedReleaseId: failedRuntimeIdentities[0],
+        }),
+        recoveryFailureDetail: expect.objectContaining({
+          reason: "IDENTITY_MISMATCH",
+          lastObservedReleaseId: failedRuntimeIdentities[1],
+        }),
       }),
-    ).resolves.toEqual({ state: "RECOVERY_REQUIRED" });
+    );
+    expect(pendingRecovery.attempts[0]?.reconciledState).toEqual(
+      expect.objectContaining({
+        failureDetail: expect.objectContaining({
+          lastObservedReleaseId: failedRuntimeIdentities[0],
+        }),
+        recoveryFailureDetail: expect.objectContaining({
+          lastObservedReleaseId: failedRuntimeIdentities[1],
+        }),
+      }),
+    );
     await expect(leadershipIdentity(leadershipUrl)).resolves.toMatchObject({
       releaseId: prior.releaseId,
       manifestHash: prior.manifestHash,
@@ -1718,11 +2840,32 @@ describe("durable cross-database publisher", () => {
     const user = await studio.user.findUniqueOrThrow({
       where: { username: "publisher-test-editor" },
     });
-    const retry = await workflows.requestPublication({
-      actorId: user.id,
-      checkoutId: recovery.checkoutId,
-      fence: recovery.checkoutFence,
+    await expect(
+      workflows.checkInSituation({
+        actorId: user.id,
+        checkoutId: recovery.checkoutId,
+        fence: recovery.checkoutFence,
+      }),
+    ).rejects.toMatchObject({ code: "PUBLICATION_RECOVERY_REQUIRED" });
+    await expect(
+      workflows.requestPublication({
+        actorId: user.id,
+        checkoutId: recovery.checkoutId,
+        fence: recovery.checkoutFence,
+      }),
+    ).rejects.toMatchObject({ code: "PUBLICATION_RECOVERY_REQUIRED" });
+    const availableSituation = await studio.situation.findFirstOrThrow({
+      where: {
+        id: { not: recovery.situationId },
+        checkouts: { none: { releasedAt: null } },
+      },
     });
+    await expect(
+      workflows.checkoutSituation({
+        actorId: user.id,
+        situationId: availableSituation.id,
+      }),
+    ).rejects.toMatchObject({ code: "PUBLICATION_RECOVERY_REQUIRED" });
     await expect(claimPublicationJob(studio)).resolves.toBeNull();
 
     await expect(
@@ -1755,9 +2898,14 @@ describe("durable cross-database publisher", () => {
       }),
     });
 
+    const retry = await workflows.requestPublication({
+      actorId: user.id,
+      checkoutId: recovery.checkoutId,
+      fence: recovery.checkoutFence,
+    });
     const claim = await claimPublicationJob(studio);
     expect(claim?.id).toBe(retry.id);
-    await processAgainstCurrentRuntime(retry.id);
+    await processAgainstCurrentRuntime(retry.id, undefined, claim?.claimToken);
     await expect(
       studio.publicationJob.findUniqueOrThrow({
         where: { id: retry.id },

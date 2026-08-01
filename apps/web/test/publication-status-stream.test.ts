@@ -71,6 +71,98 @@ describe("publication-status SSE transport", () => {
     await reader.cancel();
   });
 
+  it("streams only allowlisted verification evidence from a terminal event", async () => {
+    const response = await publicationStatusEventsResponse(
+      new Request(
+        `http://studio.test/api/publications/${publicationJobId}/events`,
+      ),
+      {
+        authenticated: true,
+        publicationJobId,
+        loadSnapshot: async () =>
+          buildPublicationStatusSnapshot(
+            record("RESTORED", [
+              { sequence: 1, kind: "REQUESTED" },
+              { sequence: 2, kind: "POINTER_OBSERVED" },
+              { sequence: 3, kind: "SNAPSHOT_BUILT" },
+              { sequence: 4, kind: "VALIDATED" },
+              { sequence: 5, kind: "POINTER_ADVANCED" },
+              {
+                sequence: 6,
+                kind: "RESTORE_STARTED",
+                payload: {
+                  failureDetail: {
+                    schemaVersion: "publication-failure-detail-v1",
+                    phase: "RUNTIME_IDENTITY",
+                    source: "LEADERSHIP_CONTENT_HEALTH",
+                    reason: "HTTP_STATUS",
+                    attempts: 24,
+                    elapsedMs: 11_750,
+                    lastHttpStatus: 503,
+                    lastObservedReleaseId: null,
+                    lastObservedManifestHash: null,
+                  },
+                  rawError: "password=secret publisher stderr",
+                },
+              },
+              { sequence: 7, kind: "RESTORED" },
+            ]),
+          ),
+      },
+    );
+    const text = await response.text();
+    expect(text).toContain('"source":"LEADERSHIP_CONTENT_HEALTH"');
+    expect(text).toContain('"lastHttpStatus":503');
+    expect(text).not.toMatch(/password|secret|stderr|rawError/iu);
+  });
+
+  it("keeps recovery verification evidence distinct and redacted", async () => {
+    const detail = {
+      schemaVersion: "publication-failure-detail-v1",
+      phase: "RUNTIME_IDENTITY",
+      source: "LEADERSHIP_CONTENT_HEALTH",
+      reason: "UNAVAILABLE",
+      attempts: 9,
+      elapsedMs: 4_500,
+      lastHttpStatus: null,
+      lastObservedReleaseId: null,
+      lastObservedManifestHash: null,
+    } as const;
+    const response = await publicationStatusEventsResponse(
+      new Request(
+        `http://studio.test/api/publications/${publicationJobId}/events`,
+      ),
+      {
+        authenticated: true,
+        publicationJobId,
+        loadSnapshot: async () =>
+          buildPublicationStatusSnapshot(
+            record("RECOVERY_REQUIRED", [
+              { sequence: 1, kind: "REQUESTED" },
+              { sequence: 2, kind: "POINTER_OBSERVED" },
+              { sequence: 3, kind: "SNAPSHOT_BUILT" },
+              { sequence: 4, kind: "VALIDATED" },
+              { sequence: 5, kind: "POINTER_ADVANCED" },
+              {
+                sequence: 6,
+                kind: "RECOVERY_REQUIRED",
+                payload: {
+                  failureDetail: { ...detail, reason: "HTTP_STATUS" },
+                  recoveryFailureDetail: detail,
+                  rawError: "password=private recovery stderr",
+                },
+              },
+            ]),
+          ),
+      },
+    );
+    const text = await response.text();
+    expect(text).toContain('"state":"RECOVERY_REQUIRED"');
+    expect(text).toContain('"recoveryFailure"');
+    expect(text).toContain('"reason":"UNAVAILABLE"');
+    expect(text).not.toMatch(/password|private|stderr|rawError/iu);
+  });
+
   it("emits only changed durable snapshots and closes at success", async () => {
     const requested = buildPublicationStatusSnapshot(
       record("REQUESTED", [{ sequence: 1, kind: "REQUESTED" }]),

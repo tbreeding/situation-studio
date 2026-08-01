@@ -233,6 +233,7 @@ export function rolePrompt(
       `For SECTION edits, targetKey must be one of these top-level sections: ${requiredSituationSections.join(" | ")}.`,
       "A smaller structural target may use section/subheading for the body beneath a ###-or-deeper heading, or section#named-block for a blockquote whose bold label slug matches the anchor.",
       "For a top-level or /subheading SECTION edit, afterBody contains only the target body and never its Markdown heading. For a #named-block edit, afterBody contains the complete replacement blockquote and must retain the same bold label.",
+      'For every METADATA edit, afterBody must be a complete JSON encoding of the replacement value. String values such as title or description must include JSON double quotes (for example, "A complete replacement title").',
       "For SCOPED_VARIANT, targetKey names an existing relationship logical ID. It may append #new-variant-id when afterBody is a complete JSON artifact whose id exactly matches that suffix.",
       "A PRACTICE scoped variant must be complete JSON with at least two rounds and two to four choices per round. A SOURCE scoped variant must be complete JSON with id, title, URL, publisher, and note.",
       `AUTOMATIC METADATA targetKey must be one of: ${situationMetadataKeys.join(" | ")}. Treat any other metadata concept, including sourceReferences, as MANUAL because Situation Studio cannot apply it safely.`,
@@ -561,7 +562,7 @@ function candidateTargetBefore(
     };
   }
   if (change.targetKind === "METADATA") {
-    if (!(change.targetKey in bundle.metadata))
+    if (!Object.hasOwn(bundle.metadata, change.targetKey))
       return { beforeBody: null, beforeHash: null };
     const before =
       bundle.metadata[change.targetKey as keyof typeof bundle.metadata];
@@ -759,7 +760,16 @@ export function materializeCandidateRevision(input: {
               rawChange.afterBody,
             ),
           }
-        : rawChange;
+        : rawChange.targetKind === "METADATA"
+          ? {
+              ...rawChange,
+              afterBody: normalizeMetadataReplacement(
+                bundle,
+                rawChange.targetKey,
+                rawChange.afterBody,
+              ),
+            }
+          : rawChange;
     const targetIdentity = `${change.targetKind}:${change.targetKey}`;
     if (seenTargets.has(targetIdentity))
       throw new AdapterFailure(
@@ -837,6 +847,21 @@ export function materializeCandidateRevision(input: {
     ),
     changes: materializedChanges,
   };
+}
+
+function normalizeMetadataReplacement(
+  bundle: CandidateBundle,
+  targetKey: string,
+  afterBody: string,
+) {
+  try {
+    JSON.parse(afterBody);
+    return afterBody;
+  } catch {
+    if (!Object.hasOwn(bundle.metadata, targetKey)) return afterBody;
+    const current = bundle.metadata[targetKey as keyof typeof bundle.metadata];
+    return typeof current === "string" ? canonicalJson(afterBody) : afterBody;
+  }
 }
 
 function normalizeSectionReplacement(targetKey: string, afterBody: string) {

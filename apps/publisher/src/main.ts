@@ -34,15 +34,19 @@ const producerCommit = readFileSync(
 ).trim();
 
 const studio = createDatabaseClient(studioDatabaseUrl, 4);
+let publisherStatus = "STARTING";
 const dependencies = {
   studio,
   leadershipPublisherUrl,
-  runtimeIdentity: () => runtimeIdentityFromHealth(leadershipHealthUrl),
+  runtimeIdentity: (options?: { signal?: AbortSignal }) =>
+    runtimeIdentityFromHealth(leadershipHealthUrl, options),
   runtimeCapabilities: () =>
     runtimeCapabilitiesFromHealth(leadershipCapabilitiesUrl),
   runtimeRouteProof: (expected: RuntimeRouteExpectation) =>
     runtimeRouteProofFromSituationPage(leadershipHealthUrl, expected),
   producerCommit,
+  onRuntimeIdentityProbe: () =>
+    heartbeat(publisherStatus).catch(() => undefined),
   onFailure: (error: unknown) => {
     console.error("Publication attempt failed.", error);
   },
@@ -68,24 +72,36 @@ async function heartbeat(status: string) {
   });
 }
 
+async function setPublisherStatus(status: string) {
+  publisherStatus = status;
+  await heartbeat(status);
+}
+
+const heartbeatMonitor = setInterval(() => {
+  void heartbeat(publisherStatus).catch(() => undefined);
+}, 15_000);
+heartbeatMonitor.unref();
+
 async function run() {
   for (;;) {
-    await heartbeat("CHECKING_RECOVERY");
+    await setPublisherStatus("CHECKING_RECOVERY");
     await reconcilePublicationRecovery(dependencies);
-    await heartbeat("CHECKING_QUEUE");
+    await setPublisherStatus("CHECKING_QUEUE");
     const claim = await claimPublicationJob(studio);
     if (!claim) {
-      await heartbeat("IDLE");
+      await setPublisherStatus("IDLE");
       await new Promise((resolve) => setTimeout(resolve, 1_000));
       continue;
     }
-    await heartbeat("WORKING");
+    await setPublisherStatus("WORKING");
     await processPublicationJob(dependencies, claim.id, claim.claimToken);
-    await heartbeat("IDLE");
+    await setPublisherStatus("IDLE");
   }
 }
 
 void run().finally(async () => {
+  clearInterval(heartbeatMonitor);
+  publisherStatus = "STOPPING";
   await heartbeat("STOPPING").catch(() => undefined);
   await studio.$disconnect();
 });

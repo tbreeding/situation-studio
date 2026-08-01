@@ -10,6 +10,8 @@ import { workspaceTabFromSearchParam } from "@/components/workspace-tabs";
 import { requireSession } from "@/server/auth/request";
 import {
   newSituationTemplate,
+  publicationBackupReadiness,
+  publicationRecoveryRequired,
   workspaceForSlug,
 } from "@/server/workflows/situations";
 import { reconcileLeadershipRelease } from "@/server/leadership-sync";
@@ -32,7 +34,12 @@ export default async function SituationPage({
   }`;
   const session = await requireSession(returnTo);
   await reconcileLeadershipRelease();
-  const workspace = await workspaceForSlug(slug);
+  const [workspace, globalRecoveryRequired, publicationBackup] =
+    await Promise.all([
+      workspaceForSlug(slug),
+      publicationRecoveryRequired(),
+      publicationBackupReadiness(),
+    ]);
   if (!workspace) notFound();
   const checkout = workspace.checkouts[0] ?? null;
   const draft = workspace.drafts[0];
@@ -181,6 +188,8 @@ export default async function SituationPage({
         publication={
           publicationJob ? buildPublicationStatusSnapshot(publicationJob) : null
         }
+        globalRecoveryRequired={globalRecoveryRequired}
+        publicationBackup={publicationBackup}
         history={workspace.productionVersions.map((version) => ({
           id: version.id,
           bundleHash: version.bundleHash,

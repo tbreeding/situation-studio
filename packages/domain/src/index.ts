@@ -544,6 +544,32 @@ export type ActivityStatus =
   | "Needs refresh"
   | "Recovery required";
 
+export const publicationFailureDetailSchema = z
+  .object({
+    schemaVersion: z.literal("publication-failure-detail-v1"),
+    phase: z.literal("RUNTIME_IDENTITY"),
+    source: z.literal("LEADERSHIP_CONTENT_HEALTH"),
+    reason: z.enum([
+      "HTTP_STATUS",
+      "IDENTITY_MISMATCH",
+      "UNAVAILABLE",
+      "INVALID_RESPONSE",
+    ]),
+    attempts: z.number().int().min(1).max(100),
+    elapsedMs: z.number().int().min(0).max(600_000),
+    lastHttpStatus: z.number().int().min(100).max(599).nullable(),
+    lastObservedReleaseId: z.uuid().nullable(),
+    lastObservedManifestHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .nullable(),
+  })
+  .strict();
+
+export type PublicationFailureDetail = z.infer<
+  typeof publicationFailureDetailSchema
+>;
+
 export function deriveSituationStatus(input: {
   visibility: "PUBLIC" | "RETIRED" | "UNPUBLISHED";
   checkoutOwner?: string | null;

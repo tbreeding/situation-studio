@@ -3,9 +3,32 @@ import {
   buildPublicationStatusSnapshot,
   type PublicationStatusRecord,
 } from "../src/server/publication-status";
-import { publicationStatusSnapshotSchema } from "../src/publication-status-contract";
+import {
+  isActivePublicationState,
+  isPublicationWorkspaceLocked,
+  isTerminalPublicationState,
+  publicationStatusSnapshotSchema,
+} from "../src/publication-status-contract";
 
 const publicationJobId = "22222222-2222-4222-8222-222222222222";
+const observedReleaseId = "33333333-3333-4333-8333-333333333333";
+
+function failureDetail(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    schemaVersion: "publication-failure-detail-v1",
+    phase: "RUNTIME_IDENTITY",
+    source: "LEADERSHIP_CONTENT_HEALTH",
+    reason: "HTTP_STATUS",
+    attempts: 24,
+    elapsedMs: 11_750,
+    lastHttpStatus: 503,
+    lastObservedReleaseId: null,
+    lastObservedManifestHash: null,
+    ...overrides,
+  };
+}
 
 function statusRecord(
   overrides: Partial<PublicationStatusRecord> = {},
@@ -20,11 +43,18 @@ function statusRecord(
 }
 
 describe("public publication-status snapshots", () => {
+  it("keeps recovery terminal for display while locking editorial mutations", () => {
+    expect(isActivePublicationState("RECOVERY_REQUIRED")).toBe(false);
+    expect(isTerminalPublicationState("RECOVERY_REQUIRED")).toBe(true);
+    expect(isPublicationWorkspaceLocked("RECOVERY_REQUIRED")).toBe(true);
+    expect(isPublicationWorkspaceLocked("RESTORED")).toBe(false);
+  });
+
   it("starts with a clear five-step user-facing workflow", () => {
     const snapshot = buildPublicationStatusSnapshot(statusRecord());
     expect(publicationStatusSnapshotSchema.parse(snapshot)).toEqual(snapshot);
     expect(snapshot).toMatchObject({
-      schemaVersion: "publication-status-v1",
+      schemaVersion: "publication-status-v3",
       publicationJobId,
       state: "REQUESTED",
       completedStages: 0,
@@ -92,9 +122,189 @@ describe("public publication-status snapshots", () => {
       state: "RESTORED",
       tone: "WARNING",
       title: "Previous version restored",
+      message:
+        "The new release did not pass live verification, so Leadership remains on the previous verified version.",
     });
+    expect(snapshot.failure).toBeNull();
     expect(snapshot.stages[4]?.state).toBe("FAILED");
     expect(JSON.stringify(snapshot)).not.toMatch(/secret|database detail/iu);
+  });
+
+  it("projects bounded HTTP verification evidence into actionable restored copy", () => {
+    const snapshot = buildPublicationStatusSnapshot(
+      statusRecord({
+        state: "RESTORED",
+        failureCode: "RUNTIME_HEALTH_UNAVAILABLE_RESTORED",
+        events: [
+          { sequence: 1, kind: "REQUESTED" },
+          { sequence: 2, kind: "POINTER_OBSERVED" },
+          { sequence: 3, kind: "SNAPSHOT_BUILT" },
+          { sequence: 4, kind: "VALIDATED" },
+          { sequence: 5, kind: "POINTER_ADVANCED" },
+          {
+            sequence: 6,
+            kind: "RESTORE_STARTED",
+            payload: { failureDetail: failureDetail() },
+          },
+          { sequence: 7, kind: "RESTORED" },
+        ],
+      }),
+    );
+    expect(publicationStatusSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect(snapshot.terminal?.message).toBe(
+      "Leadership content health returned HTTP 503 after 24 checks, so the previous verified version was restored. Your saved draft and checkout are unchanged.",
+    );
+    expect(snapshot.failure).toEqual(failureDetail());
+    expect(snapshot.recoveryFailure).toBeNull();
+  });
+
+  it("keeps original and recovery verification failures distinct when recovery is required", () => {
+    const recoveryFailure = failureDetail({
+      reason: "IDENTITY_MISMATCH",
+      attempts: 8,
+      elapsedMs: 4_250,
+      lastHttpStatus: 200,
+      lastObservedReleaseId: observedReleaseId,
+      lastObservedManifestHash: "b".repeat(64),
+    });
+    const snapshot = buildPublicationStatusSnapshot(
+      statusRecord({
+        state: "RECOVERY_REQUIRED",
+        failureCode: "AUTOMATIC_RESTORATION_FAILED",
+        events: [
+          { sequence: 1, kind: "REQUESTED" },
+          { sequence: 2, kind: "POINTER_OBSERVED" },
+          { sequence: 3, kind: "SNAPSHOT_BUILT" },
+          { sequence: 4, kind: "VALIDATED" },
+          { sequence: 5, kind: "POINTER_ADVANCED" },
+          {
+            sequence: 6,
+            kind: "RESTORE_STARTED",
+            payload: { failureDetail: failureDetail() },
+          },
+          {
+            sequence: 7,
+            kind: "RECOVERY_REQUIRED",
+            payload: {
+              failureDetail: failureDetail(),
+              recoveryFailureDetail: recoveryFailure,
+              rawError: "password=private recovery stderr",
+            },
+          },
+        ],
+      }),
+    );
+    expect(publicationStatusSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect(snapshot.terminal).toMatchObject({
+      state: "RECOVERY_REQUIRED",
+      tone: "ERROR",
+      title: "Publication needs attention",
+    });
+    expect(snapshot.failure).toEqual(failureDetail());
+    expect(snapshot.recoveryFailure).toEqual(recoveryFailure);
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /password|private|stderr|rawError/iu,
+    );
+  });
+
+  it("drops stale recovery-failure evidence after a recovery-required job is restored", () => {
+    const snapshot = buildPublicationStatusSnapshot(
+      statusRecord({
+        state: "RESTORED",
+        failureCode: "VERIFICATION_FAILED_RESTORED",
+        events: [
+          { sequence: 1, kind: "REQUESTED" },
+          { sequence: 2, kind: "POINTER_OBSERVED" },
+          { sequence: 3, kind: "SNAPSHOT_BUILT" },
+          { sequence: 4, kind: "VALIDATED" },
+          { sequence: 5, kind: "POINTER_ADVANCED" },
+          {
+            sequence: 6,
+            kind: "RECOVERY_REQUIRED",
+            payload: {
+              failureDetail: failureDetail(),
+              recoveryFailureDetail: failureDetail({ reason: "UNAVAILABLE" }),
+            },
+          },
+          { sequence: 7, kind: "RESTORED" },
+        ],
+      }),
+    );
+    expect(publicationStatusSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect(snapshot.failure).toEqual(failureDetail());
+    expect(snapshot.recoveryFailure).toBeNull();
+  });
+
+  it("explains a last-observed identity mismatch without exposing raw errors", () => {
+    const snapshot = buildPublicationStatusSnapshot(
+      statusRecord({
+        state: "RESTORED",
+        failureCode: "RUNTIME_IDENTITY_MISMATCH_RESTORED",
+        events: [
+          { sequence: 1, kind: "REQUESTED" },
+          { sequence: 2, kind: "POINTER_OBSERVED" },
+          { sequence: 3, kind: "SNAPSHOT_BUILT" },
+          { sequence: 4, kind: "VALIDATED" },
+          { sequence: 5, kind: "POINTER_ADVANCED" },
+          {
+            sequence: 6,
+            kind: "RESTORE_STARTED",
+            payload: {
+              failureDetail: failureDetail({
+                reason: "IDENTITY_MISMATCH",
+                lastHttpStatus: 200,
+                lastObservedReleaseId: observedReleaseId,
+                lastObservedManifestHash: "a".repeat(64),
+              }),
+              rawError: "password=secret",
+            },
+          },
+          { sequence: 7, kind: "RESTORED" },
+        ],
+      }),
+    );
+    expect(snapshot.terminal?.message).toContain(
+      "did not report the new release after 24 checks",
+    );
+    expect(snapshot.failure).toMatchObject({
+      reason: "IDENTITY_MISMATCH",
+      lastHttpStatus: 200,
+      lastObservedReleaseId: observedReleaseId,
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(/password|secret|rawError/iu);
+  });
+
+  it("discards malformed or expanded failure-detail payloads", () => {
+    const snapshot = buildPublicationStatusSnapshot(
+      statusRecord({
+        state: "RESTORED",
+        failureCode: "VERIFICATION_FAILED_RESTORED",
+        events: [
+          { sequence: 1, kind: "REQUESTED" },
+          { sequence: 2, kind: "POINTER_OBSERVED" },
+          { sequence: 3, kind: "SNAPSHOT_BUILT" },
+          { sequence: 4, kind: "VALIDATED" },
+          { sequence: 5, kind: "POINTER_ADVANCED" },
+          {
+            sequence: 6,
+            kind: "RESTORE_STARTED",
+            payload: {
+              failureDetail: failureDetail({
+                rawError: "private diagnostic internals",
+              }),
+            },
+          },
+          { sequence: 7, kind: "RESTORED" },
+        ],
+      }),
+    );
+    expect(snapshot.failure).toBeNull();
+    expect(snapshot.terminal?.message).toBe(
+      "The new release did not pass live verification, so Leadership remains on the previous verified version.",
+    );
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /private|internals|rawError/iu,
+    );
   });
 
   it("explains practice-embed mismatches without exposing validator details", () => {

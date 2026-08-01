@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { bundleWriterOutputSchema } from "@situation-studio/ai-adapters";
 import {
+  canonicalJson,
   canonicalText,
   parseSituationSections,
   requiredSituationSections,
@@ -102,6 +103,37 @@ function changes(
   }).candidateEdits;
 }
 
+function metadataChanges(
+  overrides: Array<{
+    targetKey: string;
+    afterBody: string;
+  }>,
+) {
+  return bundleWriterOutputSchema.parse({
+    role: "bundle-writer",
+    summary: "Apply safe metadata replacements.",
+    findings: [],
+    provenance: "candidate-materialization-test",
+    candidateEdits: overrides.map((change, index) => ({
+      id: [
+        "201eb1cb-c6d6-476d-9462-aa560519596e",
+        "43eb72bc-86b6-40a5-a18e-e53e5664984c",
+      ][index],
+      targetKind: "METADATA",
+      targetKey: change.targetKey,
+      applicationMode: "AUTOMATIC",
+      beforeHash: null,
+      afterBody: change.afterBody,
+      problem: "The metadata needs a precise replacement.",
+      explanation: "Changes only the selected metadata value.",
+      rationale: "Preserves every unrelated metadata field.",
+      upstreamFindingIds: ["adjudicator:retained-change"],
+      writtenByRoleCode: "bundle-writer",
+      evidenceRoleCodes: ["adjudicator"],
+    })),
+  }).candidateEdits;
+}
+
 describe("candidate section-target materialization", () => {
   it("applies subheading and named-block patches without replacing their parents", () => {
     const { body, bundle } = fixture();
@@ -192,6 +224,51 @@ describe("candidate section-target materialization", () => {
     ).toThrow(/must retain its bold label/u);
   });
 
+  it("normalizes plain title and description replacements as JSON strings", () => {
+    const { body, bundle } = fixture();
+    const title = "A clearer candidate metadata title";
+    const description =
+      "A clearer candidate description that remains complete, specific, and safe to apply.";
+    const candidate = materializeCandidateRevision({
+      inputRevisionId: "fb078234-6ef7-43cb-8d7b-3a1dc6610467",
+      inputBundleHash: "a".repeat(64),
+      bundleManifest: bundle,
+      body,
+      changes: metadataChanges([
+        { targetKey: "title", afterBody: title },
+        { targetKey: "description", afterBody: description },
+      ]),
+    });
+
+    expect(candidate.bundle.metadata.title).toBe(title);
+    expect(candidate.bundle.metadata.description).toBe(description);
+    expect(
+      candidate.changes.map(({ targetKey, afterBody }) => ({
+        targetKey,
+        afterBody,
+      })),
+    ).toEqual([
+      { targetKey: "title", afterBody: canonicalJson(title) },
+      { targetKey: "description", afterBody: canonicalJson(description) },
+    ]);
+  });
+
+  it("rejects malformed JSON for non-string metadata", () => {
+    const { body, bundle } = fixture();
+
+    expect(() =>
+      materializeCandidateRevision({
+        inputRevisionId: "fb078234-6ef7-43cb-8d7b-3a1dc6610467",
+        inputBundleHash: "a".repeat(64),
+        bundleManifest: bundle,
+        body,
+        changes: metadataChanges([
+          { targetKey: "tags", afterBody: "coaching, conversation" },
+        ]),
+      }),
+    ).toThrow(/metadata field tags is not valid JSON/u);
+  });
+
   it("downgrades unsupported metadata concepts to manual suggestions", () => {
     const { body, bundle } = fixture();
     const unsupported = bundleWriterOutputSchema.parse({
@@ -206,7 +283,7 @@ describe("candidate section-target materialization", () => {
           targetKey: "sourceReferences",
           applicationMode: "AUTOMATIC",
           beforeHash: null,
-          afterBody: '["one-on-one-lesson"]',
+          afterBody: "one-on-one-lesson",
           problem: "The source reference should be explicit.",
           explanation: "Situation Studio cannot apply this field directly.",
           rationale:
@@ -229,6 +306,7 @@ describe("candidate section-target materialization", () => {
       applicationMode: "MANUAL",
       beforeBody: null,
       actualBeforeHash: null,
+      afterBody: "one-on-one-lesson",
     });
     expect(candidate.bundle.metadata).not.toHaveProperty("sourceReferences");
   });

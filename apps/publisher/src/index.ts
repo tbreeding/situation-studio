@@ -25,11 +25,13 @@ import {
   canonicalJson,
   canonicalText,
   publicationConflictDecision,
+  publicationFailureDetailSchema,
   scopedPracticeSchema,
   scopedSourceSchema,
   sha256,
   situationBundleSchema,
   validateSituationBundle,
+  type PublicationFailureDetail,
   type SituationBundle,
 } from "@situation-studio/domain";
 import { z } from "zod";
@@ -125,6 +127,46 @@ export class PublisherVerificationError extends Error {
   }
 }
 
+export class PublisherRuntimeHealthError extends Error {
+  constructor(
+    readonly reason: "HTTP_STATUS" | "UNAVAILABLE" | "INVALID_RESPONSE",
+    readonly httpStatus: number | null = null,
+  ) {
+    super(
+      reason === "HTTP_STATUS"
+        ? "Leadership content health returned a non-success status."
+        : reason === "INVALID_RESPONSE"
+          ? "Leadership content health returned an invalid response."
+          : "Leadership content health was unavailable.",
+    );
+    this.name = "PublisherRuntimeHealthError";
+  }
+}
+
+export class PublisherRuntimeConvergenceError extends Error {
+  readonly code:
+    | "RUNTIME_HEALTH_UNAVAILABLE"
+    | "RUNTIME_HEALTH_INVALID_RESPONSE"
+    | "RUNTIME_IDENTITY_MISMATCH";
+
+  constructor(readonly failureDetail: PublicationFailureDetail) {
+    super(
+      failureDetail.reason === "IDENTITY_MISMATCH"
+        ? "Leadership did not converge on the expected runtime identity."
+        : failureDetail.reason === "INVALID_RESPONSE"
+          ? "Leadership content health did not return a valid identity."
+          : "Leadership content health remained unavailable.",
+    );
+    this.name = "PublisherRuntimeConvergenceError";
+    this.code =
+      failureDetail.reason === "IDENTITY_MISMATCH"
+        ? "RUNTIME_IDENTITY_MISMATCH"
+        : failureDetail.reason === "INVALID_RESPONSE"
+          ? "RUNTIME_HEALTH_INVALID_RESPONSE"
+          : "RUNTIME_HEALTH_UNAVAILABLE";
+  }
+}
+
 export class PublisherCandidateContractError extends Error {
   readonly code:
     | "CANONICAL_SNAPSHOT_INVALID"
@@ -146,8 +188,29 @@ export class PublisherCandidateContractError extends Error {
   }
 }
 
+class PublisherNeedsRefreshError extends Error {
+  constructor(
+    readonly detail: {
+      observedReleaseId: string;
+      observedBundleHash: string | null;
+      baseBundleHash: string | null;
+      expectedPointerGeneration: bigint;
+    },
+  ) {
+    super("The Leadership target changed after this draft was based.");
+    this.name = "PublisherNeedsRefreshError";
+  }
+}
+
 export type PublisherBoundary =
-  "CANDIDATE_PERSISTED" | "LEADERSHIP_PROMOTED" | "RUNTIME_VERIFIED";
+  | "CANDIDATE_PERSISTED"
+  | "LEADERSHIP_PROMOTION_READY"
+  | "LEADERSHIP_PROMOTION_COMMIT_READY"
+  | "LEADERSHIP_PROMOTION_COMMITTED"
+  | "LEADERSHIP_PROMOTED"
+  | "RUNTIME_VERIFIED"
+  | "STUDIO_SUCCESS_FINALIZING"
+  | "STUDIO_SUCCESS_COMMITTED";
 
 export class PublisherCrashInjectionError extends Error {
   constructor(readonly boundary: PublisherBoundary) {
@@ -159,7 +222,9 @@ export class PublisherCrashInjectionError extends Error {
 type PublisherDependencies = {
   studio: DatabaseClient;
   leadershipPublisherUrl: string;
-  runtimeIdentity: () => Promise<RuntimeIdentity>;
+  runtimeIdentity: (options?: {
+    signal?: AbortSignal;
+  }) => Promise<RuntimeIdentity>;
   runtimeCapabilities?: () => Promise<LeadershipRuntimeCapabilities>;
   runtimeRouteProof?: (
     expected: RuntimeRouteExpectation,
@@ -168,7 +233,11 @@ type PublisherDependencies = {
   runtimeVerification?: {
     attempts?: number;
     intervalMs?: number;
+    deadlineMs?: number;
+    requestTimeoutMs?: number;
   };
+  publicationLeaseHeartbeatMs?: number;
+  onRuntimeIdentityProbe?: () => Promise<void> | void;
   afterBoundary?: (boundary: PublisherBoundary) => Promise<void>;
   onFailure?: (error: unknown) => void;
 };
@@ -185,35 +254,130 @@ function identityMatches(identity: RuntimeIdentity, expected: RuntimeIdentity) {
 async function convergedRuntimeIdentity(
   dependencies: Pick<
     PublisherDependencies,
-    "runtimeIdentity" | "runtimeVerification"
+    "runtimeIdentity" | "runtimeVerification" | "onRuntimeIdentityProbe"
   >,
   expected: RuntimeIdentity,
+  beforeProbe?: () => Promise<void>,
 ) {
   const attempts = Math.max(
     1,
     // Leadership refreshes its official-content cache every five seconds.
     // Cover more than two complete refresh windows in production.
-    Math.floor(dependencies.runtimeVerification?.attempts ?? 24),
+    Math.min(
+      100,
+      Math.floor(dependencies.runtimeVerification?.attempts ?? 100),
+    ),
   );
   const intervalMs = Math.max(
     0,
-    Math.floor(dependencies.runtimeVerification?.intervalMs ?? 500),
+    Math.min(
+      5_000,
+      Math.floor(dependencies.runtimeVerification?.intervalMs ?? 500),
+    ),
   );
+  const deadlineMs = Math.max(
+    1,
+    Math.min(
+      120_000,
+      Math.floor(dependencies.runtimeVerification?.deadlineMs ?? 45_000),
+    ),
+  );
+  const requestTimeoutMs = Math.max(
+    1,
+    Math.min(
+      10_000,
+      Math.floor(dependencies.runtimeVerification?.requestTimeoutMs ?? 5_000),
+    ),
+  );
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + deadlineMs;
   let lastIdentity: RuntimeIdentity | undefined;
-  let lastError: unknown;
+  let lastReason: PublicationFailureDetail["reason"] = "UNAVAILABLE";
+  let lastHttpStatus: number | null = null;
+  let completedAttempts = 0;
+
+  const failure = () => {
+    const observedRelease = z.uuid().safeParse(lastIdentity?.releaseId);
+    const observedManifest = z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .safeParse(lastIdentity?.manifestHash);
+    return new PublisherRuntimeConvergenceError(
+      publicationFailureDetailSchema.parse({
+        schemaVersion: "publication-failure-detail-v1",
+        phase: "RUNTIME_IDENTITY",
+        source: "LEADERSHIP_CONTENT_HEALTH",
+        reason: lastReason,
+        attempts: Math.max(1, completedAttempts),
+        elapsedMs: Math.min(
+          600_000,
+          Math.max(0, Math.floor(Date.now() - startedAt)),
+        ),
+        lastHttpStatus,
+        lastObservedReleaseId: observedRelease.success
+          ? observedRelease.data
+          : null,
+        lastObservedManifestHash: observedManifest.success
+          ? observedManifest.data
+          : null,
+      }),
+    );
+  };
+
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const remainingMs = deadlineAt - Date.now();
+    if (remainingMs <= 0) throw failure();
+    await beforeProbe?.();
+    await dependencies.onRuntimeIdentityProbe?.();
+    completedAttempts = attempt + 1;
+    if (deadlineAt - Date.now() <= 0) throw failure();
+    const controller = new AbortController();
+    const timeoutMs = Math.max(
+      1,
+      Math.min(requestTimeoutMs, deadlineAt - Date.now()),
+    );
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      lastIdentity = await dependencies.runtimeIdentity();
-      lastError = undefined;
+      lastIdentity = await Promise.race([
+        dependencies.runtimeIdentity({ signal: controller.signal }),
+        new Promise<never>((_resolve, reject) => {
+          controller.signal.addEventListener(
+            "abort",
+            () => reject(new PublisherRuntimeHealthError("UNAVAILABLE", null)),
+            { once: true },
+          );
+        }),
+      ]);
       if (identityMatches(lastIdentity, expected)) return lastIdentity;
+      lastReason = "IDENTITY_MISMATCH";
+      lastHttpStatus = null;
     } catch (error) {
-      lastError = error;
+      if (error instanceof PublisherRuntimeHealthError) {
+        const validHttpStatus =
+          Number.isInteger(error.httpStatus) &&
+          error.httpStatus !== null &&
+          error.httpStatus >= 100 &&
+          error.httpStatus <= 599;
+        lastReason =
+          error.reason === "HTTP_STATUS" && !validHttpStatus
+            ? "UNAVAILABLE"
+            : error.reason;
+        lastHttpStatus = validHttpStatus ? error.httpStatus : null;
+      } else {
+        lastReason = "UNAVAILABLE";
+        lastHttpStatus = null;
+      }
+    } finally {
+      clearTimeout(timeout);
     }
-    if (attempt + 1 < attempts)
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const afterProbeRemainingMs = deadlineAt - Date.now();
+    if (attempt + 1 >= attempts || afterProbeRemainingMs <= 0) throw failure();
+    if (intervalMs > 0)
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(intervalMs, afterProbeRemainingMs)),
+      );
   }
-  if (lastIdentity) return lastIdentity;
-  throw lastError ?? new Error("Runtime identity remained unavailable.");
+  throw failure();
 }
 
 function routeExpectation(
@@ -420,12 +584,13 @@ async function assertPublicationFence(
     situationId: string;
     checkoutId: string;
     checkoutFence: bigint;
+    claimToken?: string;
   },
 ) {
   const [job, checkout, situation] = await Promise.all([
     studio.publicationJob.findUnique({
       where: { id: input.jobId },
-      select: { state: true, checkoutFence: true },
+      select: { state: true, checkoutFence: true, claimToken: true },
     }),
     studio.situationCheckout.findUnique({
       where: { id: input.checkoutId },
@@ -440,6 +605,7 @@ async function assertPublicationFence(
     !job ||
     !["ASSEMBLING", "PROMOTING", "VERIFYING"].includes(job.state) ||
     job.checkoutFence !== input.checkoutFence ||
+    job.claimToken !== (input.claimToken ?? null) ||
     !checkout ||
     checkout.releasedAt ||
     checkout.fence !== input.checkoutFence ||
@@ -653,64 +819,101 @@ async function validateCanonicalCandidate(
   }
 }
 
+type StudioTransaction = Parameters<
+  Parameters<DatabaseClient["$transaction"]>[0]
+>[0];
+
+const PUBLICATION_COORDINATION_LOCK_KEY = 7_311_945_021;
+
+async function lockPublicationCoordination(
+  transaction: Pick<StudioTransaction, "$queryRaw">,
+) {
+  await transaction.$queryRaw<Array<{ locked: number }>>`
+    SELECT 1::integer AS locked
+      FROM pg_advisory_xact_lock(${PUBLICATION_COORDINATION_LOCK_KEY}::bigint)
+  `;
+}
+
+async function appendPublicationEvent(
+  transaction: Pick<StudioTransaction, "publicationEvent">,
+  jobId: string,
+  kind: PublicationEventKind,
+  payload: Record<string, unknown>,
+) {
+  const aggregate = await transaction.publicationEvent.aggregate({
+    where: { jobId },
+    _max: { sequence: true },
+  });
+  await transaction.publicationEvent.create({
+    data: {
+      jobId,
+      sequence: (aggregate._max.sequence ?? 0) + 1,
+      kind,
+      payload: jsonInput(payload),
+    },
+  });
+}
+
 async function event(
   studio: DatabaseClient,
   jobId: string,
   kind: PublicationEventKind,
   payload: Record<string, unknown>,
 ) {
-  await studio.$transaction(async (transaction) => {
-    const aggregate = await transaction.publicationEvent.aggregate({
-      where: { jobId },
-      _max: { sequence: true },
-    });
-    await transaction.publicationEvent.create({
-      data: {
-        jobId,
-        sequence: (aggregate._max.sequence ?? 0) + 1,
-        kind,
-        payload: jsonInput(payload),
-      },
-    });
-  });
+  await studio.$transaction((transaction) =>
+    appendPublicationEvent(transaction, jobId, kind, payload),
+  );
 }
 
 export async function claimPublicationJob(studio: DatabaseClient) {
-  const recoveryFence = await studio.publicationJob.count({
-    where: { state: "RECOVERY_REQUIRED" },
-  });
-  if (recoveryFence) return null;
-  const claimed = await studio.$queryRaw<
-    Array<{ id: string; claim_token: string }>
-  >`
-    WITH selected AS (
-      SELECT "id"
-        FROM "publication_jobs"
-       WHERE (
-         "state" = 'REQUESTED'
-         OR (
-           "state" IN ('ASSEMBLING', 'PROMOTING', 'VERIFYING')
-           AND ("lease_expires_at" IS NULL OR "lease_expires_at" < now())
-         )
-       )
-       ORDER BY "created_at", "id"
-       FOR UPDATE SKIP LOCKED
-       LIMIT 1
-    )
-    UPDATE "publication_jobs" job
-       SET "state" = CASE
-             WHEN job."state" = 'REQUESTED' THEN 'ASSEMBLING'::"PublicationJobState"
-             ELSE job."state"
-           END,
-           "started_at" = COALESCE(job."started_at", now()),
-           "claim_token" = gen_random_uuid(),
-           "lease_expires_at" = now() + interval '3 minutes'
-      FROM selected
-     WHERE job."id" = selected."id"
-    RETURNING job."id", job."claim_token"
-  `;
-  const row = claimed[0];
-  return row ? { id: row.id, claimToken: row.claim_token } : null;
+  return studio.$transaction(
+    async (transaction) => {
+      await lockPublicationCoordination(transaction);
+      const recoveryFence = await transaction.publicationJob.count({
+        where: { state: "RECOVERY_REQUIRED" },
+      });
+      const activeOwner = await transaction.publicationJob.count({
+        where: {
+          state: { in: ["ASSEMBLING", "PROMOTING", "VERIFYING"] },
+          claimToken: { not: null },
+          leaseExpiresAt: { gt: new Date() },
+        },
+      });
+      if (recoveryFence || activeOwner) return null;
+      const claimed = await transaction.$queryRaw<
+        Array<{ id: string; claim_token: string }>
+      >`
+        WITH selected AS (
+          SELECT "id"
+            FROM "publication_jobs"
+           WHERE (
+             "state" = 'REQUESTED'
+             OR (
+               "state" IN ('ASSEMBLING', 'PROMOTING', 'VERIFYING')
+               AND ("lease_expires_at" IS NULL OR "lease_expires_at" < now())
+             )
+           )
+           ORDER BY "created_at", "id"
+           FOR UPDATE SKIP LOCKED
+           LIMIT 1
+        )
+        UPDATE "publication_jobs" job
+           SET "state" = CASE
+                 WHEN job."state" = 'REQUESTED' THEN 'ASSEMBLING'::"PublicationJobState"
+                 ELSE job."state"
+               END,
+               "started_at" = COALESCE(job."started_at", now()),
+               "claim_token" = gen_random_uuid(),
+               "lease_expires_at" = now() + interval '3 minutes'
+          FROM selected
+         WHERE job."id" = selected."id"
+        RETURNING job."id", job."claim_token"
+      `;
+      const row = claimed[0];
+      return row ? { id: row.id, claimToken: row.claim_token } : null;
+    },
+    { isolationLevel: "Serializable" },
+  );
 }
 
 async function renewPublicationLease(
@@ -723,7 +926,9 @@ async function renewPublicationLease(
     where: {
       id: jobId,
       claimToken,
-      state: { in: ["ASSEMBLING", "PROMOTING", "VERIFYING"] },
+      state: {
+        in: ["ASSEMBLING", "PROMOTING", "VERIFYING", "RECOVERY_REQUIRED"],
+      },
     },
     data: { leaseExpiresAt: new Date(Date.now() + 180_000) },
   });
@@ -731,12 +936,66 @@ async function renewPublicationLease(
     throw new Error("Publication lease was lost to another publisher.");
 }
 
-async function loadJob(studio: DatabaseClient, jobId: string) {
+async function withPublicationLeaseHeartbeat<T>(
+  studio: DatabaseClient,
+  input: {
+    jobId: string;
+    situationId: string;
+    checkoutId: string;
+    checkoutFence: bigint;
+    claimToken?: string;
+    heartbeatMs?: number;
+  },
+  operation: (assertAuthority: () => Promise<void>) => Promise<T>,
+) {
+  const heartbeatMs = Math.max(
+    1_000,
+    Math.min(120_000, Math.floor(input.heartbeatMs ?? 30_000)),
+  );
+  let stopped = false;
+  let leaseFailure: unknown;
+  let renewal = Promise.resolve();
+  const queueRenewal = () => {
+    renewal = renewal.then(async () => {
+      if (stopped || leaseFailure) return;
+      try {
+        await renewPublicationLease(studio, input.jobId, input.claimToken);
+      } catch (error) {
+        leaseFailure = error;
+      }
+    });
+  };
+  const monitor = setInterval(queueRenewal, heartbeatMs);
+  monitor.unref();
+  const assertAuthority = async () => {
+    await renewal;
+    if (leaseFailure) throw leaseFailure;
+    await renewPublicationLease(studio, input.jobId, input.claimToken);
+    await assertPublicationFence(studio, input);
+  };
+  try {
+    await assertAuthority();
+    const result = await operation(assertAuthority);
+    await renewal;
+    if (leaseFailure) throw leaseFailure;
+    return result;
+  } finally {
+    stopped = true;
+    clearInterval(monitor);
+    await renewal.catch(() => undefined);
+  }
+}
+
+async function loadJob(
+  studio: Pick<DatabaseClient, "publicationJob">,
+  jobId: string,
+) {
   return studio.publicationJob.findUniqueOrThrow({
     where: { id: jobId },
     include: {
       situation: true,
       candidateSnapshot: true,
+      receipt: true,
       targetRevision: {
         include: {
           artifacts: {
@@ -748,6 +1007,45 @@ async function loadJob(studio: DatabaseClient, jobId: string) {
       attempts: { orderBy: { attempt: "desc" }, take: 1 },
     },
   });
+}
+
+async function startPublicationAttempt(
+  studio: DatabaseClient,
+  jobId: string,
+  claimToken?: string,
+) {
+  return studio.$transaction(
+    async (transaction) => {
+      await transaction.$queryRaw`
+        SELECT "id"
+          FROM "publication_jobs"
+         WHERE "id" = ${jobId}::uuid
+         FOR UPDATE
+      `;
+      const job = await loadJob(transaction, jobId);
+      if (job.claimToken !== (claimToken ?? null))
+        throw new Error(
+          "Publication authority was lost before the attempt could start.",
+        );
+      const nextAttempt = (job.attempts[0]?.attempt ?? 0) + 1;
+      await transaction.publicationAttempt.updateMany({
+        where: { jobId, finishedAt: null },
+        data: {
+          finishedAt: new Date(),
+          failureCode: "PUBLISHER_PROCESS_INTERRUPTED",
+          reconciledState: jsonInput({
+            outcome: "INTERRUPTED_BEFORE_RETRY",
+            supersededByAttempt: nextAttempt,
+          }),
+        },
+      });
+      const attempt = await transaction.publicationAttempt.create({
+        data: { jobId, attempt: nextAttempt },
+      });
+      return { attempt, job };
+    },
+    { isolationLevel: "Serializable" },
+  );
 }
 
 async function targetProjection(
@@ -820,6 +1118,7 @@ async function buildCandidate(
   studio: DatabaseClient,
   leadershipUrl: string,
   job: ClaimedJob,
+  claimToken?: string,
 ) {
   const bodyArtifact = job.targetRevision.artifacts.find(
     (artifact) => artifact.kind === "SITUATION",
@@ -847,24 +1146,12 @@ async function buildCandidate(
     observedReleaseId: observed.identity.releaseId,
   });
   if (decision.kind === "NEEDS_REFRESH") {
-    await studio.publicationJob.update({
-      where: { id: job.id },
-      data: {
-        state: "NEEDS_REFRESH",
-        failureCode: "TARGET_CHANGED",
-        observedReleaseId: observed.identity.releaseId,
-        expectedPointerGeneration: BigInt(observed.identity.generation),
-        finishedAt: new Date(),
-        claimToken: null,
-        leaseExpiresAt: null,
-      },
-    });
-    await event(studio, job.id, "CONFLICTED", {
+    throw new PublisherNeedsRefreshError({
       observedReleaseId: observed.identity.releaseId,
       observedBundleHash,
       baseBundleHash: job.baseBundleHash,
+      expectedPointerGeneration: BigInt(observed.identity.generation),
     });
-    return null;
   }
 
   await event(studio, job.id, "POINTER_OBSERVED", {
@@ -1069,6 +1356,7 @@ async function buildCandidate(
       changedArtifacts,
     };
     validateCandidate(candidate);
+    await renewPublicationLease(studio, job.id, claimToken);
     await studio.publicationCandidateSnapshot.upsert({
       where: { jobId: job.id },
       create: {
@@ -1124,8 +1412,13 @@ async function buildCandidate(
       candidate,
       observed.identity.releaseId,
     );
-    await studio.publicationJob.update({
-      where: { id: job.id },
+    await renewPublicationLease(studio, job.id, claimToken);
+    const transitioned = await studio.publicationJob.updateMany({
+      where: {
+        id: job.id,
+        claimToken: claimToken ?? null,
+        state: { in: ["REQUESTED", "ASSEMBLING", "PROMOTING"] },
+      },
       data: {
         observedReleaseId: candidate.parentReleaseId,
         expectedPointerGeneration: candidate.expectedGeneration,
@@ -1135,6 +1428,10 @@ async function buildCandidate(
         state: "PROMOTING",
       },
     });
+    if (transitioned.count !== 1)
+      throw new Error(
+        "Publication authority was lost before promotion could begin.",
+      );
     await event(studio, job.id, "VALIDATED", {
       targetBundleHash: job.targetBundleHash,
       manifestHash: candidate.manifestHash,
@@ -2046,7 +2343,14 @@ async function insertScopedProjection(
   }
 }
 
-async function insertAndPromote(client: Client, candidate: CandidateSnapshot) {
+async function insertAndPromote(
+  client: Client,
+  candidate: CandidateSnapshot,
+  authority: {
+    beforePromotion: () => Promise<void>;
+    beforeCommit: () => Promise<void>;
+  },
+) {
   await client.query("BEGIN");
   try {
     const existing = await client.query<{
@@ -2092,6 +2396,7 @@ async function insertAndPromote(client: Client, candidate: CandidateSnapshot) {
         await client.query("ROLLBACK");
         return { inserted: false, pointerChanged: true };
       }
+      await authority.beforePromotion();
       await client.query(
         `
           SELECT *
@@ -2107,6 +2412,7 @@ async function insertAndPromote(client: Client, candidate: CandidateSnapshot) {
           `Situation Studio publication retry ${candidate.publicationId}`,
         ],
       );
+      await authority.beforeCommit();
       await client.query("COMMIT");
       return { inserted: false };
     }
@@ -2246,6 +2552,7 @@ async function insertAndPromote(client: Client, candidate: CandidateSnapshot) {
       `,
       [candidate.releaseId, candidate.publicationId, candidate.manifestHash],
     );
+    await authority.beforePromotion();
     await client.query(
       `
         SELECT *
@@ -2261,6 +2568,7 @@ async function insertAndPromote(client: Client, candidate: CandidateSnapshot) {
         `Situation Studio publication ${candidate.publicationId}`,
       ],
     );
+    await authority.beforeCommit();
     await client.query("COMMIT");
     return { inserted: true };
   } catch (error) {
@@ -2336,19 +2644,32 @@ export async function reconcilePublicationRecovery(
         })
       )
         continue;
+      const reconciledAt = new Date();
       const changed = await dependencies.studio.$transaction(
         async (transaction) => {
+          await lockPublicationCoordination(transaction);
           const updated = await transaction.publicationJob.updateMany({
             where: { id: recovery.id, state: "RECOVERY_REQUIRED" },
             data: {
               state: "RESTORED",
-              finishedAt: new Date(),
+              finishedAt: reconciledAt,
               failureCode: "VERIFICATION_FAILED_RESTORED",
               claimToken: null,
               leaseExpiresAt: null,
             },
           });
           if (updated.count !== 1) return false;
+          await transaction.publicationAttempt.updateMany({
+            where: { jobId: recovery.id, finishedAt: null },
+            data: {
+              finishedAt: reconciledAt,
+              failureCode: "PUBLICATION_RECOVERY_RECONCILED",
+              reconciledState: jsonInput({
+                outcome: "RESTORED",
+                reconciledAfterRuntimeConvergence: true,
+              }),
+            },
+          });
           const aggregate = await transaction.publicationEvent.aggregate({
             where: { jobId: recovery.id },
             _max: { sequence: true },
@@ -2416,16 +2737,20 @@ async function restorePrevious(
 async function finalizeSuccess(
   studio: DatabaseClient,
   job: ClaimedJob,
+  attemptId: string,
+  claimToken: string | undefined,
   candidate: CandidateSnapshot,
   identity: { releaseId: string; manifestHash: string; generation: bigint },
   runtime: RuntimeIdentity,
   capabilities: LeadershipRuntimeCapabilities,
   routeProof: RuntimeRouteProof,
   producerCommit: string,
+  beforeCommit?: () => Promise<void>,
 ) {
   const productionBundleHash = bundleHash(candidate.targetBundle);
   await studio.$transaction(
     async (transaction) => {
+      await lockPublicationCoordination(transaction);
       const currentJob = await transaction.publicationJob.findUniqueOrThrow({
         where: { id: job.id },
       });
@@ -2442,6 +2767,7 @@ async function finalizeSuccess(
       if (
         currentJob.checkoutFence !== job.checkoutFence ||
         currentJob.state !== "VERIFYING" ||
+        currentJob.claimToken !== (claimToken ?? null) ||
         !checkout ||
         checkout.releasedAt ||
         checkout.fence !== job.checkoutFence ||
@@ -2563,8 +2889,12 @@ async function finalizeSuccess(
         where: { id: job.targetRevision.draftId },
         data: { state: "ARCHIVED", archivedAt: new Date() },
       });
-      await transaction.publicationJob.update({
-        where: { id: job.id },
+      const completedJob = await transaction.publicationJob.updateMany({
+        where: {
+          id: job.id,
+          state: "VERIFYING",
+          claimToken: claimToken ?? null,
+        },
         data: {
           state: "SUCCEEDED",
           finishedAt: new Date(),
@@ -2573,6 +2903,8 @@ async function finalizeSuccess(
           leaseExpiresAt: null,
         },
       });
+      if (completedJob.count !== 1)
+        throw new Error("Publication authority was lost during finalization.");
       await transaction.backupReceipt.create({
         data: {
           publicationJobId: job.id,
@@ -2595,22 +2927,35 @@ async function finalizeSuccess(
           },
         },
       });
+      await beforeCommit?.();
+      await appendPublicationEvent(transaction, job.id, "VERIFIED", {
+        releaseId: identity.releaseId,
+        manifestHash: identity.manifestHash,
+        runtimeReleaseId: runtime.releaseId,
+        runtimeManifestHash: runtime.manifestHash,
+        capabilityDigest: capabilities.capabilityDigest,
+        typedParityCode: leadershipTypedParityPredicate,
+        routeProbeCode: routeProof.code,
+        routeHttpStatus: routeProof.httpStatus,
+      });
+      await appendPublicationEvent(transaction, job.id, "SUCCEEDED", {
+        releaseId: candidate.releaseId,
+      });
+      await transaction.publicationAttempt.update({
+        where: { id: attemptId },
+        data: {
+          finishedAt: new Date(),
+          failureCode: null,
+          reconciledState: jsonInput({
+            outcome: "SUCCEEDED",
+            releaseId: candidate.releaseId,
+            manifestHash: candidate.manifestHash,
+          }),
+        },
+      });
     },
     { isolationLevel: "Serializable" },
   );
-  await event(studio, job.id, "VERIFIED", {
-    releaseId: identity.releaseId,
-    manifestHash: identity.manifestHash,
-    runtimeReleaseId: runtime.releaseId,
-    runtimeManifestHash: runtime.manifestHash,
-    capabilityDigest: capabilities.capabilityDigest,
-    typedParityCode: leadershipTypedParityPredicate,
-    routeProbeCode: routeProof.code,
-    routeHttpStatus: routeProof.httpStatus,
-  });
-  await event(studio, job.id, "SUCCEEDED", {
-    releaseId: candidate.releaseId,
-  });
 }
 
 async function candidateFromPersisted(
@@ -2736,9 +3081,16 @@ async function candidateFromPersisted(
   }
 }
 
+function safePublicationFailureDetail(error: unknown) {
+  if (!(error instanceof PublisherRuntimeConvergenceError)) return null;
+  const parsed = publicationFailureDetailSchema.safeParse(error.failureDetail);
+  return parsed.success ? parsed.data : null;
+}
+
 function publicationFailureCode(error: unknown) {
   if (error instanceof LeadershipCapabilityError) return error.code;
   if (error instanceof PublisherCandidateContractError) return error.code;
+  if (error instanceof PublisherRuntimeConvergenceError) return error.code;
   if (error instanceof PublisherVerificationError) return error.code;
   if (
     error instanceof Error &&
@@ -2754,12 +3106,130 @@ function restoredPublicationFailureCode(failureCode: string) {
   if (failureCode === "AFFECTED_ROUTE_VERIFICATION_FAILED")
     return "AFFECTED_ROUTE_VERIFICATION_FAILED_RESTORED";
   if (
+    failureCode === "RUNTIME_HEALTH_UNAVAILABLE" ||
+    failureCode === "RUNTIME_HEALTH_INVALID_RESPONSE" ||
+    failureCode === "RUNTIME_IDENTITY_MISMATCH"
+  )
+    return `${failureCode}_RESTORED`;
+  if (
     failureCode === "RUNTIME_CAPABILITY_UNAVAILABLE" ||
     failureCode === "UNSUPPORTED_VERSION_PAIR" ||
     failureCode === "UNSUPPORTED_CONTRACT_IDENTITY"
   )
     return `${failureCode}_RESTORED`;
   return "VERIFICATION_FAILED_RESTORED";
+}
+
+async function terminalizePublicationOutcome(
+  studio: DatabaseClient,
+  input: {
+    jobId: string;
+    attemptId: string;
+    state: "NEEDS_REFRESH" | "RESTORED" | "RECOVERY_REQUIRED" | "FAILED";
+    jobFailureCode: string;
+    finishJob: boolean;
+    eventKind: PublicationEventKind;
+    eventPayload: Record<string, unknown>;
+    attemptFailureCode: string | null;
+    reconciledState: Record<string, unknown>;
+    observedReleaseId?: string;
+    expectedPointerGeneration?: bigint;
+    claimToken?: string;
+    expectedStates: Array<
+      | "REQUESTED"
+      | "ASSEMBLING"
+      | "PROMOTING"
+      | "VERIFYING"
+      | "RECOVERY_REQUIRED"
+    >;
+  },
+) {
+  const finishedAt = new Date();
+  await studio.$transaction(
+    async (transaction) => {
+      await lockPublicationCoordination(transaction);
+      const updated = await transaction.publicationJob.updateMany({
+        where: {
+          id: input.jobId,
+          claimToken: input.claimToken ?? null,
+          state: { in: input.expectedStates },
+        },
+        data: {
+          state: input.state,
+          finishedAt: input.finishJob ? finishedAt : undefined,
+          failureCode: input.jobFailureCode,
+          claimToken: null,
+          leaseExpiresAt: null,
+          observedReleaseId: input.observedReleaseId,
+          expectedPointerGeneration: input.expectedPointerGeneration,
+        },
+      });
+      if (updated.count !== 1)
+        throw new Error(
+          "Publication authority was lost before terminal state could be recorded.",
+        );
+      await appendPublicationEvent(
+        transaction,
+        input.jobId,
+        input.eventKind,
+        input.eventPayload,
+      );
+      await transaction.publicationAttempt.update({
+        where: { id: input.attemptId },
+        data: {
+          finishedAt,
+          failureCode: input.attemptFailureCode,
+          reconciledState: jsonInput(input.reconciledState),
+        },
+      });
+    },
+    { isolationLevel: "Serializable" },
+  );
+}
+
+async function beginAutomaticRestoration(
+  studio: DatabaseClient,
+  input: {
+    jobId: string;
+    previousReleaseId: string | null;
+    reason: string;
+    failureDetail: PublicationFailureDetail | null;
+    claimToken?: string;
+  },
+) {
+  await studio.$transaction(
+    async (transaction) => {
+      await lockPublicationCoordination(transaction);
+      const updated = await transaction.publicationJob.updateMany({
+        where: {
+          id: input.jobId,
+          claimToken: input.claimToken ?? null,
+          state: { in: ["PROMOTING", "VERIFYING"] },
+        },
+        data: {
+          state: "RECOVERY_REQUIRED",
+          failureCode: "AUTOMATIC_RESTORATION_IN_PROGRESS",
+        },
+      });
+      if (updated.count !== 1)
+        throw new Error(
+          "Publication authority was lost before restoration could begin.",
+        );
+      await appendPublicationEvent(
+        transaction,
+        input.jobId,
+        "RESTORE_STARTED",
+        {
+          previousReleaseId: input.previousReleaseId,
+          reason: input.reason,
+          ...(input.failureDetail
+            ? { failureDetail: input.failureDetail }
+            : {}),
+        },
+      );
+    },
+    { isolationLevel: "Serializable" },
+  );
 }
 
 export async function processPublicationJob(
@@ -2769,21 +3239,20 @@ export async function processPublicationJob(
 ) {
   const { studio, leadershipPublisherUrl } = dependencies;
   await renewPublicationLease(studio, jobId, claimToken);
-  let job = await loadJob(studio, jobId);
-  const lastAttempt = job.attempts[0]?.attempt ?? 0;
-  const attempt = await studio.publicationAttempt.create({
-    data: { jobId, attempt: lastAttempt + 1 },
-  });
+  const started = await startPublicationAttempt(studio, jobId, claimToken);
+  let job = started.job;
+  const { attempt } = started;
   const leadership = new Client({
     connectionString: leadershipPublisherUrl,
     application_name: "situation-studio-publisher",
     statement_timeout: 120_000,
   });
-  await leadership.connect();
   let promoted = false;
+  let promotionAttempted = false;
   let activeCandidate: CandidateSnapshot | null = null;
   let activeCapabilities: LeadershipRuntimeCapabilities | null = null;
   try {
+    await leadership.connect();
     const external = await leadership.query<{
       id: string;
       manifest_hash: string;
@@ -2834,17 +3303,12 @@ export async function processPublicationJob(
       await dependencies.runtimeCapabilities(),
     );
     if (!candidate)
-      candidate = await buildCandidate(studio, leadershipPublisherUrl, job);
-    if (!candidate) {
-      await studio.publicationAttempt.update({
-        where: { id: attempt.id },
-        data: {
-          finishedAt: new Date(),
-          reconciledState: { outcome: "NEEDS_REFRESH" },
-        },
-      });
-      return;
-    }
+      candidate = await buildCandidate(
+        studio,
+        leadershipPublisherUrl,
+        job,
+        claimToken,
+      );
     activeCandidate = candidate;
     await dependencies.afterBoundary?.("CANDIDATE_PERSISTED");
     await renewPublicationLease(studio, jobId, claimToken);
@@ -2853,38 +3317,80 @@ export async function processPublicationJob(
       situationId: job.situationId,
       checkoutId: job.checkoutId,
       checkoutFence: job.checkoutFence,
+      claimToken,
     });
 
     const before = await databaseIdentity(leadership);
     if (before.releaseId !== candidate.releaseId) {
-      const insertion = await insertAndPromote(leadership, candidate);
+      promotionAttempted = true;
+      const insertion = await withPublicationLeaseHeartbeat(
+        studio,
+        {
+          jobId,
+          situationId: job.situationId,
+          checkoutId: job.checkoutId,
+          checkoutFence: job.checkoutFence,
+          claimToken,
+          heartbeatMs: dependencies.publicationLeaseHeartbeatMs,
+        },
+        (assertAuthority) =>
+          insertAndPromote(leadership, candidate, {
+            beforePromotion: async () => {
+              await dependencies.afterBoundary?.("LEADERSHIP_PROMOTION_READY");
+              await assertAuthority();
+            },
+            beforeCommit: async () => {
+              await dependencies.afterBoundary?.(
+                "LEADERSHIP_PROMOTION_COMMIT_READY",
+              );
+              await assertAuthority();
+            },
+          }),
+      );
       if (insertion.pointerChanged) {
         // No candidate rows committed. Re-observe and automatically rebase on
         // the next durable attempt.
-        await studio.publicationCandidateSnapshot.delete({
-          where: { jobId },
-        });
-        await studio.publicationJob.update({
-          where: { id: jobId },
-          data: {
-            state: "ASSEMBLING",
-            leadershipReleaseId: null,
-            leadershipManifestHash: null,
-            expectedPointerGeneration: null,
-            observedReleaseId: null,
-            claimToken: null,
-            leaseExpiresAt: null,
+        await studio.$transaction(
+          async (transaction) => {
+            await lockPublicationCoordination(transaction);
+            await transaction.publicationCandidateSnapshot.delete({
+              where: { jobId },
+            });
+            const rebased = await transaction.publicationJob.updateMany({
+              where: {
+                id: jobId,
+                state: "PROMOTING",
+                claimToken: claimToken ?? null,
+              },
+              data: {
+                state: "ASSEMBLING",
+                leadershipReleaseId: null,
+                leadershipManifestHash: null,
+                expectedPointerGeneration: null,
+                observedReleaseId: null,
+                claimToken: null,
+                leaseExpiresAt: null,
+              },
+            });
+            if (rebased.count !== 1)
+              throw new Error(
+                "Publication authority was lost before pointer rebase.",
+              );
+            await transaction.publicationAttempt.update({
+              where: { id: attempt.id },
+              data: {
+                finishedAt: new Date(),
+                reconciledState: jsonInput({
+                  outcome: "POINTER_REBASE_RETRY",
+                }),
+              },
+            });
           },
-        });
-        await studio.publicationAttempt.update({
-          where: { id: attempt.id },
-          data: {
-            finishedAt: new Date(),
-            reconciledState: { outcome: "POINTER_REBASE_RETRY" },
-          },
-        });
+          { isolationLevel: "Serializable" },
+        );
         return;
       }
+      await dependencies.afterBoundary?.("LEADERSHIP_PROMOTION_COMMITTED");
       await event(studio, jobId, "RELEASE_INSERTED", {
         releaseId: candidate.releaseId,
         manifestHash: candidate.manifestHash,
@@ -2899,27 +3405,34 @@ export async function processPublicationJob(
       throw new Error("Leadership promotion did not select the candidate.");
     await dependencies.afterBoundary?.("LEADERSHIP_PROMOTED");
     await renewPublicationLease(studio, jobId, claimToken);
-    await studio.publicationJob.update({
-      where: { id: jobId },
+    const verifying = await studio.publicationJob.updateMany({
+      where: {
+        id: jobId,
+        state: { in: ["PROMOTING", "VERIFYING"] },
+        claimToken: claimToken ?? null,
+      },
       data: {
         state: "VERIFYING",
         leaseExpiresAt: new Date(Date.now() + 180_000),
       },
     });
+    if (verifying.count !== 1)
+      throw new Error(
+        "Publication authority was lost before verification could begin.",
+      );
     await event(studio, jobId, "POINTER_ADVANCED", {
       releaseId: promotedIdentity.releaseId,
       manifestHash: promotedIdentity.manifestHash,
       generation: promotedIdentity.generation.toString(),
     });
-    const runtime = await convergedRuntimeIdentity(dependencies, {
-      releaseId: candidate.releaseId,
-      manifestHash: candidate.manifestHash,
-    });
-    if (
-      runtime.releaseId !== candidate.releaseId ||
-      runtime.manifestHash !== candidate.manifestHash
-    )
-      throw new Error("Running Leadership application identity differs.");
+    const runtime = await convergedRuntimeIdentity(
+      dependencies,
+      {
+        releaseId: candidate.releaseId,
+        manifestHash: candidate.manifestHash,
+      },
+      () => renewPublicationLease(studio, jobId, claimToken),
+    );
     if (!dependencies.runtimeRouteProof)
       throw new PublisherVerificationError(
         "Affected-route verification is not configured.",
@@ -2952,44 +3465,101 @@ export async function processPublicationJob(
     await finalizeSuccess(
       studio,
       job,
+      attempt.id,
+      claimToken,
       candidate,
       promotedIdentity,
       runtime,
       activeCapabilities,
       routeProof,
       dependencies.producerCommit,
-    );
-    await studio.publicationAttempt.update({
-      where: { id: attempt.id },
-      data: {
-        finishedAt: new Date(),
-        reconciledState: {
-          outcome: "SUCCEEDED",
-          releaseId: candidate.releaseId,
-          manifestHash: candidate.manifestHash,
-        },
+      async () => {
+        await dependencies.afterBoundary?.("STUDIO_SUCCESS_FINALIZING");
       },
-    });
+    );
+    await dependencies.afterBoundary?.("STUDIO_SUCCESS_COMMITTED");
   } catch (error) {
     if (error instanceof PublisherCrashInjectionError) throw error;
-    dependencies.onFailure?.(error);
+    if (error instanceof PublisherNeedsRefreshError) {
+      await terminalizePublicationOutcome(studio, {
+        jobId,
+        attemptId: attempt.id,
+        state: "NEEDS_REFRESH",
+        jobFailureCode: "TARGET_CHANGED",
+        finishJob: true,
+        eventKind: "CONFLICTED",
+        eventPayload: {
+          observedReleaseId: error.detail.observedReleaseId,
+          observedBundleHash: error.detail.observedBundleHash,
+          baseBundleHash: error.detail.baseBundleHash,
+        },
+        attemptFailureCode: null,
+        reconciledState: { outcome: "NEEDS_REFRESH" },
+        observedReleaseId: error.detail.observedReleaseId,
+        expectedPointerGeneration: error.detail.expectedPointerGeneration,
+        claimToken,
+        expectedStates: ["REQUESTED", "ASSEMBLING", "PROMOTING"],
+      });
+      return;
+    }
     const failureCode = publicationFailureCode(error);
+    if (failureCode === "PUBLICATION_AUTHORITY_LOST") {
+      dependencies.onFailure?.(error);
+      throw error;
+    }
+    const failureDetail = safePublicationFailureDetail(error);
+    let recoveryFailureDetail: PublicationFailureDetail | null = null;
+    let authoritativeJobReloaded = false;
+    if (!(error instanceof PublisherCandidateContractError)) {
+      try {
+        job = await loadJob(studio, jobId);
+        authoritativeJobReloaded = true;
+      } catch {
+        // A failed authoritative reload cannot make a possibly committed
+        // Leadership promotion safe to classify as a normal failure.
+      }
+    }
+    if (promoted && !authoritativeJobReloaded) {
+      dependencies.onFailure?.(error);
+      throw error;
+    }
+    const committedCandidate = activeCandidate ?? job.candidateSnapshot;
+    const studioSuccessCommitted =
+      promoted &&
+      job.state === "SUCCEEDED" &&
+      Boolean(committedCandidate) &&
+      job.receipt?.expectedReleaseId === committedCandidate?.releaseId &&
+      job.receipt?.expectedManifestHash === committedCandidate?.manifestHash;
+    if (studioSuccessCommitted) return;
+    if (promoted && job.state === "SUCCEEDED") {
+      dependencies.onFailure?.(error);
+      throw new Error(
+        "Studio reports publication success without matching verification evidence.",
+        { cause: error },
+      );
+    }
+    dependencies.onFailure?.(error);
     const promotionStateUnverified =
       !promoted &&
       !(error instanceof PublisherCandidateContractError) &&
-      Boolean(job.candidateSnapshot) &&
-      (job.state === "PROMOTING" || job.state === "VERIFYING");
+      (promotionAttempted ||
+        (Boolean(job.candidateSnapshot) &&
+          (job.state === "PROMOTING" || job.state === "VERIFYING")) ||
+        (!authoritativeJobReloaded && Boolean(activeCandidate)));
     if (promoted) {
-      job = await loadJob(studio, jobId);
       const snapshot = job.candidateSnapshot;
       if (!snapshot)
         throw new Error("Promoted job has no candidate snapshot.", {
           cause: error,
         });
-      await event(studio, jobId, "RESTORE_STARTED", {
+      await beginAutomaticRestoration(studio, {
+        jobId,
         previousReleaseId: job.previousReleaseId,
         reason: failureCode,
+        failureDetail,
+        claimToken,
       });
+      let restored: Awaited<ReturnType<typeof databaseIdentity>>;
       try {
         const current = await databaseIdentity(leadership);
         const candidate =
@@ -3000,110 +3570,163 @@ export async function processPublicationJob(
         if (!candidate)
           throw new Error("Candidate disappeared during recovery.");
         await restorePrevious(leadership, candidate, current.generation);
-        const restored = await databaseIdentity(leadership);
-        const runtime = await convergedRuntimeIdentity(dependencies, {
-          releaseId: restored.releaseId,
-          manifestHash: restored.manifestHash,
-        });
+        restored = await databaseIdentity(leadership);
+        const runtime = await convergedRuntimeIdentity(
+          dependencies,
+          {
+            releaseId: restored.releaseId,
+            manifestHash: restored.manifestHash,
+          },
+          () => renewPublicationLease(studio, jobId, claimToken),
+        );
         if (
           restored.releaseId !== candidate.parentReleaseId ||
           runtime.releaseId !== candidate.parentReleaseId ||
           restored.manifestHash !== runtime.manifestHash
         )
           throw new Error("Prior official release could not be verified.");
-        await studio.publicationJob.update({
-          where: { id: jobId },
-          data: {
-            state: "RESTORED",
-            finishedAt: new Date(),
-            failureCode: restoredPublicationFailureCode(failureCode),
-            claimToken: null,
-            leaseExpiresAt: null,
+      } catch (restorationError) {
+        recoveryFailureDetail = safePublicationFailureDetail(restorationError);
+        await terminalizePublicationOutcome(studio, {
+          jobId,
+          attemptId: attempt.id,
+          state: "RECOVERY_REQUIRED",
+          jobFailureCode: "AUTOMATIC_RESTORATION_FAILED",
+          finishJob: false,
+          eventKind: "RECOVERY_REQUIRED",
+          eventPayload: {
+            failureCode: "AUTOMATIC_RESTORATION_FAILED",
+            ...(failureDetail ? { failureDetail } : {}),
+            ...(recoveryFailureDetail ? { recoveryFailureDetail } : {}),
           },
+          attemptFailureCode: "POST_PROMOTION_VERIFICATION",
+          reconciledState: {
+            failureCode,
+            promoted,
+            promotionAttempted,
+            authoritativeJobReloaded,
+            promotionStateUnverified,
+            ...(failureDetail ? { failureDetail } : {}),
+            ...(recoveryFailureDetail ? { recoveryFailureDetail } : {}),
+          },
+          claimToken,
+          expectedStates: ["RECOVERY_REQUIRED"],
         });
-        await event(studio, jobId, "RESTORED", {
+        return;
+      }
+      await terminalizePublicationOutcome(studio, {
+        jobId,
+        attemptId: attempt.id,
+        state: "RESTORED",
+        jobFailureCode: restoredPublicationFailureCode(failureCode),
+        finishJob: true,
+        eventKind: "RESTORED",
+        eventPayload: {
           releaseId: restored.releaseId,
           manifestHash: restored.manifestHash,
           generation: restored.generation.toString(),
-        });
-      } catch {
-        await studio.publicationJob.update({
-          where: { id: jobId },
-          data: {
-            state: "RECOVERY_REQUIRED",
-            failureCode: "AUTOMATIC_RESTORATION_FAILED",
-            claimToken: null,
-            leaseExpiresAt: null,
-          },
-        });
-        await event(studio, jobId, "RECOVERY_REQUIRED", {
-          failureCode: "AUTOMATIC_RESTORATION_FAILED",
-        });
-      }
-    } else if (promotionStateUnverified) {
-      await studio.publicationJob.update({
-        where: { id: jobId },
-        data: {
-          state: "RECOVERY_REQUIRED",
-          failureCode: "PROMOTION_STATE_UNVERIFIED",
-          claimToken: null,
-          leaseExpiresAt: null,
         },
-      });
-      await event(studio, jobId, "RECOVERY_REQUIRED", {
-        failureCode: "PROMOTION_STATE_UNVERIFIED",
-      });
-    } else {
-      await studio.publicationJob.update({
-        where: { id: jobId },
-        data: {
-          state: "FAILED",
-          finishedAt: new Date(),
-          failureCode,
-          claimToken: null,
-          leaseExpiresAt: null,
-        },
-      });
-      await event(studio, jobId, "FAILED", { failureCode });
-    }
-    await studio.publicationAttempt.update({
-      where: { id: attempt.id },
-      data: {
-        finishedAt: new Date(),
-        failureCode: promoted
-          ? "POST_PROMOTION_VERIFICATION"
-          : promotionStateUnverified
-            ? "PROMOTION_STATE_UNVERIFIED"
-            : failureCode,
+        attemptFailureCode: "POST_PROMOTION_VERIFICATION",
         reconciledState: {
           failureCode,
           promoted,
+          promotionAttempted,
+          authoritativeJobReloaded,
           promotionStateUnverified,
+          ...(failureDetail ? { failureDetail } : {}),
         },
-      },
-    });
+        claimToken,
+        expectedStates: ["RECOVERY_REQUIRED"],
+      });
+    } else if (promotionStateUnverified) {
+      await terminalizePublicationOutcome(studio, {
+        jobId,
+        attemptId: attempt.id,
+        state: "RECOVERY_REQUIRED",
+        jobFailureCode: "PROMOTION_STATE_UNVERIFIED",
+        finishJob: false,
+        eventKind: "RECOVERY_REQUIRED",
+        eventPayload: {
+          failureCode: "PROMOTION_STATE_UNVERIFIED",
+          ...(failureDetail ? { failureDetail } : {}),
+        },
+        attemptFailureCode: "PROMOTION_STATE_UNVERIFIED",
+        reconciledState: {
+          failureCode,
+          promoted,
+          promotionAttempted,
+          authoritativeJobReloaded,
+          promotionStateUnverified,
+          ...(failureDetail ? { failureDetail } : {}),
+        },
+        claimToken,
+        expectedStates: ["REQUESTED", "ASSEMBLING", "PROMOTING", "VERIFYING"],
+      });
+    } else {
+      await terminalizePublicationOutcome(studio, {
+        jobId,
+        attemptId: attempt.id,
+        state: "FAILED",
+        jobFailureCode: failureCode,
+        finishJob: true,
+        eventKind: "FAILED",
+        eventPayload: {
+          failureCode,
+          ...(failureDetail ? { failureDetail } : {}),
+        },
+        attemptFailureCode: failureCode,
+        reconciledState: {
+          failureCode,
+          promoted,
+          promotionAttempted,
+          authoritativeJobReloaded,
+          promotionStateUnverified,
+          ...(failureDetail ? { failureDetail } : {}),
+        },
+        claimToken,
+        expectedStates: ["REQUESTED", "ASSEMBLING", "PROMOTING", "VERIFYING"],
+      });
+    }
   } finally {
-    await leadership.end();
+    await leadership.end().catch(() => undefined);
   }
 }
 
 export async function runtimeIdentityFromHealth(
   healthUrl: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<RuntimeIdentity> {
-  const response = await fetch(healthUrl, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(15_000),
-  });
+  const requestTimeoutMs = Math.max(
+    1,
+    Math.min(10_000, Math.floor(options.timeoutMs ?? 5_000)),
+  );
+  const requestSignal = AbortSignal.timeout(requestTimeoutMs);
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, requestSignal])
+    : requestSignal;
+  let response: Response;
+  try {
+    response = await fetch(healthUrl, {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+      redirect: "error",
+      signal,
+    });
+  } catch {
+    throw new PublisherRuntimeHealthError("UNAVAILABLE", null);
+  }
   if (!response.ok)
-    throw new Error(`Leadership health returned ${response.status}.`);
-  const body = z
+    throw new PublisherRuntimeHealthError("HTTP_STATUS", response.status);
+  const parsed = z
     .object({
       officialSnapshotId: z.uuid(),
       officialSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
     })
-    .parse(await response.json());
+    .safeParse(await response.json().catch(() => null));
+  if (!parsed.success)
+    throw new PublisherRuntimeHealthError("INVALID_RESPONSE", null);
   return {
-    releaseId: body.officialSnapshotId,
-    manifestHash: body.officialSnapshotHash,
+    releaseId: parsed.data.officialSnapshotId,
+    manifestHash: parsed.data.officialSnapshotHash,
   };
 }

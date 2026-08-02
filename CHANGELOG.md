@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed focused-lane rollout so the least-privilege review worker can read the active checkout fence used by lane claiming, and made release schema application verify that grant before candidate start.
 - Added receipt-level Operations diagnostics for recent publisher and backup failures, with safe typed explanations and allow-listed codes, and separated publication backup readiness from the state of the newest backup attempt.
 - Fixed follow-up deployment continuity when active checkouts have no running review by projecting the pre-migration no-owner state as Boolean `false`, matching the migrated non-null lane column instead of failing on an equivalent `null` representation.
 - Fixed remote deployment cutover so the complete SSH program is buffered before execution and subprocesses cannot consume unparsed shell source from standard input and falsely report a no-op cutover as successful.

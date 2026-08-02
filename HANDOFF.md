@@ -380,6 +380,33 @@ or legacy unstructured failure text is suppressed, and backup publication
 readiness is reported independently of the newest attempt. A new exact pushed
 commit and approval are required before another full preflight and deployment.
 
+The product owner authorized exact commit
+`a0c7937f2ca009ff18efb095345f79cccf00ce82`, the newer retained lease was
+released through its exact helper and token fence, and full preflight passed.
+Guarded attempt `20260802T113720Z` then created verified encrypted off-site
+backup receipt `9a98392e-34d5-4879-be84-84f94f9bf63b` (746,892 bytes,
+checksum `3f6730947d20b8abbe5e760ce9ef818567cf466f6dc658c52b69f21322751678`)
+and wrote continuity evidence proving both review hashes remained
+`649abf47d2247264917ee51a4c213b8222190bb70a218127d030a547a5f4b269`
+and both lane hashes matched at
+`48f0eb54c66386b108f3c3174e59e0becbf53751cd961c6f9e9673048d4472a8`.
+
+Candidate readiness failed closed after start because the new focused-lane
+claim query reads `situation_checkouts`, but the least-privilege
+`situation_studio_review_worker` role had not been granted `SELECT` on that
+table. The worker crashed with PostgreSQL `42501`, so its heartbeat could not
+become fresh and `/health/ready` remained 503 through the bounded window. The
+deployment restored and locally verified release `20260729T085659Z`; the
+current pointer and all three processes use that release, live and ready return
+200, no deployment shell or lease remains, publication drain is `0|0|0`, no
+review is queued or running, and all review/lane hashes remain exact.
+
+The follow-up candidate adds only the missing checkout `SELECT` grant, extends
+the post-grant release-schema guard, and exercises the exact focused-lane join
+under the real PostgreSQL review role. Commit `a0c7937...` is pushed but must
+not be redeployed; a new exact pushed commit and fresh authorization are
+required before restarting from full preflight.
+
 The current candidate now enforces that prerequisite rather than relying on
 the runbook alone. Follow-up deployment preflight requires the dedicated backup
 user and protected environment, exact queue/nightly schedules, mandatory

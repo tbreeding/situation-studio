@@ -158,6 +158,11 @@ docker exec postgres16 psql \
         'INSERT'
       )
       AND has_table_privilege(
+        'situation_studio_review_worker',
+        'public.situation_checkouts',
+        'SELECT'
+      )
+      AND has_table_privilege(
         'situation_studio_web',
         'public.publication_events',
         'INSERT'

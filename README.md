@@ -10,10 +10,11 @@ checkpoint 7 of
 [SPEC-situation-studio-redesign.md](SPEC-situation-studio-redesign.md).
 Checkpoint 8 follow-up deployment remains incomplete. The additive focused-
 lane migration is applied and compatible with the verified 2026-07-29 release,
-which production still runs after the latest guarded attempt failed closed on
-an equivalent `null` versus `false` continuity representation. The current
-retained-lease boundary is recorded in [HANDOFF.md](HANDOFF.md) and the
-[production migration runbook](docs/runbooks/production-migration.md).
+which production still runs after the latest guarded attempt proved continuity
+but failed candidate readiness because the least-privilege review role could
+not read the checkout fence used by focused-lane claiming. The reconciled
+recovery boundary is recorded in [HANDOFF.md](HANDOFF.md) and the [production
+migration runbook](docs/runbooks/production-migration.md).
 Production content changes require a later, separately named approval.
 
 ## Runtime

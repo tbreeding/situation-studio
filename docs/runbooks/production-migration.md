@@ -70,6 +70,22 @@ keeping backup readiness independent of the newest attempt. It must be pushed
 and exactly approved, then restart from complete preflight rather than resuming
 the abandoned attempt.
 
+That exact candidate was authorized and attempt `20260802T113720Z` passed
+preflight, fresh encrypted off-site backup, migration, and continuity. Receipt
+`9a98392e-34d5-4879-be84-84f94f9bf63b` is verified, and its continuity marker
+proves unchanged review hash `649abf47d...` plus matching expected and actual
+lane hash `48f0eb54c...`. Candidate readiness then failed closed because the
+focused-lane claim query reads `situation_checkouts` while the review runtime
+role lacked `SELECT` on that table. PostgreSQL `42501` crashed the review
+worker, keeping readiness at 503. The deployment restored and verified the
+prior release and released its lease; no deployment shell or lease remains.
+
+Do not redeploy `a0c7937...`. The next candidate must grant only `SELECT` on
+`situation_checkouts` to `situation_studio_review_worker`, require that exact
+privilege in the post-grant schema guard, and run the focused-lane checkout
+fence join under that role in real PostgreSQL. Obtain exact commit approval and
+restart from full preflight.
+
 ## Read-only preflight
 
 Re-read repository cleanliness, official pointer identity, runtime health,

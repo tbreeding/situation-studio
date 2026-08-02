@@ -971,12 +971,21 @@ printf 'status:%s\\n' "\${status}"
   });
 
   test("the review worker can append system retry audits without broader audit mutation", async () => {
-    const grants = await readFile(runtimeGrantsPath, "utf8");
+    const [grants, releaseSchema] = await Promise.all([
+      readFile(runtimeGrantsPath, "utf8"),
+      readFile(releaseSchemaPath, "utf8"),
+    ]);
     expect(grants).toContain(
       "GRANT INSERT ON audit_events\n  TO situation_studio_review_worker;",
     );
     expect(grants).not.toContain(
       "GRANT SELECT, INSERT, UPDATE ON audit_events\n  TO situation_studio_review_worker;",
+    );
+    expect(grants).toContain(
+      "scoped_artifact_variants, situation_checkouts\n  TO situation_studio_review_worker;",
+    );
+    expect(releaseSchema).toContain(
+      "'situation_studio_review_worker',\n        'public.situation_checkouts',\n        'SELECT'",
     );
   });
 

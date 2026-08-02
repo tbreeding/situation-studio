@@ -83,7 +83,7 @@ GRANT INSERT ON audit_events
   TO situation_studio_review_worker;
 GRANT SELECT ON draft_revisions, draft_revision_artifacts, content_blobs,
   drafts, production_situation_versions, production_version_artifacts,
-  scoped_artifact_variants
+  scoped_artifact_variants, situation_checkouts
   TO situation_studio_review_worker;
 GRANT SELECT, INSERT, UPDATE ON process_heartbeats
   TO situation_studio_review_worker;

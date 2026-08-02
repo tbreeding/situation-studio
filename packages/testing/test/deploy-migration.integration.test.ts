@@ -30,6 +30,7 @@ const backupIdentityVerifierPath = path.join(
   root,
   "ops/verify-studio-backup-database-identity.sh",
 );
+const runtimeGrantsPath = path.join(root, "ops/grant-runtime-roles.sql");
 
 async function runSqlFile(
   databaseUrl: string,
@@ -460,6 +461,49 @@ test("the focused-review continuity projection preserves an empty lane", async (
       ],
       laneOwnerId: null,
     });
+  } finally {
+    await container.stop();
+  }
+});
+
+test("the review runtime role can read the checkout fence used by the focused lane", async () => {
+  const container = await new PostgreSqlContainer("postgres:16-alpine")
+    .withDatabase("situation_studio")
+    .start();
+  const databaseUrl = container
+    .getConnectionUri()
+    .replace(/^postgres:\/\//u, "postgresql://");
+  try {
+    for (const directory of (await readdir(migrationsRoot))
+      .filter((entry) => /^\d{14}_/u.test(entry))
+      .sort())
+      await runSqlFile(
+        databaseUrl,
+        path.join(migrationsRoot, directory, "migration.sql"),
+      );
+    await runSqlFile(databaseUrl, runtimeGrantsPath);
+
+    const client = new Client({ connectionString: databaseUrl });
+    await client.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL ROLE situation_studio_review_worker");
+      await expect(
+        client.query(`
+          SELECT job.id
+          FROM review_jobs job
+          JOIN situation_checkouts checkout
+            ON checkout.id = job.checkout_id
+           AND checkout.fence = job.checkout_fence
+           AND checkout.released_at IS NULL
+          WHERE job.lane_owner = true
+          FOR UPDATE OF job SKIP LOCKED
+        `),
+      ).resolves.toMatchObject({ rowCount: 0 });
+      await client.query("ROLLBACK");
+    } finally {
+      await client.end();
+    }
   } finally {
     await container.stop();
   }

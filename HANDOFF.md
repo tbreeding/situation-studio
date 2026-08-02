@@ -373,8 +373,12 @@ state, and never resume the attempt midway or remove the lease recursively.
 
 This candidate corrects the representation mismatch by coalescing the nullable
 pre-migration focused comparison to Boolean `false` and adds a real-PostgreSQL
-empty-lane continuity scenario. A new exact pushed commit and approval are
-required before another full preflight and deployment.
+empty-lane continuity scenario. It also closes the remaining Operations
+transparency gap: recent publisher and backup failures are separated by exact
+receipt, typed runtime explanations and allow-listed codes remain visible, raw
+or legacy unstructured failure text is suppressed, and backup publication
+readiness is reported independently of the newest attempt. A new exact pushed
+commit and approval are required before another full preflight and deployment.
 
 The current candidate now enforces that prerequisite rather than relying on
 the runbook alone. Follow-up deployment preflight requires the dedicated backup

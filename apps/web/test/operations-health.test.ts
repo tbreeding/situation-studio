@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   backupAttemptHealth,
   publicationRecoveryHealth,
+  safeOperationsFailureCode,
 } from "../src/server/operations-health";
 
 describe("Operations publication health", () => {
@@ -116,12 +117,36 @@ describe("Operations backup health", () => {
         state: "FAILED",
         verifiedAtLabel: null,
         readinessMode: "required",
+        failureCode: "DEPLOYMENT_BACKUP_FAILED",
       }),
     ).toEqual({
       value: "Failed",
       detail:
-        "The latest attempt failed; no new verified receipt was recorded.",
+        "The deployment backup command failed before a verified artifact was recorded for this receipt.",
       tone: "warning",
     });
+  });
+});
+
+describe("Operations receipt diagnostics", () => {
+  it("shows only bounded publisher and backup failure codes", () => {
+    expect(
+      safeOperationsFailureCode(
+        "publication",
+        "RUNTIME_IDENTITY_MISMATCH_RESTORED",
+      ),
+    ).toBe("RUNTIME_IDENTITY_MISMATCH_RESTORED");
+    expect(
+      safeOperationsFailureCode("backup", "DEPLOYMENT_BACKUP_FAILED"),
+    ).toBe("DEPLOYMENT_BACKUP_FAILED");
+    expect(
+      safeOperationsFailureCode(
+        "publication",
+        "password=secret publisher stderr",
+      ),
+    ).toBe("LEGACY_OR_UNSTRUCTURED_FAILURE");
+    expect(safeOperationsFailureCode("backup", "s3 secret access key")).toBe(
+      "LEGACY_OR_UNSTRUCTURED_FAILURE",
+    );
   });
 });

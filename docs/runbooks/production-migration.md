@@ -64,8 +64,11 @@ Obtain fresh authorization naming that state. Then re-read the exact token and
 use only the helper from release `20260802T095838Z`; never use recursive
 removal. Do not redeploy `ee2ab3a...`. The corrected candidate must coalesce
 the pre-migration nullable focused comparison to Boolean `false`, include a
-real-PostgreSQL empty-lane continuity test, be pushed and exactly approved, and
-restart from complete preflight rather than resuming the abandoned attempt.
+real-PostgreSQL empty-lane continuity test, and expose recent publisher and
+backup failures as separate safe receipt-level Operations evidence while
+keeping backup readiness independent of the newest attempt. It must be pushed
+and exactly approved, then restart from complete preflight rather than resuming
+the abandoned attempt.
 
 ## Read-only preflight
 

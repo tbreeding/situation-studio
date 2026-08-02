@@ -1,11 +1,18 @@
 import { AppShell } from "@/components/app-shell";
 import { OperationsDashboard } from "@/components/operations-dashboard";
+import { OperationsEvidence } from "@/components/operations-evidence";
 import { requireSession } from "@/server/auth/request";
 import { database } from "@/server/database";
+import { publicationBackupStatus } from "@/server/health/publication-backup-policy";
 import {
   backupAttemptHealth,
   publicationRecoveryHealth,
+  safeOperationsFailureCode,
 } from "@/server/operations-health";
+import {
+  buildPublicationStatusSnapshot,
+  type PublicationStatusRecord,
+} from "@/server/publication-status";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -20,8 +27,11 @@ export default async function OperationsPage() {
     reviewHeartbeat,
     recoveryRequired,
     historicalTerminalPublications,
+    terminalPublicationReceipts,
     sync,
-    backup,
+    backupReceipts,
+    latestVerifiedBackup,
+    latestRestoreDrill,
   ] = await Promise.all([
     database().user.findMany({
       orderBy: { displayName: "asc" },
@@ -44,18 +54,102 @@ export default async function OperationsPage() {
     database().publicationJob.count({
       where: { state: { in: ["FAILED", "RESTORED"] } },
     }),
+    database().publicationJob.findMany({
+      where: { state: { in: ["FAILED", "RESTORED", "RECOVERY_REQUIRED"] } },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+      select: {
+        id: true,
+        state: true,
+        failureCode: true,
+        createdAt: true,
+        finishedAt: true,
+        situation: { select: { title: true } },
+        events: {
+          orderBy: { sequence: "asc" },
+          select: {
+            sequence: true,
+            kind: true,
+            createdAt: true,
+            payload: true,
+          },
+        },
+      },
+    }),
     database().leadershipSyncCursor.findUnique({ where: { id: "official" } }),
-    database().backupReceipt.findFirst({ orderBy: { createdAt: "desc" } }),
+    database().backupReceipt.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 8,
+    }),
+    database().backupReceipt.findFirst({
+      where: { state: "VERIFIED" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    }),
+    database().backupReceipt.findFirst({
+      where: {
+        state: "VERIFIED",
+        OR: [
+          { restoreDrillAt: { not: null } },
+          { restoreDrillResult: { not: null } },
+        ],
+      },
+      orderBy: [
+        { restoreDrillAt: { sort: "desc", nulls: "first" } },
+        { createdAt: "desc" },
+        { id: "desc" },
+      ],
+    }),
   ]);
   const publicationHealth = publicationRecoveryHealth({
     recoveryRequired,
     historicalTerminal: historicalTerminalPublications,
   });
+  const backup = backupReceipts[0] ?? null;
   const backupHealth = backupAttemptHealth({
     state: backup?.state ?? null,
     verifiedAtLabel: backup?.verifiedAt?.toLocaleString() ?? null,
     readinessMode: process.env.SITUATION_STUDIO_BACKUP_READINESS_MODE,
+    failureCode: backup?.failureCode ?? null,
   });
+  const backupReadiness = publicationBackupStatus({
+    latestVerifiedBackup,
+    latestRestoreDrill,
+  });
+  const publicationEvidence = terminalPublicationReceipts.map((publication) => {
+    const snapshot = buildPublicationStatusSnapshot(
+      publication as PublicationStatusRecord,
+    );
+    return {
+      id: publication.id,
+      subject: publication.situation.title,
+      state: snapshot.state,
+      diagnosticCode: safeOperationsFailureCode(
+        "publication",
+        publication.failureCode,
+      ),
+      detail:
+        snapshot.terminal?.message ??
+        "The publisher did not record a safe terminal explanation.",
+      recordedAtLabel: (
+        publication.finishedAt ?? publication.createdAt
+      ).toLocaleString(),
+    };
+  });
+  const backupEvidence = backupReceipts.map((receipt) => ({
+    id: receipt.id,
+    subject: receipt.publicationJobId
+      ? `Publication ${receipt.publicationJobId}`
+      : "Scheduled or deployment backup",
+    state: receipt.state,
+    diagnosticCode: safeOperationsFailureCode("backup", receipt.failureCode),
+    detail: backupAttemptHealth({
+      state: receipt.state,
+      verifiedAtLabel: receipt.verifiedAt?.toLocaleString() ?? null,
+      readinessMode: process.env.SITUATION_STUDIO_BACKUP_READINESS_MODE,
+      failureCode: receipt.failureCode,
+    }).detail,
+    recordedAtLabel: receipt.createdAt.toLocaleString(),
+  }));
   return (
     <AppShell
       active="operations"
@@ -107,6 +201,11 @@ export default async function OperationsPage() {
                 : "not yet synchronized"}
             </small>
           </article>
+          <article className={backupReadiness.ready ? "" : "healthWarning"}>
+            <span>Backup readiness</span>
+            <strong>{backupReadiness.ready ? "Ready" : "Paused"}</strong>
+            <small>{backupReadiness.message}</small>
+          </article>
           <article
             className={
               backupHealth.tone === "warning"
@@ -121,6 +220,10 @@ export default async function OperationsPage() {
             <small>{backupHealth.detail}</small>
           </article>
         </section>
+        <OperationsEvidence
+          publications={publicationEvidence}
+          backups={backupEvidence}
+        />
         <OperationsDashboard
           csrfToken={session.csrfToken}
           users={users.map((user) => ({

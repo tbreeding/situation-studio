@@ -3066,7 +3066,7 @@ button {
 
 .healthStrip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
   margin: 2.2rem 0 1rem;
@@ -3291,12 +3291,78 @@ button {
   gap: 0.25rem;
 }
 
+.operationsEvidenceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.operationsEvidenceList > article {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1rem 1.3rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.operationsEvidenceList > article:last-child {
+  border-bottom: 0;
+}
+
+.operationsEvidenceHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.operationsEvidenceHeading > div {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.operationsEvidenceHeading code,
+.operationsEvidenceList footer code {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.operationsEvidenceHeading > span {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.operationsEvidenceList p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.operationsEvidenceList footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
 @media (max-width: 1060px) {
   .healthStrip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .operationsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .operationsEvidenceGrid {
     grid-template-columns: 1fr;
   }
 
@@ -3358,5 +3424,12 @@ button {
   .checkoutList article {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .operationsEvidenceHeading,
+  .operationsEvidenceList footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.35rem;
   }
 }

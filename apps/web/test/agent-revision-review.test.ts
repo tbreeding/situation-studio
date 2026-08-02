@@ -65,7 +65,7 @@ function proposal(changes: ReviewChangeView[]): ReviewProposalView {
 }
 
 describe("agent revision review presentation", () => {
-  it("counts safely applicable legacy section suggestions for Accept all", () => {
+  it("keeps every manual suggestion out of Accept all", () => {
     expect(
       reviewSuggestionCounts(
         proposal([
@@ -85,8 +85,8 @@ describe("agent revision review presentation", () => {
         ]),
       ),
     ).toEqual({
-      unresolvedAutomatic: 2,
-      unresolvedManual: 1,
+      unresolvedAutomatic: 1,
+      unresolvedManual: 2,
       unlinkedFindings: 1,
     });
     expect(reviewSuggestionCounts(proposal([]))).toEqual({

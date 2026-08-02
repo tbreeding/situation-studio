@@ -7,6 +7,8 @@ const bodySchema = z.object({
   fence: z.string().regex(/^\d+$/u),
   bundle: z.unknown(),
   body: z.string().max(2 * 1024 * 1024),
+  expectedParentRevisionId: z.uuid(),
+  expectedParentBundleHash: z.string().regex(/^[a-f0-9]{64}$/u),
   namedCheckpoint: z.string().min(1).max(160).optional(),
 });
 
@@ -31,6 +33,8 @@ export async function PUT(
       fence: BigInt(input.fence),
       bundle: input.bundle,
       body: input.body,
+      expectedParentRevisionId: input.expectedParentRevisionId,
+      expectedParentBundleHash: input.expectedParentBundleHash,
       ...(input.namedCheckpoint
         ? { namedCheckpoint: input.namedCheckpoint }
         : {}),
@@ -40,6 +44,10 @@ export async function PUT(
       revision: revision.revision,
       bundleHash: revision.bundleHash,
       savedAt: revision.createdAt.toISOString(),
+      bundle: revision.bundleManifest,
+      body:
+        revision.artifacts.find((artifact) => artifact.kind === "SITUATION")
+          ?.content.textBody ?? input.body,
     });
   } catch (error) {
     if (error instanceof WorkflowError)

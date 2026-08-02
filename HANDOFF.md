@@ -1,14 +1,251 @@
 # Situation Studio handoff
 
-Last updated: 2026-08-01
+Last updated: 2026-08-02
 
 ## Outcome
 
 Situation Studio is deployed on `rpi1` from the immutable release at
-`/home/admin/projects/situation-studio/releases/20260729T085659Z`. The deployed
-source is commit `70da5cae79d747204eeb6f1f8a4b6f61a997b586` on `main`. The
+`/home/admin/projects/situation-studio/releases/20260802T114927Z`. The deployed
+source is commit `328f9a8416f0b5ec1ad4d2a8e3c5e6336a2766d9` on `main`. The
 authenticated production workspace is
 `https://situation-studio.timsprototypes.com`.
+
+## Unreleased deterministic review-to-publication overhaul
+
+An isolated release worktree contains a local, not-yet-deployed reliability overhaul
+for **Run agent review → proposal decisions → Submit to production**. It has not
+changed production data, the deployed Studio release, or the official
+Leadership pointer. The product owner authorized the compatible production
+code/schema deployment on 2026-08-02; that authority does not include any real
+content publication, review decision, retry/resume, or Leadership pointer
+promotion/restoration.
+
+- The compatible Leadership release commit
+  `d15a92b8e91967f85a8b78ee7c2146a2154a56c0` is pushed to `origin/main`.
+  The exact 71-path Studio release candidate was forward-ported from the dirty
+  source worktree onto current `origin/main`; the unrelated inventory feature
+  and Leadership `docs/AUTHORING.md` overlap are excluded.
+- Final local Studio gates passed 48 unit-test files/457 tests, 5 integration
+  files/82 tests, and the 24-case browser matrix with 16 executed passes and 8
+  intentional project-scope skips across 1280px, 1440px, and 390px layouts.
+  The browser gate included console/page-error, accessibility, overflow, and
+  production-build HTTPS checks. The disposable databases and container were
+  removed after acceptance.
+
+- Leadership-owned `@leadership-field-guide/content-contracts` 0.3.0 now owns
+  the pure publishable-snapshot validator and compiler. Studio vendors archive
+  SHA-256
+  `ef9a723608977b3f9ea3c25bd1a7cd5f323871854937c0e462a21ca057ee9f7f`,
+  validation policy
+  `9131270fbc6a2e579ee10752fddf3f1f133b257a554666ea946bb76439deceee`,
+  validator digest
+  `0104cd5e4f02ed5172ca5b7c14e31a694e11319e703cbeb3eec4d226518fc53a`,
+  and compiler digest
+  `5a0b47948760e9134eaac1727bc658de56c87e52bcc9e03db424bb80ea2d4c95`.
+- Studio `situation-bundle-v2` revisions contain the complete authoritative
+  frontmatter, exact managed-component properties, body identity,
+  relationships, scoped-artifact descriptors/provenance, visibility, and
+  promotion intent. The shared validator runs at save, review-candidate, and
+  proposal-application boundaries; preflight and publisher use the shared
+  compiler.
+- New reviews use four bounded stages. Typed audits gate blockers, permit at
+  most one repair, and release the global lane on terminal failure. Retained
+  22/24-stage jobs remain readable during rolling compatibility.
+- Every user command is revision/hash fenced. Proposal application is atomic
+  and returns the authoritative revision; the editor adopts it or preserves
+  conflicting unsaved text explicitly.
+- Publication preflight persists and one-way seals every compiled artifact
+  byte plus exact revision, base, candidate, contract, projection, and route
+  identity. The publisher independently recompiles that receipt, promotes the
+  same bytes, verifies the typed no-store Leadership endpoint, and finalizes
+  Studio idempotently under its claim token.
+- The additive migration
+  `20260802120000_deterministic_publication_preflight` (SHA-256
+  `4e52a104b1eeae504cc25e6ac6450e4af2065cbeffc8e7dee76897cd34cd60ff`)
+  backfills retained review/proposal fences and marks
+  historical publication jobs explicitly. New receipt-less publication jobs
+  are rejected. The release launcher therefore stops web writes, drains the
+  old publisher, stops it, applies the migration, and then cuts over. An old
+  release restored after migration remains intentionally unable to request a
+  new publication until the compatible release is running again.
+- Global relationship change suggestions remain manual-only. Scoped guide
+  candidates that cannot be represented exactly are rejected. These are
+  intentional safe capability limits, not publisher fallbacks.
+- Retained v1 drafts are synchronized through a fenced v2 action checkpoint
+  before a new review is queued. Direct v1 review API and worker ingress fail
+  closed; only already-persisted legacy stage graphs with v2 input may finish.
+
+The implementation and migration evidence is recorded separately in
+`docs/validation/deterministic-reliability-overhaul-2026-08-02.md` because
+checkpoint 8 already names the historical production-deployment phase. Do not
+describe this work as deployed until a later authorized release updates the
+current production boundary below.
+
+## Current production and recovery boundary
+
+The focused-review follow-up deployment completed successfully on 2026-08-02.
+The deployment candidate was verified equal to `origin/main` before cutover;
+the immutable `.release-commit` marker, live pointer, and all three PM2 process
+working directories were then verified at exact deployed commit
+`328f9a8416f0b5ec1ad4d2a8e3c5e6336a2766d9`, release
+`20260802T114927Z`. Web, review worker, and publisher are online with zero
+restarts. Local live and ready probes return 200; the unauthenticated public
+probe remains protected with 403 and `private, no-store`. No deployment shell
+or lease remains.
+
+The successful cutover created verified encrypted off-site backup receipt
+`7faa3075-d8c2-4a48-beb2-dcc954976da1`, object
+`situation-studio-20260802T115032Z-7faa3075-d8c2-4a48-beb2-dcc954976da1.dump.gpg`,
+checksum
+`07c81103a58d74fe590364915ea8ac5a7a527a367fcdbda5857fdc16f738c0c6`,
+and byte length 747,152. The immutable backup and continuity markers prove the
+pre-cutover active-review hash
+`649abf47d2247264917ee51a4c213b8222190bb70a218127d030a547a5f4b269`
+was unchanged and the expected/actual lane hash was exactly
+`48f0eb54c66386b108f3c3174e59e0becbf53751cd961c6f9e9673048d4472a8`.
+Readiness reports backup evidence `READY`, encrypted, publication-ready, and
+backed by a passed non-empty restore drill.
+
+The release grants only `SELECT` on `situation_checkouts` to
+`situation_studio_review_worker`. The release schema guard, a real-PostgreSQL
+query under that exact role, and a live privilege check all passed. Full
+candidate verification passed 46 test files and 345 tests plus lint, types,
+secret scanning, and production build. Real-PostgreSQL integration passed 3
+files and 57 tests, including the focused historical-retry ordering proof.
+
+Authenticated 1440×1000 and 390×844 production validation showed intact
+responsive layouts and no browser console warnings or errors. Operations now
+separates backup readiness from the latest attempt and exposes recent
+publisher and backup receipts with exact receipt IDs, retained states,
+allow-listed codes, and safe explanations. Raw object paths, checksums, and
+unrestricted internal errors remain intentionally outside the UI; the database
+and immutable markers remain authoritative. Older receipts cannot expose
+detail that was never retained by their creating release.
+
+All five active checkouts survived cutover. Only
+`high-performer-hurting-team` was resumed, as explicitly authorized. Retained
+job `954d2835-8d2a-41e0-b06e-91582827a045` moved from 23 of 24 at
+**Validating the proposal**, attempt 2, to `SUCCEEDED` at 24 of 24 on attempt 3. Proposal `695c584e-8afc-4351-8728-bb4d7c7998db` contains ten pending
+suggestions: seven automatic and three manual-only. No suggestion was accepted
+or rejected and no publication was requested.
+
+The other four anchors did not advance. The two bundle-writer failures remain
+at 18 of 24, attempt 3; the tears proposal retains five accepted and three
+manual-only suggestions plus **Previous version restored**; and the meeting
+proposal retains six actionable and three manual-only suggestions. Final
+review and publication drains are both `0|0|0`, with 15 situations and five
+active checkouts. Post-review active-state and lane hashes are
+`c9e20501d0d90464a8a9634d8bcc7cdc8e21bface973a2295b899c451ccc7195`
+and `941e37f90200d974536166d926ebd15459f2a4cb3fe3c3684f9573749e8f72a0`.
+
+Do not start or resume another review without the product owner choosing it.
+Production content changes still require separate, specifically named
+authorization. Future deployments must restart from complete preflight.
+
+## Superseded deployment history from before the successful correction
+
+The following section preserves the failed-attempt evidence and the
+pre-deployment browser baseline. Its status statements are historical and must
+not be used as current deployment instructions.
+
+Before the final correction, production still ran immutable release
+`20260729T085659Z` at commit
+`70da5cae79d747204eeb6f1f8a4b6f61a997b586`; pushed candidate
+`a0c7937f2ca009ff18efb095345f79cccf00ce82` was not deployed. The dirty
+`codex/cross-repo-reliability` worktree was not used for deployment; every
+attempt used a clean checkout reverified against the authorized remote commit.
+
+The product owner explicitly authorized release of the earlier retained lease
+for attempt `20260802T082029Z`. Its exact token hash and metadata were re-read,
+and the candidate helper safely removed only the two fenced files and the
+lease directory. A new full preflight then passed against clean pushed commit
+`ee2ab3a...` and the compatible Leadership runtime.
+
+Guarded release `20260802T095838Z` completed its clean local and remote builds,
+quiesced Studio, and created fresh verified encrypted off-site backup receipt
+`c634ec70-0d15-45e8-9c89-e1a46cfe31d8`. Its immutable
+`.pre-migration-backup.json` records 746,270 bytes, review hash
+`649abf47d...`, and expected-lane hash `5a4adcf161...`. The focused-lane
+migration with checksum
+`440d9fc1232b075164e1a43ee9ea002aa8dc9b10c1c4f7eaae21ff7336f3cb27`
+applied successfully, but continuity failed closed before candidate start or
+pointer change: the pre-migration query represented every no-owner Boolean as
+JSON `null`, while the new non-null `lane_owner` column correctly represented
+the same state as JSON `false`. Queue timestamps and the null lane owner were
+otherwise identical. Expected and actual hashes were respectively
+`5a4adcf161a363be72a662d8ec7ef2c9183bbbd25edabf6d3ac32c734913df82`
+and `48f0eb54c66386b108f3c3174e59e0becbf53751cd961c6f9e9673048d4472a8`.
+
+The product owner authorized exact commit `a0c7937...` and release of the
+newer retained lease. The exact helper removed only its fenced files and
+directory, and full preflight passed. Attempt `20260802T113720Z` created
+verified encrypted off-site backup receipt
+`9a98392e-34d5-4879-be84-84f94f9bf63b` (746,892 bytes, checksum
+`3f6730947d20b8abbe5e760ce9ef818567cf466f6dc658c52b69f21322751678`)
+and wrote continuity evidence proving unchanged review hash `649abf47d...`
+and matching expected/actual lane hash `48f0eb54c...`.
+
+Candidate readiness then failed closed because the focused-lane claim reads
+`situation_checkouts`, but `situation_studio_review_worker` lacked `SELECT` on
+that table. PostgreSQL `42501` crashed the candidate review worker and kept its
+heartbeat stale. The deployment restored and locally verified the exact prior
+release. Read-only reconciliation found no surviving deployment shell or
+lease; the pointer and all three processes use `20260729T085659Z`, live and
+ready return 200, publication drain is `0|0|0`, no review is queued or running,
+and the review/lane hashes remain exact.
+
+Candidate `a0c7937...` was not redeployed. A clean local candidate at
+`328f9a8...` added only the missing checkout `SELECT`, verified it in the
+post-grant release-schema guard, and ran the exact lane join under the real
+PostgreSQL review role. At this historical checkpoint it had not yet been
+pushed and still required fresh exact authorization.
+
+The five active checkouts remain byte-for-byte stable. The content-body-free
+active-review projection hash is
+`649abf47d2247264917ee51a4c213b8222190bb70a218127d030a547a5f4b269`,
+and the expected focused-lane projection hash is
+`48f0eb54c66386b108f3c3174e59e0becbf53751cd961c6f9e9673048d4472a8`.
+Publication drain is `0|0|0`, and no review is queued or running.
+
+At that checkpoint, receipt-specific candidate policy returned `READY` using the fresh
+verified off-site receipt `9a98392e-34d5-4879-be84-84f94f9bf63b` and the
+passed non-empty restore drill retained on verified receipt
+`b76cb38a-b635-4beb-b665-fb0f679bc751`. The older failed receipt
+`ffc62df5-3784-47d0-918d-95c956a8d593` remains append-only. The deployed
+Operations card describes only the latest attempt and is not acceptable
+deployment evidence.
+
+### Signed-in production validation
+
+Read-only authenticated browser validation confirmed all five checkouts and
+their retained work remain visible and saved. No retry, proposal decision,
+check-in, publication, restoration, retirement, or other editorial mutation
+was invoked.
+
+- `high-performer-hurting-team` is the preferred first resume after the
+  focused-lane release is deployed. Its unique enabled **Retry review** control
+  points to the retained failure at 23 of 24 stages, **Validating the
+  proposal**, attempt 2.
+- `stop-taking-delegated-work-back` remains failed at 18 of 24 stages,
+  **Writing the proposal bundle**, attempt 3, with the safe reason **Provider
+  response validation**.
+- `defensive-about-feedback` retains the same 18-of-24 bundle-writer failure,
+  attempt, and safe reason.
+- `tears-during-difficult-conversation` retains five accepted changes and
+  three manual-only suggestions. The saved-draft conflict warning and
+  **Previous version restored** publication banner remain visible.
+- `dominates-team-meetings` retains nine suggestions: six automatically
+  actionable and three manual-only.
+
+The deployed Operations page showed review queue `0`, active checkouts `5`,
+publisher failures `13`, and the aggregate failed-backup card. It did not show
+receipt-level publisher or backup failure details. Agent-review failures expose
+the stopped stage, attempt, and a bounded reason, but historical publication
+and backup failures remain less transparent because the older release did not
+retain or project the candidate's safe structured evidence. No browser console
+warnings or errors were observed. Resumability was verified at the control and
+retained-state boundary only; it was intentionally not exercised on the old
+sequencing behavior.
 
 The workbench now provides ordinary username/password authentication, durable
 exclusive checkouts, immutable drafts and history, section and raw-MDX editing,
@@ -78,38 +315,38 @@ responding to a Teaching Designer finding, supported by Coaching and Manager
 Tools reviewers.” Candidate edit records therefore need explicit links to the
 upstream finding IDs and role codes that informed them.
 
-### Current failure that motivated the redesign
+### Historical failure that motivated the redesign
 
-The latest production review for `repeatedly-misses-commitments` materialized
+The then-latest production review for `repeatedly-misses-commitments` materialized
 proposal `43f60de2-8e58-47b7-ba5f-4a0f052668b9` with a 1,457-character
 summary, five structured findings (two blocking, two important, one note), and
 zero candidate edits.
 
-The current implementation:
+At that checkpoint, the implementation:
 
-- stores `summary`, `findings`, and `candidateEdits` separately in
+- stored `summary`, `findings`, and `candidateEdits` separately in
   `apps/review-worker/src/review.ts`;
-- permits a summary of up to 12,000 characters and does not require a
+- permitted a summary of up to 12,000 characters and did not require a
   candidate edit in `packages/ai-adapters/src/index.ts`;
-- drops `findings` from the workspace view model in
+- dropped `findings` from the workspace view model in
   `apps/web/src/app/situations/[slug]/page.tsx`;
-- renders the complete summary as a heading in
+- rendered the complete summary as a heading in
   `apps/web/src/components/workspace-editor.tsx`;
-- enables **Accept all** without checking for actionable changes; its empty
-  loop performs no mutation and only refreshes the route; and
-- compares only production and saved draft above the proposal card, so it has
-  no agent-candidate visualization even when edits exist.
+- enabled **Accept all** without checking for actionable changes; its empty
+  loop performed no mutation and only refreshed the route; and
+- compared only production and saved draft above the proposal card, so it had
+  no agent-candidate visualization even when edits existed.
 
-Current proposal application can automatically apply only `SECTION` and
+At that checkpoint, proposal application could automatically apply only `SECTION` and
 `SCOPED_VARIANT` changes. `METADATA` and `RELATIONSHIP` changes return a manual
-editorial-edit error. The redesign must either add safe typed application for
-those targets or present them explicitly as manual structured suggestions; it
-must never hide or silently skip them.
+editorial-edit error. Acceptance required either safe typed application for
+those targets or explicit manual structured suggestions; they could not be
+hidden or silently skipped.
 
-Implementation should include schema/migration design, normalized worker output
-and provenance, candidate materialization, atomic and individually fenced
-decision workflows, editable suggestions, the unified diff UI, and focused
-unit/integration/browser coverage. Browser coverage should prove zero-change
+Acceptance also required schema/migration design, normalized worker output and
+provenance, candidate materialization, atomic and individually fenced decision
+workflows, editable suggestions, the unified diff UI, and focused
+unit/integration/browser coverage. Browser coverage had to prove zero-change
 behavior, individual accept/reject, edited acceptance, atomic Accept all,
 unsupported/manual changes, stale-input conflicts, refresh persistence,
 keyboard/accessibility behavior, and narrow/desktop layouts.
@@ -171,20 +408,16 @@ not invoked during this investigation.
 
 ## Implemented follow-ups
 
-### Unreleased focused review lane and failure explanations
+### Deployed focused-review baseline superseded by the unreleased overhaul
 
-The 2026-08-01 local implementation supersedes the earlier backoff queue
-behavior below but has not been deployed. One durable lane owner now remains
-focused through automatic retry waits and terminal failures. Later reviews do
-not start until the focused review succeeds or the editor explicitly retries,
-stops, or closes it. The workspace projects fixed safe reason codes as plain
-stage-specific explanations and keeps raw provider output and error text out of
-the public status stream. Proposal materialization accepts case-only role-code
-differences in evidence links and attributes other assembly failures to the
-bundle writer so the writer and downstream audits can run again.
-
-The deployed 2026-07-29 release still uses the earlier behavior described in
-the historical retry-provider record that follows.
+The focused-lane implementation deployed on 2026-08-02 retained one durable
+lane owner through automatic retry waits and terminal failures. Later reviews
+did not start until the focused review succeeded or the editor explicitly
+retried, stopped, or closed it. The current unreleased four-phase overhaul
+supersedes only the terminal-failure behavior: bounded retry waits retain the
+lane, while a terminal failure releases it immediately so unrelated work can
+proceed. The deployed safe failure explanations and provider-output boundary
+remain part of the new implementation.
 
 #### 2026-08-01 read-only production review inventory
 
@@ -469,13 +702,15 @@ The retry-provider implementation now:
   manual **Retry review** action; and
 - ages historical provider failures out of the current readiness signal.
 
-The real-time status follow-up adds an authenticated, same-origin Node-runtime
-SSE endpoint at `/api/reviews/[id]/events`. Every connection and native
-reconnection receives a complete runtime-validated `review-status-v1` snapshot
-from PostgreSQL. The endpoint checks the compact projection every 1.5 seconds,
-emits only when the deterministic safe snapshot changes, sends 15-second
-heartbeat comments, closes at terminal state, and has a two-minute bounded
-lifetime that forces fresh authentication and state.
+The deployed real-time status follow-up added an authenticated, same-origin
+Node-runtime SSE endpoint at `/api/reviews/[id]/events`. Every connection and
+native reconnection received a complete runtime-validated `review-status-v3`
+snapshot from PostgreSQL. The current unreleased overhaul advances that
+projection to `review-status-v4` for four-stage jobs plus retained 22/24-stage
+status. The endpoint checks the compact projection every 1.5 seconds, emits
+only when the deterministic safe snapshot changes, sends 15-second heartbeat
+comments, closes at terminal state, and has a two-minute bounded lifetime that
+forces fresh authentication and state.
 
 The workspace connects only for `QUEUED` and `RUNNING`, rejects old-review and
 superseded-connection events, updates exact progress and the human-readable
@@ -489,11 +724,15 @@ error, secret, log, lease, checkout fence, or claim token. SSE adds no
 migration, database grant, mutation, or CSRF exception. The only schema
 migration in this follow-up is the retry-backoff migration.
 
-## Verification state
+## Historical pre-overhaul verification state
+
+The counts below are retained evidence for the deployed focused-review
+baseline. Current local overhaul evidence is in
+`docs/validation/deterministic-reliability-overhaul-2026-08-02.md`.
 
 - Studio unit, integration, publisher lifecycle, crash recovery, type, and
   browser/accessibility suites pass.
-- The current local gate passes formatting, lint, typecheck, 140 unit tests, 16
+- At that checkpoint, the local gate passed formatting, lint, typecheck, 140 unit tests, 16
   cross-database integration scenarios, a strict post-build secret scan, and
   an optimized production build.
 - The browser suite covers 1280×800, 1440×900, and 390×844; all 10 executed
@@ -523,7 +762,7 @@ migration in this follow-up is the retry-backoff migration.
 
 See [docs/checkpoints/07-operations-and-release-candidate.md](docs/checkpoints/07-operations-and-release-candidate.md)
 and [docs/checkpoints/independent-review.md](docs/checkpoints/independent-review.md)
-for the release evidence and dispositions. The current local gates above were
+for the release evidence and dispositions. Those historical local gates were
 rerun for the combined retry and real-time status work.
 
 ## Pre-deployment production boundary
@@ -543,7 +782,7 @@ was not a dead worker or database failure. The later pre-deployment inspection
 on 2026-07-25 found both endpoints healthy.
 
 The user explicitly deferred backup configuration for the initial launch on
-2026-07-24. Production readiness reports `backup.state = "deferred"` rather
-than fabricating a receipt. Backup configuration becomes required again before
-any content-publication approval, and the current candidate now enforces that
-requirement in both publication submission and follow-up deployment preflight.
+2026-07-24. That release reported `backup.state = "deferred"` rather than
+fabricating a receipt. This was a historical launch exception, superseded on
+2026-08-02 by the approved isolated off-site backup, verified receipt, and
+passed restore drill recorded in the current recovery boundary above.

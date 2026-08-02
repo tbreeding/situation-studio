@@ -11,12 +11,16 @@ const inputSchema = z.object({
   checkoutId: z.uuid(),
   fence: z.string().regex(/^\d+$/u),
   decision: z.enum(["ACCEPT", "REJECT"]),
+  revisionId: z.uuid(),
+  bundleHash: z.string().regex(/^[a-f0-9]{64}$/u),
 });
 
 const editInputSchema = z.object({
   checkoutId: z.uuid(),
   fence: z.string().regex(/^\d+$/u),
   editedBody: z.string().min(1).max(512_000),
+  revisionId: z.uuid(),
+  bundleHash: z.string().regex(/^[a-f0-9]{64}$/u),
 });
 
 export async function POST(
@@ -40,6 +44,8 @@ export async function POST(
       fence: BigInt(input.fence),
       changeId: id,
       decision: input.decision,
+      revisionId: input.revisionId,
+      bundleHash: input.bundleHash,
     });
     return NextResponse.json(result);
   } catch (error) {
@@ -78,6 +84,8 @@ export async function PATCH(
       fence: BigInt(input.fence),
       changeId: id,
       editedBody: input.editedBody,
+      revisionId: input.revisionId,
+      bundleHash: input.bundleHash,
     });
     return NextResponse.json(result);
   } catch (error) {

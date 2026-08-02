@@ -18,12 +18,12 @@ flowchart LR
 
 ## Authority and credentials
 
-| Process            | Studio authority                                    | Leadership authority                                             | Other secrets           |
-| ------------------ | --------------------------------------------------- | ---------------------------------------------------------------- | ----------------------- |
-| Web                | accounts, sessions, drafts, checkouts, user actions | none                                                             | session, CSRF, throttle |
-| Review worker      | review queue, runs, evidence, proposals             | none                                                             | isolated CLI auth state |
-| Publisher          | publication jobs, receipts, production history      | SELECT plus restricted append/validate/promote/restore functions | Leadership health URL   |
-| Observer/bootstrap | imported observations and history                   | SELECT only                                                      | none                    |
+| Process            | Studio authority                                               | Leadership authority                                             | Other secrets           |
+| ------------------ | -------------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------- |
+| Web                | accounts, sessions, drafts, checkouts, preflight, user actions | SELECT-only compilation base                                     | session, CSRF, throttle |
+| Review worker      | review queue, runs, evidence, proposals                        | none                                                             | isolated CLI auth state |
+| Publisher          | publication jobs, receipts, production history                 | SELECT plus restricted append/validate/promote/restore functions | Leadership health URL   |
+| Observer/bootstrap | imported observations and history                              | SELECT only                                                      | none                    |
 
 Production startup uses a clean environment for each process and sources one
 mode-0400/0600 file. Subscription CLI auth is owned by the dedicated review
@@ -48,16 +48,56 @@ The visible status is derived from facts (`Available`, `Draft saved`, `Checked
 out by …`, or `Retired`) plus temporary activity. There is no editorial state
 machine, approval queue, staging site, or candidate runtime.
 
+### Authoritative publishable snapshot
+
+Every newly written canonical revision uses `situation-bundle-v2`, whose hash
+includes the complete Leadership-owned publication input: all frontmatter fields, authored
+practice ID and variant, field-note and safety-note flags, review status,
+source and related-situation references, exact MDX body hash, parsed managed
+component properties, complete relationship bindings, scoped artifact
+descriptors and provenance, visibility, and promotion intent. Scoped artifact
+bodies are content-addressed in Studio and must match every descriptor before a
+revision is accepted.
+
+Studio never fills a missing field from whichever Leadership release happens
+to be current. A retained v1 draft is upgraded from its pinned production base
+through a fenced save before either ordinary editing or **Run agent review**
+continues, and the client adopts the exact returned v2 revision and hash.
+Direct v1 review API or worker ingress fails closed. Older v2 drafts with
+`UNPUBLISHED` intent require the editor's explicit **Set public intent**
+action, which creates a fenced forward revision and an audit event; immutable
+history is not rewritten.
+
+The pure `@leadership-field-guide/content-contracts` validator is the common
+gate after Studio saves, review candidate construction, and proposal
+application. Publication preflight and the publisher use the same package's
+compiler, which invokes that validator. Managed `PracticeEmbed` and
+`PreparedAction` properties are parsed through MDX AST traversal and must agree
+with the structured snapshot before an invalid candidate can become
+actionable.
+
 ## Review
 
 The review worker claims one global job with `FOR UPDATE SKIP LOCKED` and
-persists all 24 stages: graph mapping, seven critics, a mediated issue register,
-seven rebuttals, adjudication, teaching design, one consolidated proposal, four
-independent audits, and deterministic validation.
+persists four bounded phases: context mapping, integrated critical review,
+candidate construction, and exact candidate audit. Models emit typed findings
+and constrained change intents. The server derives durable IDs, hashes,
+application modes, before-values, and executable patches, then materializes and
+validates the exact candidate. The audit returns typed `PASS` or `REVISE`, must
+account for every unresolved upstream blocker, and receives at most one repair
+and revalidation pass.
 Every run records requested and resolved provider/model/effort, evidence and
 output hashes, strict structured output, usage, and failure classification.
 Codex is preferred and Claude is the provider-scoped fallback. Proposals never
 alter a draft until the editor accepts a change.
+
+Section and supported metadata changes may be automatic. Global relationship
+rebinding and every new v2 scoped-variant suggestion are manual-only because
+the review intent cannot carry the complete linked artifact identity. This is
+separate from publication support for already-complete scoped guide and
+practice snapshots. A malformed local intent is downgraded to a visible
+non-actionable finding when it can be safely isolated; a whole-candidate
+contract failure remains terminal.
 
 Review substance comes from a committed, hash-versioned snapshot of the
 `review-leadership-situations` skill in `packages/review-policy/policy`.
@@ -88,12 +128,12 @@ Server-Sent Events stream. It uses the ordinary session cookie and does not
 change mutation CSRF handling.
 
 PostgreSQL remains authoritative. A connection receives one complete
-`review-status-v3` snapshot immediately, including the job state, focused or
-waiting lane state, exact
-completed/total counts, the 24 bounded stage states, a safe human-readable
+`review-status-v4` snapshot immediately, including the job state, exact
+completed/total counts, the four bounded stage states, a safe human-readable
 current stage, attempt and durable retry information when applicable, a fixed
 safe explanation of the latest failure, terminal state, proposal readiness,
-and a deterministic SHA-256 snapshot identity.
+lane ownership, and a deterministic SHA-256 snapshot identity. Retained 22- and
+24-stage jobs remain readable during the rolling compatibility window.
 The public Zod schema rejects unknown structure at runtime. It cannot contain
 prompts, evidence, provider output, raw errors, secrets, logs, lease claims, or
 fencing tokens.
@@ -116,30 +156,68 @@ refresh, after a short reduced-motion-aware completion transition, to load the
 full proposal and authoritative controls. Heartbeats and countdown ticks do not
 enter the polite live region.
 
-## Publication and recovery
+## Revision, proposal, and publication fencing
+
+Every save names the expected parent revision ID and bundle hash. PostgreSQL
+serializable transactions and a compare-and-swap fence permit only one of two
+overlapping saves to advance. Review pins an immutable input revision while the
+editor may create later revisions. Proposal decisions name the proposal's
+current revision/hash, atomically apply selected executable changes, return the
+new authoritative bundle/body/revision, and mark older proposals explicitly
+superseded. The client adopts that returned state and preserves unsaved local
+text behind an explicit conflict instead of allowing a router refresh to erase
+it.
+
+Proposal application, preflight, and publication requests temporarily disable
+editing so their client-side payload cannot drift. Publication never selects a
+"latest" revision at worker execution time.
+
+## Publication preflight and recovery
+
+Before showing the final confirmation, the web process rereads the exact saved
+revision and the current Leadership base, compiles the full successor release,
+and rereads both identities before committing an immutable, one-way-sealed
+preflight receipt. The receipt pins the revision and bundle hashes, complete
+candidate and manifest hashes, Leadership release and pointer generation,
+compiler identity/digest, typed validation result and diagnostics, complete
+compiled projection, affected-route expectations, and every candidate artifact
+byte string. Database triggers reject incomplete sealing, later receipt or
+artifact mutation, and any publication job whose identity differs from its
+sealed receipt.
+
+The confirmation says **Validation passed** and exposes the complete compiled
+projection, including managed components, relationships, scoped artifacts, and
+promotion intent. Editing or a Leadership base change invalidates the receipt;
+a rebase always creates new candidate and receipt identities.
 
 The publisher:
 
-1. pins the saved revision and compares its base bundle with the current
-   Leadership target;
-2. rebases automatically when only unrelated content changed;
-3. persists a complete canonical candidate snapshot in Studio;
-4. validates the complete manifest and exact candidate bodies with the same
-   canonical content contract used by Leadership, before production changes;
-5. inserts, validates, and promotes one complete immutable Leadership release
+1. consumes only the sealed receipt and independently recompiles its exact
+   revision plus scoped evidence against the pinned base;
+2. proves the recompiled artifacts, projection, routes, and every candidate
+   hash are byte-for-byte equal to the receipt;
+3. persists the exact sealed candidate snapshot without normalization or
+   hidden defaults;
+4. inserts, validates, and promotes one complete immutable Leadership release
    inside an expected-generation transaction;
-6. verifies within a bounded convergence window that the database and running
-   Leadership application report the exact release ID and manifest hash, while
-   renewing the publication lease and publisher heartbeat; and
-7. records the Studio production occurrence and receipt, then checks in.
+5. verifies the database, runtime capability identity, and typed no-store
+   affected-route endpoint with bounded convergence retries; and
+6. records verification, production history, terminal events, draft archival,
+   and checkout release through one claim-fenced idempotent finalization
+   boundary.
 
 Retries reconcile by Studio publication ID, Leadership release ID, manifest
-hash, and pointer generation. If runtime verification fails after promotion,
-the publisher restores and verifies the prior full release. Failed restoration
-sets the global `RECOVERY_REQUIRED` fence. While that fence exists, Studio
-allows inspection of saved work but rejects new situations, new checkouts, and
-editorial mutations across every workspace until publisher reconciliation
-verifies a known Leadership release.
+hash, candidate hash, and pointer generation. After a possibly committed
+promotion error, the publisher reloads durable Leadership state before choosing
+recovery. Transient capability, health, and typed-route convergence failures
+receive bounded retries. Definitive content or render mismatches restore and
+verify the prior full release immediately; failed restoration sets the global
+`RECOVERY_REQUIRED` fence. Once runtime verification has succeeded, a later
+Studio finalization interruption is resumed forward and never restores the
+verified release. While the recovery fence exists, Studio allows inspection of
+saved work but rejects new situations, new checkouts, and editorial mutations
+across every workspace until publisher reconciliation verifies a known
+Leadership release.
 
 Before a reclaimed job starts another attempt, the publisher transactionally
 marks any preserved unfinished attempt `PUBLISHER_PROCESS_INTERRUPTED` and then
@@ -177,7 +255,8 @@ an external snapshot if a publication is active, requires recovery, or starts
 while that snapshot is being read, so an unverified or stale release cannot be
 recorded as Studio production history.
 
-Creation changes `UNPUBLISHED` drafts to a canonical public production bundle.
+New drafts begin with explicit `PUBLIC` publication intent but remain
+`UNPUBLISHED` as Studio inventory facts until a verified release succeeds.
 Retirement retains content but marks the release-scoped typed situation
 `RETIRED`, removes promotion output, and relies on Leadership’s public
 visibility filters. Restoration copies one historical situation bundle into a
@@ -243,7 +322,10 @@ expected/actual hashes for queue-time normalization and focused-lane ownership.
 Cutover failure restores the exact previous immutable release and succeeds as a
 rollback only after both local live and ready checks pass.
 
-The schema and transition detail is in
-[checkpoint 1](checkpoints/01-contract-and-data-model.md). Production remains
-behind the separate approval procedure in
+The original schema and transition design is retained in historical
+[checkpoint 1](checkpoints/01-contract-and-data-model.md). The current
+deterministic-preflight schema, compatibility boundary, and acceptance evidence
+are recorded in the
+[local validation record](validation/deterministic-reliability-overhaul-2026-08-02.md).
+Production remains behind the separate approval procedure in
 [the migration runbook](runbooks/production-migration.md).

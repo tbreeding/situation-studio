@@ -2683,6 +2683,8 @@ button {
 
 .confirmationDialog {
   width: min(34rem, 100%);
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
   padding: 1.4rem;
   border: 1px solid #d2d4cd;
   border-radius: 0.85rem;
@@ -2726,6 +2728,36 @@ button {
 .confirmationDialog .validationPass {
   color: var(--forest);
   font-weight: 700;
+}
+
+.candidatePreview {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--soft-line);
+  border-radius: 0.5rem;
+  background: #fafbf9;
+}
+
+.candidatePreview summary {
+  color: var(--forest);
+  font-size: 0.75rem;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.candidatePreview h3 {
+  margin: 0.8rem 0 0.35rem;
+  font-size: 0.75rem;
+}
+
+.candidatePreview pre {
+  max-height: 16rem;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.65rem;
+  line-height: 1.5;
 }
 
 .scopedArtifactDialog {
@@ -3351,6 +3383,20 @@ button {
   gap: 1rem;
   color: var(--muted);
   font-size: 0.75rem;
+}
+
+.contractIdentity {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--forest-soft);
+}
+
+.contractIdentity > span,
+.contractIdentity > small {
+  color: #4f5d55;
 }
 
 @media (max-width: 1060px) {

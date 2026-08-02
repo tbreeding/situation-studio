@@ -2,7 +2,9 @@
 
 ## Status
 
-- Plan status: proposed; investigation has not started.
+- Historical plan status: completed by
+  `CROSS-REPOSITORY-RELIABILITY-INVESTIGATION.md` on 2026-07-29. The plan text
+  below is retained unchanged as the read-only investigation authority.
 - Prepared: 2026-07-29.
 - Coordination repository:
   `/Users/timothybreeding/projects/situation-studio`.

@@ -4,7 +4,7 @@ import {
   publicReviewFailureClassSchema,
   publicReviewFailureReasonCodeSchema,
   reviewStatusSnapshotSchema,
-  REVIEW_STAGE_TOTAL,
+  LEGACY_FOCUSED_REVIEW_STAGE_TOTAL,
   REVIEW_STATUS_SCHEMA_VERSION,
   type PublicReviewFailureClass,
   type PublicReviewFailureReasonCode,
@@ -12,6 +12,10 @@ import {
 } from "@/review-status-contract";
 
 const REVIEW_STAGE_DISPLAY_NAMES: Record<string, string> = {
+  "context-mapper": "Mapping the situation context",
+  "critical-review": "Running the integrated critical review",
+  "candidate-builder": "Building the candidate",
+  "candidate-audit": "Auditing the exact candidate",
   "surface-mapper": "Mapping the review surfaces",
   "critic-nvc": "Nonviolent communication critique",
   "critic-negotiation": "Negotiation critique",
@@ -86,17 +90,23 @@ const PUBLIC_FAILURE_REASONS: Record<
   },
   CANDIDATE_METADATA_JSON_INVALID: {
     title: "A proposed metadata change was invalid",
-    explanation: "The bundle writer returned metadata that was not valid JSON.",
+    explanation:
+      "The candidate builder returned metadata that was not valid JSON.",
   },
   CANDIDATE_OUTPUT_INVALID: {
     title: "The proposed revision could not be built",
     explanation:
-      "A bundle-writer change did not satisfy the safe candidate format.",
+      "A candidate change did not satisfy the safe materialization contract.",
   },
   CANDIDATE_FINDING_REFERENCE_INVALID: {
     title: "A proposal change lost its evidence link",
     explanation:
-      "The bundle writer referenced a finding that the completed review did not contain.",
+      "The candidate builder referenced a finding that the completed review did not contain.",
+  },
+  CANDIDATE_AUDIT_REVISE: {
+    title: "The candidate still needs revision",
+    explanation:
+      "The exact candidate retained blocking findings after its bounded repair pass.",
   },
   PROPOSAL_MATERIALIZATION_FAILED: {
     title: "The proposal could not be assembled",
@@ -112,6 +122,11 @@ const PUBLIC_FAILURE_REASONS: Record<
     title: "The saved review input did not validate",
     explanation:
       "The pinned situation bundle failed the final deterministic check.",
+  },
+  REVIEW_JOB_DEADLINE_EXCEEDED: {
+    title: "The review exceeded its time budget",
+    explanation:
+      "The bounded review did not finish within its total processing deadline.",
   },
   REVIEW_APPLICATION_FAILED: {
     title: "Review processing stopped",
@@ -162,7 +177,10 @@ function snapshotIdentity(value: object) {
 export function reviewStageDisplayName(roleCode: string, ordinal: number) {
   return (
     REVIEW_STAGE_DISPLAY_NAMES[roleCode] ??
-    `Review stage ${Math.min(Math.max(ordinal, 1), REVIEW_STAGE_TOTAL)}`
+    `Review stage ${Math.min(
+      Math.max(ordinal, 1),
+      LEGACY_FOCUSED_REVIEW_STAGE_TOTAL,
+    )}`
   );
 }
 

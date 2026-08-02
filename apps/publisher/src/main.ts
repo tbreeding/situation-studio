@@ -7,7 +7,7 @@ import {
   processPublicationJob,
   reconcilePublicationRecovery,
   runtimeIdentityFromHealth,
-  runtimeRouteProofFromSituationPage,
+  runtimeRouteProofFromVerificationEndpoint,
   type RuntimeRouteExpectation,
 } from "./index.js";
 
@@ -43,7 +43,7 @@ const dependencies = {
   runtimeCapabilities: () =>
     runtimeCapabilitiesFromHealth(leadershipCapabilitiesUrl),
   runtimeRouteProof: (expected: RuntimeRouteExpectation) =>
-    runtimeRouteProofFromSituationPage(leadershipHealthUrl, expected),
+    runtimeRouteProofFromVerificationEndpoint(leadershipHealthUrl, expected),
   producerCommit,
   onRuntimeIdentityProbe: () =>
     heartbeat(publisherStatus).catch(() => undefined),
@@ -84,18 +84,23 @@ heartbeatMonitor.unref();
 
 async function run() {
   for (;;) {
-    await setPublisherStatus("CHECKING_RECOVERY");
-    await reconcilePublicationRecovery(dependencies);
-    await setPublisherStatus("CHECKING_QUEUE");
-    const claim = await claimPublicationJob(studio);
-    if (!claim) {
-      await setPublisherStatus("IDLE");
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
-      continue;
+    try {
+      await setPublisherStatus("CHECKING_RECOVERY");
+      await reconcilePublicationRecovery(dependencies);
+      await setPublisherStatus("CHECKING_QUEUE");
+      const claim = await claimPublicationJob(studio);
+      if (claim) {
+        await setPublisherStatus("WORKING");
+        await processPublicationJob(dependencies, claim.id, claim.claimToken);
+        await setPublisherStatus("IDLE");
+      } else {
+        await setPublisherStatus("IDLE");
+      }
+    } catch (error) {
+      dependencies.onFailure(error);
+      await setPublisherStatus("DEGRADED").catch(() => undefined);
     }
-    await setPublisherStatus("WORKING");
-    await processPublicationJob(dependencies, claim.id, claim.claimToken);
-    await setPublisherStatus("IDLE");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
 }
 

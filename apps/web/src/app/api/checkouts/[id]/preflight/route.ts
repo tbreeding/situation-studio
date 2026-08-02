@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { hasRole, requireMutationSession } from "@/server/auth/request";
-import { WorkflowError, retryReview } from "@/server/workflows/situations";
+import {
+  preflightPublication,
+  WorkflowError,
+} from "@/server/workflows/situations";
 
 const inputSchema = z.object({
+  fence: z.string().regex(/^\d+$/u),
   revisionId: z.uuid(),
   bundleHash: z.string().regex(/^[a-f0-9]{64}$/u),
 });
@@ -23,22 +27,38 @@ export async function POST(
   try {
     const { id } = await params;
     const input = inputSchema.parse(await request.json());
-    const job = await retryReview({
+    const receipt = await preflightPublication({
       actorId: auth.session.userId,
-      jobId: id,
+      checkoutId: id,
+      fence: BigInt(input.fence),
       revisionId: input.revisionId,
       bundleHash: input.bundleHash,
     });
-    return NextResponse.json({ jobId: job.id, state: job.state });
+    return NextResponse.json({
+      receiptId: receipt.id,
+      revisionId: receipt.revisionId,
+      bundleHash: receipt.revisionBundleHash,
+      candidateHash: receipt.candidateHash,
+      manifestHash: receipt.manifestHash,
+      situationArtifactHash: receipt.situationArtifactHash,
+      baseReleaseId: receipt.baseReleaseId,
+      baseManifestHash: receipt.baseManifestHash,
+      expectedPointerGeneration: receipt.expectedPointerGeneration.toString(),
+      contractDigest: receipt.contractDigest,
+      validationResult: receipt.validationResult,
+      affectedRoutes: receipt.affectedRoutes,
+      candidatePreview: receipt.candidatePreview,
+      validatedAt: receipt.createdAt.toISOString(),
+    });
   } catch (error) {
     if (error instanceof WorkflowError)
       return NextResponse.json(
-        { error: error.message, code: error.code },
+        { error: error.message, code: error.code, details: error.details },
         { status: error.status },
       );
     if (error instanceof z.ZodError)
       return NextResponse.json(
-        { error: "Invalid review retry command." },
+        { error: "Invalid publication preflight request." },
         { status: 422 },
       );
     throw error;

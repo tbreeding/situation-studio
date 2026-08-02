@@ -1,20 +1,70 @@
 import { createHash } from "node:crypto";
 import {
   AUTHORED_PRACTICE_ID_MAX_LENGTH,
+  CONTENT_CONTRACT_VERSION,
   PHYSICAL_PRACTICE_ID_MAX_LENGTH,
+  PUBLICATION_COMPILER_DIGEST,
+  PUBLICATION_COMPILER_IDENTITY,
+  PUBLISHABLE_SITUATION_VALIDATOR_DIGEST,
+  PUBLISHABLE_SITUATION_VALIDATOR_IDENTITY,
   assertSafeManagedMdx,
   authoredPracticeIdSchema,
+  compilePublishableSituationSnapshot,
   isSafeManagedMdx,
+  managedMdxComponentUses,
+  parseManagedSituationComponents,
   physicalPracticeId,
   practiceChoiceSchema as leadershipPracticeChoiceSchema,
   practiceRoundSchema as leadershipPracticeRoundSchema,
   practiceSchema as leadershipPracticeSchema,
+  publishableManagedComponentsSchema,
+  publishablePromotionSchema,
+  publishableSituationFrontmatterSchema,
+  publishableSituationSnapshotSchema,
+  validatePublishableSituationSnapshot,
+  type AffectedRouteExpectation,
+  type CompilePublishableSituationSnapshotInput,
+  type CompilePublishableSituationSnapshotResult,
+  type CompiledPublicationCandidate,
+  type CompiledSituationTypedProjection,
+  type PublicationDiagnostic,
+  type PublicationIdentity,
+  type PublishableManagedComponents,
+  type PublishableSituationSnapshot,
+  type ValidatePublishableSituationSnapshotResult,
 } from "@leadership-field-guide/content-contracts";
 import { CONTRACT_VERSION as LEADERSHIP_CONTRACT_VERSION } from "@leadership-field-guide/situation-contract";
 import { z } from "zod";
 
 export const CONTRACT_VERSION = LEADERSHIP_CONTRACT_VERSION;
 export const VALIDATION_POLICY_VERSION = "situation-bundle-policy-v1";
+export const PUBLISHABLE_CONTRACT_VERSION = CONTENT_CONTRACT_VERSION;
+export const PUBLISHABLE_VALIDATION_POLICY_VERSION =
+  "publishable-situation-bundle-policy-v2";
+
+export {
+  compilePublishableSituationSnapshot,
+  managedMdxComponentUses,
+  parseManagedSituationComponents,
+  publishableSituationSnapshotSchema,
+  PUBLICATION_COMPILER_DIGEST,
+  PUBLICATION_COMPILER_IDENTITY,
+  PUBLISHABLE_SITUATION_VALIDATOR_DIGEST,
+  PUBLISHABLE_SITUATION_VALIDATOR_IDENTITY,
+  validatePublishableSituationSnapshot,
+};
+export type {
+  AffectedRouteExpectation,
+  CompilePublishableSituationSnapshotInput,
+  CompilePublishableSituationSnapshotResult,
+  CompiledPublicationCandidate,
+  CompiledSituationTypedProjection,
+  PublicationDiagnostic,
+  PublicationIdentity,
+  PublishableManagedComponents,
+  PublishableSituationSnapshot,
+  ValidatePublishableSituationSnapshotResult,
+};
 
 export function canonicalText(value: string): string {
   return `${value.replace(/\r\n?/gu, "\n").replace(/\n+$/u, "")}\n`;
@@ -161,7 +211,7 @@ export const situationMetadataKeys = Object.freeze(
   Object.keys(situationMetadataSchema.shape),
 ) as readonly (keyof z.infer<typeof situationMetadataSchema>)[];
 
-export const situationBundleSchema = z.object({
+export const legacySituationBundleSchema = z.object({
   schemaVersion: z.literal("situation-bundle-v1"),
   contractVersion: z.string().min(1).max(100),
   validationPolicyVersion: z.string().min(1).max(100),
@@ -175,11 +225,445 @@ export const situationBundleSchema = z.object({
   contextHashes: z.array(z.string().regex(/^[a-f0-9]{64}$/u)),
 });
 
-export type SituationBundle = z.infer<typeof situationBundleSchema>;
+export type LegacySituationBundle = z.infer<typeof legacySituationBundleSchema>;
 export type SituationMetadata = z.infer<typeof situationMetadataSchema>;
 export type BundleArtifact = z.infer<typeof bundleArtifactSchema>;
 
+export const publishableBundleRelationshipSchema = relationshipSchema
+  .extend({
+    kind: z.enum([
+      "PRACTICE",
+      "GUIDE",
+      "SOURCE",
+      "LESSON_PLAN",
+      "PREPARATION_PROMPT",
+    ]),
+    originalLogicalId: z.string().min(1).max(240),
+  })
+  .strict();
+
+export const publishableBundleArtifactSchema = bundleArtifactSchema
+  .extend({
+    kind: z.enum([
+      "PRACTICE",
+      "GUIDE",
+      "SOURCE",
+      "LESSON_PLAN",
+      "PREPARATION_PROMPT",
+    ]),
+    path: z.string().min(1).max(1_000),
+    encoding: z.enum(["UTF8", "BINARY"]),
+    mediaType: z.string().min(1).max(120),
+  })
+  .strict();
+
+export const publishableSituationBundleSchema = z
+  .object({
+    schemaVersion: z.literal("situation-bundle-v2"),
+    contractVersion: z.literal(PUBLISHABLE_CONTRACT_VERSION),
+    validationPolicyVersion: z.literal(PUBLISHABLE_VALIDATION_POLICY_VERSION),
+    situationId: z.uuid(),
+    visibility: z.enum(["PUBLIC", "RETIRED", "UNPUBLISHED"]),
+    metadata: publishableSituationFrontmatterSchema,
+    bodyHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    managedComponents: publishableManagedComponentsSchema,
+    artifacts: z.array(publishableBundleArtifactSchema),
+    relationships: z.array(publishableBundleRelationshipSchema),
+    promotion: publishablePromotionSchema.nullable(),
+    contextHashes: z.array(z.string().regex(/^[a-f0-9]{64}$/u)),
+  })
+  .strict();
+
+export type PublishableSituationBundle = z.infer<
+  typeof publishableSituationBundleSchema
+>;
+export type PublishableSituationMetadata =
+  PublishableSituationBundle["metadata"];
+export const publishableSituationMetadataKeys = Object.freeze(
+  Object.keys(publishableSituationBundleSchema.shape.metadata.shape),
+) as readonly (keyof PublishableSituationMetadata)[];
+
+export const situationBundleSchema = z.union([
+  legacySituationBundleSchema,
+  publishableSituationBundleSchema,
+]);
+export type SituationBundle = z.infer<typeof situationBundleSchema>;
+
+function sortedPublishableBundle(
+  bundle: PublishableSituationBundle,
+): PublishableSituationBundle {
+  return {
+    ...bundle,
+    artifacts: [...bundle.artifacts].sort((left, right) =>
+      left.logicalId.localeCompare(right.logicalId),
+    ),
+    relationships: [...bundle.relationships].sort(
+      (left, right) =>
+        left.position - right.position ||
+        left.kind.localeCompare(right.kind) ||
+        left.originalLogicalId.localeCompare(right.originalLogicalId) ||
+        left.logicalId.localeCompare(right.logicalId),
+    ),
+    contextHashes: [...bundle.contextHashes].sort(),
+  };
+}
+
+export function publishableBundleHash(
+  candidate: PublishableSituationBundle,
+): string {
+  const bundle = publishableSituationBundleSchema.parse(candidate);
+  return sha256(canonicalJson(sortedPublishableBundle(bundle)));
+}
+
+export function validatePublishableSituationBundle(
+  candidate: unknown,
+  body: string,
+): {
+  valid: boolean;
+  bundleHash: string | null;
+  errors: string[];
+} {
+  const parsed = publishableSituationBundleSchema.safeParse(candidate);
+  const errors = parsed.success
+    ? []
+    : parsed.error.issues.map(
+        (issue) => `${issue.path.join(".")}: ${issue.message}`,
+      );
+  const canonicalBody = canonicalText(body);
+  if (sha256(canonicalBody) !== (parsed.success ? parsed.data.bodyHash : ""))
+    errors.push(
+      "bodyHash: The body hash does not match the canonical MDX bytes.",
+    );
+  if (parsed.success) {
+    let derived: PublishableManagedComponents | undefined;
+    try {
+      derived = publishableManagedComponentsSchema.parse(
+        parseManagedSituationComponents(
+          `content/situations/${parsed.data.metadata.slug}.mdx`,
+          canonicalBody,
+        ),
+      );
+    } catch (error) {
+      errors.push(
+        `bodyMdx: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (
+      derived &&
+      canonicalJson(derived) !== canonicalJson(parsed.data.managedComponents)
+    )
+      errors.push(
+        "managedComponents: The MDX component properties do not match the authoritative managed-component fields.",
+      );
+    if (
+      parsed.data.metadata.practiceId !==
+        parsed.data.managedComponents.practiceEmbed.practiceId ||
+      parsed.data.metadata.practiceVariant !==
+        parsed.data.managedComponents.practiceEmbed.variant
+    )
+      errors.push(
+        "managedComponents.practiceEmbed: PracticeEmbed must match practiceId and practiceVariant.",
+      );
+    if (
+      parsed.data.metadata.slug !==
+        parsed.data.managedComponents.preparedAction.scenario ||
+      parsed.data.metadata.primarySkill !==
+        parsed.data.managedComponents.preparedAction.skill
+    )
+      errors.push(
+        "managedComponents.preparedAction: PreparedAction must match slug and primarySkill.",
+      );
+    const contextHashes = parsed.data.relationships.map(
+      (relationship) => relationship.contentHash,
+    );
+    if (
+      canonicalJson([...contextHashes].sort()) !==
+      canonicalJson([...parsed.data.contextHashes].sort())
+    )
+      errors.push(
+        "contextHashes: Context hashes must exactly match relationship content hashes.",
+      );
+    const relationshipIdentities = new Set<string>();
+    const relationshipPositions = new Set<string>();
+    const resolvedLogicalIds = new Set<string>();
+    for (const [index, relationship] of parsed.data.relationships.entries()) {
+      const identity = `${relationship.kind}\0${relationship.originalLogicalId}`;
+      const position = `${relationship.kind}\0${relationship.position}`;
+      if (relationshipIdentities.has(identity))
+        errors.push(
+          `relationships.${index}: Relationship original identity must be unique within its kind.`,
+        );
+      if (relationshipPositions.has(position))
+        errors.push(
+          `relationships.${index}.position: Relationship positions must be unique within their kind.`,
+        );
+      relationshipIdentities.add(identity);
+      relationshipPositions.add(position);
+      resolvedLogicalIds.add(relationship.logicalId);
+      if (
+        relationship.visibility === "GLOBAL" &&
+        relationship.logicalId !== relationship.originalLogicalId
+      )
+        errors.push(
+          `relationships.${index}.logicalId: A global relationship must resolve to its original logical ID.`,
+        );
+      if (relationship.visibility !== "GLOBAL") {
+        const artifact = parsed.data.artifacts.find(
+          (candidate) => candidate.logicalId === relationship.logicalId,
+        );
+        if (!artifact)
+          errors.push(
+            `relationships.${index}.logicalId: A scoped relationship requires its exact artifact descriptor.`,
+          );
+        else if (
+          artifact.kind !== relationship.kind ||
+          artifact.contentHash !== relationship.contentHash ||
+          artifact.visibility !== relationship.visibility ||
+          artifact.ownerSituationId !== parsed.data.situationId ||
+          artifact.forkedFromLogicalId !== relationship.originalLogicalId
+        )
+          errors.push(
+            `relationships.${index}: The scoped relationship and artifact descriptor do not match.`,
+          );
+      }
+    }
+    const practiceRelationships = parsed.data.relationships.filter(
+      (relationship) => relationship.kind === "PRACTICE",
+    );
+    if (practiceRelationships.length !== 1)
+      errors.push(
+        `relationships: A publishable draft requires exactly one practice relationship; found ${practiceRelationships.length}.`,
+      );
+    if (
+      practiceRelationships[0] &&
+      practiceRelationships[0].originalLogicalId !==
+        `practice:${parsed.data.metadata.practiceId}`
+    )
+      errors.push(
+        "relationships: The practice relationship must match metadata.practiceId.",
+      );
+    if (
+      !parsed.data.relationships.some(
+        (relationship) => relationship.kind === "SOURCE",
+      )
+    )
+      errors.push(
+        "relationships: A publishable draft requires at least one source relationship.",
+      );
+    for (const [index, artifact] of parsed.data.artifacts.entries()) {
+      if (
+        artifact.visibility === "GLOBAL" ||
+        artifact.ownerSituationId !== parsed.data.situationId ||
+        !artifact.forkedFromLogicalId ||
+        !artifact.forkedFromContentHash
+      )
+        errors.push(
+          `artifacts.${index}: A publishable bundle artifact must be situation-owned with complete provenance.`,
+        );
+      if (!resolvedLogicalIds.has(artifact.logicalId))
+        errors.push(
+          `artifacts.${index}.logicalId: Every scoped artifact must be selected by a relationship.`,
+        );
+    }
+    if (parsed.data.visibility === "PUBLIC" && !parsed.data.promotion)
+      errors.push("promotion: A public situation requires a promotion packet.");
+    if (parsed.data.visibility === "RETIRED" && parsed.data.promotion)
+      errors.push(
+        "promotion: A retired situation must omit its promotion packet.",
+      );
+  }
+  if (!parsed.success || errors.length)
+    return { valid: false, bundleHash: null, errors: [...new Set(errors)] };
+  try {
+    return {
+      valid: true,
+      bundleHash: bundleHash(parsed.data),
+      errors: [],
+    };
+  } catch (error) {
+    return {
+      valid: false,
+      bundleHash: null,
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
+
+export function toPublishableSituationSnapshot(input: {
+  bundle: PublishableSituationBundle;
+  body: string;
+  scopedArtifactBodies: ReadonlyMap<string, string>;
+}): PublishableSituationSnapshot {
+  const bundle = publishableSituationBundleSchema.parse(input.bundle);
+  const validation = validatePublishableSituationBundle(bundle, input.body);
+  if (!validation.valid) throw new Error(validation.errors.join(" "));
+  if (bundle.visibility === "UNPUBLISHED")
+    throw new Error(
+      "An unpublished draft needs an explicit PUBLIC or RETIRED publication intent.",
+    );
+  return publishableSituationSnapshotSchema.parse({
+    schemaVersion: "publishable-situation-snapshot-v1",
+    situationId: bundle.situationId,
+    visibility: bundle.visibility,
+    frontmatter: bundle.metadata,
+    bodyMdx: canonicalText(input.body),
+    managedComponents: bundle.managedComponents,
+    relationships: bundle.relationships.map((relationship) => ({
+      kind: relationship.kind,
+      originalLogicalId: relationship.originalLogicalId,
+      resolvedLogicalId: relationship.logicalId,
+      position: relationship.position,
+      contentHash: relationship.contentHash,
+      visibility: relationship.visibility,
+    })),
+    scopedArtifacts: bundle.artifacts.map((artifact) => {
+      const scopedBody = input.scopedArtifactBodies.get(artifact.logicalId);
+      if (scopedBody === undefined)
+        throw new Error(
+          `Scoped artifact ${artifact.logicalId} is missing its exact body.`,
+        );
+      return {
+        logicalId: artifact.logicalId,
+        type: artifact.kind,
+        path: artifact.path,
+        body: scopedBody,
+        visibility: artifact.visibility,
+        ownerSituationSlug: bundle.metadata.slug,
+        forkedFromLogicalId: artifact.forkedFromLogicalId,
+        forkedFromContentHash: artifact.forkedFromContentHash,
+      };
+    }),
+    promotion: bundle.promotion,
+  });
+}
+
+export type ScopedArtifactDescriptorEvidence = {
+  logicalId: string;
+  kind: string;
+  contentHash: string;
+  byteLength: number;
+  visibility: string;
+  ownerSituationId: string | null;
+  forkedFromLogicalId: string | null;
+  forkedFromContentHash: string | null;
+  path: string;
+  encoding: "UTF8" | "BINARY";
+  mediaType: string;
+};
+
+export type PersistedScopedArtifactEvidence = {
+  logicalId: string;
+  kind: string;
+  visibility: string;
+  ownerSituationId: string;
+  forkedFromLogicalId: string;
+  forkedFromContentHash: string;
+  contentHash: string;
+  content: {
+    hash: string;
+    encoding: "UTF8" | "BINARY";
+    mediaType: string;
+    byteLength: number;
+    textBody: string | null;
+    binaryBody?: Uint8Array | null;
+  };
+};
+
+function publishableScopedArtifactPath(input: {
+  slug: string;
+  kind: string;
+  logicalId: string;
+  mediaType: string;
+}) {
+  const identity = input.logicalId
+    .replace(/[^a-zA-Z0-9._-]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+  const extension = input.mediaType.startsWith("application/json")
+    ? "json"
+    : "mdx";
+  return `content/scoped/${input.slug}/${input.kind.toLowerCase()}/${identity}.${extension}`;
+}
+
+export function verifyExactScopedArtifactDescriptors(input: {
+  situationId: string;
+  situationSlug: string;
+  descriptors: readonly ScopedArtifactDescriptorEvidence[];
+  persisted: readonly PersistedScopedArtifactEvidence[];
+}):
+  | { ok: true; bodies: ReadonlyMap<string, string> }
+  | { ok: false; errors: string[] } {
+  const errors: string[] = [];
+  const persistedByLogicalId = new Map(
+    input.persisted.map((artifact) => [artifact.logicalId, artifact]),
+  );
+  const bodies = new Map<string, string>();
+
+  if (input.persisted.length !== input.descriptors.length)
+    errors.push(
+      `Expected ${input.descriptors.length} retained scoped artifacts; found ${input.persisted.length}.`,
+    );
+
+  for (const descriptor of input.descriptors) {
+    const artifact = persistedByLogicalId.get(descriptor.logicalId);
+    if (!artifact) {
+      errors.push(
+        `${descriptor.logicalId}: retained scoped artifact is missing.`,
+      );
+      continue;
+    }
+    const body = artifact.content.textBody;
+    const actualByteLength =
+      body === null ? null : new TextEncoder().encode(body).byteLength;
+    const actualHash = body === null ? null : sha256(body);
+    const expectedPath = publishableScopedArtifactPath({
+      slug: input.situationSlug,
+      kind: descriptor.kind,
+      logicalId: descriptor.logicalId,
+      mediaType: descriptor.mediaType,
+    });
+    const mismatches = [
+      artifact.ownerSituationId !== input.situationId ||
+      descriptor.ownerSituationId !== input.situationId
+        ? "ownerSituationId"
+        : null,
+      artifact.kind !== descriptor.kind ? "kind" : null,
+      artifact.visibility !== descriptor.visibility ? "visibility" : null,
+      artifact.forkedFromLogicalId !== descriptor.forkedFromLogicalId
+        ? "forkedFromLogicalId"
+        : null,
+      artifact.forkedFromContentHash !== descriptor.forkedFromContentHash
+        ? "forkedFromContentHash"
+        : null,
+      artifact.contentHash !== descriptor.contentHash ||
+      artifact.content.hash !== descriptor.contentHash ||
+      actualHash !== descriptor.contentHash
+        ? "contentHash"
+        : null,
+      artifact.content.encoding !== descriptor.encoding ||
+      descriptor.encoding !== "UTF8"
+        ? "encoding"
+        : null,
+      artifact.content.mediaType !== descriptor.mediaType ? "mediaType" : null,
+      artifact.content.byteLength !== descriptor.byteLength ||
+      actualByteLength !== descriptor.byteLength
+        ? "byteLength"
+        : null,
+      descriptor.path !== expectedPath ? "path" : null,
+      body === null || artifact.content.binaryBody != null ? "body" : null,
+    ].filter((field): field is string => field !== null);
+    if (mismatches.length)
+      errors.push(
+        `${descriptor.logicalId}: persisted scoped artifact differs in ${mismatches.join(", ")}.`,
+      );
+    else if (body !== null) bodies.set(descriptor.logicalId, body);
+  }
+
+  return errors.length ? { ok: false, errors } : { ok: true, bodies };
+}
+
 function sortedBundle(bundle: SituationBundle): SituationBundle {
+  if (bundle.schemaVersion === "situation-bundle-v2")
+    return sortedPublishableBundle(bundle);
   return {
     ...bundle,
     artifacts: [...bundle.artifacts].sort((left, right) =>
@@ -502,6 +986,13 @@ export function validateSituationBundle(
   candidate: unknown,
   body: string,
 ): ValidationResult {
+  if (
+    candidate &&
+    typeof candidate === "object" &&
+    (candidate as { schemaVersion?: unknown }).schemaVersion ===
+      "situation-bundle-v2"
+  )
+    return validatePublishableSituationBundle(candidate, body);
   const parsed = situationBundleSchema.safeParse(candidate);
   const errors = parsed.success
     ? []
@@ -613,14 +1104,22 @@ export function publicationConflictDecision(input: {
 
 export function createScopedVariant(input: {
   situationId: string;
-  kind: BundleArtifact["kind"];
+  ownerSituationSlug: string;
+  kind: PublishableSituationBundle["artifacts"][number]["kind"];
   originalLogicalId: string;
   originalContentHash: string;
   changedBody: string;
-}): { artifact: BundleArtifact; body: string } {
+}): {
+  artifact: PublishableSituationBundle["artifacts"][number];
+  body: string;
+} {
   const body = canonicalText(input.changedBody);
   const contentHash = sha256(body);
   const logicalId = `${input.originalLogicalId}:situation:${input.situationId}:${contentHash.slice(0, 12)}`;
+  const identity = logicalId
+    .replace(/[^a-zA-Z0-9._-]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+  const json = input.kind === "PRACTICE" || input.kind === "SOURCE";
   return {
     body,
     artifact: {
@@ -635,11 +1134,262 @@ export function createScopedVariant(input: {
       ownerSituationId: input.situationId,
       forkedFromLogicalId: input.originalLogicalId,
       forkedFromContentHash: input.originalContentHash,
+      path: `content/scoped/${input.ownerSituationSlug}/${input.kind.toLowerCase()}/${identity}.${json ? "json" : "mdx"}`,
+      encoding: "UTF8",
+      mediaType: json
+        ? "application/json; charset=utf-8"
+        : "text/mdx; charset=utf-8",
     },
   };
 }
 
+export type DeterministicSituationChange = {
+  targetKind: "SECTION" | "METADATA" | "SCOPED_VARIANT";
+  targetKey: string;
+  beforeHash: string | null;
+  afterBody: string;
+};
+
+export class DeterministicChangeApplicationError extends Error {
+  constructor(
+    message: string,
+    readonly code:
+      | "STALE_SUGGESTION"
+      | "INVALID_SUGGESTION"
+      | "UNSUPPORTED_SUGGESTION" = "INVALID_SUGGESTION",
+  ) {
+    super(message);
+  }
+}
+
+export function normalizeSituationSectionReplacement(
+  targetKey: string,
+  replacement: string,
+) {
+  const normalized = canonicalText(replacement);
+  const lines = normalized.split("\n");
+  const firstLine = lines[0]?.trim() ?? "";
+  const heading = firstLine.match(/^#{1,6}\s+(.+)$/u)?.[1]?.trim();
+  if (heading !== targetKey) return normalized;
+  return canonicalText(lines.slice(1).join("\n").trimStart());
+}
+
+export function deterministicSituationChangeTargetBefore(
+  bundleInput: SituationBundle,
+  body: string,
+  change: Pick<DeterministicSituationChange, "targetKind" | "targetKey">,
+) {
+  const bundle = situationBundleSchema.parse(bundleInput);
+  if (change.targetKind === "SECTION") {
+    const beforeBody = situationSectionTargetBefore(
+      parseSituationSections(body),
+      change.targetKey,
+    );
+    return {
+      beforeBody,
+      beforeHash: sha256(canonicalText(beforeBody)),
+    };
+  }
+  if (change.targetKind === "METADATA") {
+    if (!(change.targetKey in bundle.metadata))
+      return { beforeBody: null, beforeHash: null };
+    const beforeBody = canonicalJson(
+      bundle.metadata[change.targetKey as keyof typeof bundle.metadata],
+    );
+    return { beforeBody, beforeHash: sha256(beforeBody) };
+  }
+  const target = parseScopedVariantTargetKey(change.targetKey);
+  const relationship = target
+    ? bundle.relationships.find(
+        (candidate) => candidate.logicalId === target.logicalId,
+      )
+    : undefined;
+  if (!target || !relationship) return { beforeBody: null, beforeHash: null };
+  return {
+    beforeBody: canonicalJson(relationship),
+    beforeHash: relationship.contentHash,
+  };
+}
+
+export function proposalPreservesManagedMdxComponents(
+  before: string,
+  after: string,
+) {
+  try {
+    return (
+      canonicalJson(managedMdxComponentUses("proposal before", before)) ===
+      canonicalJson(managedMdxComponentUses("proposal after", after))
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function applyDeterministicSituationChange(input: {
+  bundle: SituationBundle;
+  body: string;
+  change: DeterministicSituationChange;
+}): {
+  bundle: SituationBundle;
+  body: string;
+  scopedVariant: ReturnType<typeof createScopedVariant> | null;
+} {
+  let bundle = situationBundleSchema.parse(input.bundle);
+  let body = canonicalText(input.body);
+  const before = deterministicSituationChangeTargetBefore(
+    bundle,
+    body,
+    input.change,
+  );
+  if (
+    before.beforeHash === null ||
+    before.beforeHash !== input.change.beforeHash
+  )
+    throw new DeterministicChangeApplicationError(
+      `${input.change.targetKey} changed after this review.`,
+      "STALE_SUGGESTION",
+    );
+
+  if (input.change.targetKind === "SECTION") {
+    const replacement = normalizeSituationSectionReplacement(
+      input.change.targetKey,
+      input.change.afterBody,
+    );
+    if (
+      before.beforeBody === null ||
+      !proposalPreservesManagedMdxComponents(before.beforeBody, replacement)
+    )
+      throw new DeterministicChangeApplicationError(
+        `Managed MDX components cannot change through section suggestion ${input.change.targetKey}.`,
+      );
+    body = serializeSituationSections(
+      applySituationSectionTarget(
+        parseSituationSections(body),
+        input.change.targetKey,
+        replacement,
+      ),
+    );
+    bundle = situationBundleSchema.parse({
+      ...bundle,
+      bodyHash: sha256(canonicalText(body)),
+    });
+    return { bundle, body, scopedVariant: null };
+  }
+
+  if (input.change.targetKind === "METADATA") {
+    let replacement: unknown;
+    try {
+      replacement = JSON.parse(input.change.afterBody);
+    } catch {
+      throw new DeterministicChangeApplicationError(
+        `Metadata suggestion ${input.change.targetKey} is not valid JSON.`,
+      );
+    }
+    const metadata =
+      bundle.schemaVersion === "situation-bundle-v2"
+        ? publishableSituationBundleSchema.shape.metadata.parse({
+            ...bundle.metadata,
+            [input.change.targetKey]: replacement,
+          })
+        : situationMetadataSchema.parse({
+            ...bundle.metadata,
+            [input.change.targetKey]: replacement,
+          });
+    bundle = situationBundleSchema.parse({ ...bundle, metadata });
+    return { bundle, body, scopedVariant: null };
+  }
+
+  const target = parseScopedVariantTargetKey(input.change.targetKey);
+  const relationship = target
+    ? bundle.relationships.find(
+        (candidate) => candidate.logicalId === target.logicalId,
+      )
+    : undefined;
+  if (
+    !target ||
+    !relationship ||
+    ![
+      "GUIDE",
+      "PRACTICE",
+      "SOURCE",
+      "LESSON_PLAN",
+      "PREPARATION_PROMPT",
+    ].includes(relationship.kind)
+  )
+    throw new DeterministicChangeApplicationError(
+      `Scoped suggestion ${input.change.targetKey} cannot be safely applied.`,
+    );
+  if (target.variantId) {
+    let replacement: unknown;
+    try {
+      replacement = JSON.parse(input.change.afterBody);
+    } catch {
+      throw new DeterministicChangeApplicationError(
+        `Scoped suggestion ${input.change.targetKey} is not valid JSON.`,
+      );
+    }
+    if (
+      !replacement ||
+      typeof replacement !== "object" ||
+      (replacement as { id?: unknown }).id !== target.variantId
+    )
+      throw new DeterministicChangeApplicationError(
+        `Scoped suggestion ${input.change.targetKey} must retain its artifact ID.`,
+      );
+  }
+  const scopedValidation = validateScopedArtifactBody(
+    relationship.kind,
+    input.change.afterBody,
+  );
+  if (!scopedValidation.valid)
+    throw new DeterministicChangeApplicationError(
+      `Scoped suggestion ${input.change.targetKey} is invalid: ${scopedValidation.errors.join(" ")}`,
+    );
+  const scopedVariant = createScopedVariant({
+    situationId: bundle.situationId,
+    ownerSituationSlug: bundle.metadata.slug,
+    kind: relationship.kind as
+      "GUIDE" | "PRACTICE" | "SOURCE" | "LESSON_PLAN" | "PREPARATION_PROMPT",
+    originalLogicalId: relationship.logicalId,
+    originalContentHash: relationship.contentHash,
+    changedBody: input.change.afterBody,
+  });
+  const relationships = bundle.relationships.map((candidate) =>
+    candidate.logicalId === relationship.logicalId
+      ? {
+          ...candidate,
+          logicalId: scopedVariant.artifact.logicalId,
+          contentHash: scopedVariant.artifact.contentHash,
+          visibility: scopedVariant.artifact.visibility,
+        }
+      : candidate,
+  );
+  bundle = situationBundleSchema.parse({
+    ...bundle,
+    artifacts: [
+      ...bundle.artifacts.filter(
+        (artifact) => artifact.logicalId !== relationship.logicalId,
+      ),
+      scopedVariant.artifact,
+    ],
+    relationships,
+    contextHashes: relationships.map((candidate) => candidate.contentHash),
+  });
+  return { bundle, body, scopedVariant };
+}
+
 export const reviewRoleCodes = [
+  "context-mapper",
+  "critical-review",
+  "candidate-builder",
+  "candidate-audit",
+] as const;
+
+/**
+ * Role codes retained only so an already-created review can finish after a
+ * rolling worker upgrade. New jobs must use `reviewRoleCodes`.
+ */
+export const legacyReviewRoleCodes = [
   "surface-mapper",
   "critic-nvc",
   "critic-negotiation",
@@ -667,6 +1417,7 @@ export const reviewRoleCodes = [
 ] as const;
 
 export type ReviewRoleCode = (typeof reviewRoleCodes)[number];
+export type LegacyReviewRoleCode = (typeof legacyReviewRoleCodes)[number];
 
 export const reviewFailureReasonCodes = [
   "PROVIDER_CAPACITY",
@@ -676,9 +1427,11 @@ export const reviewFailureReasonCodes = [
   "CANDIDATE_METADATA_JSON_INVALID",
   "CANDIDATE_OUTPUT_INVALID",
   "CANDIDATE_FINDING_REFERENCE_INVALID",
+  "CANDIDATE_AUDIT_REVISE",
   "PROPOSAL_MATERIALIZATION_FAILED",
   "REVIEW_EVIDENCE_BUILD_FAILED",
   "REVIEW_INPUT_VALIDATION_FAILED",
+  "REVIEW_JOB_DEADLINE_EXCEEDED",
   "REVIEW_APPLICATION_FAILED",
 ] as const;
 
@@ -700,58 +1453,24 @@ export type ReviewStage = {
   dependencies: ReviewRoleCode[];
 };
 
-export const reviewStages: readonly ReviewStage[] = reviewRoleCodes.map(
-  (role, index) => {
-    if (index === 0) return { ordinal: 1, role, dependencies: [] };
-    if (index <= 7)
-      return {
-        ordinal: index + 1,
-        role,
-        dependencies: ["surface-mapper"],
-      };
-    if (index === 8)
-      return {
-        ordinal: 9,
-        role,
-        dependencies: reviewRoleCodes.slice(1, 8) as ReviewRoleCode[],
-      };
-    if (index <= 15)
-      return {
-        ordinal: index + 1,
-        role,
-        dependencies: [
-          "issue-register",
-          reviewRoleCodes[index - 8] as ReviewRoleCode,
-        ],
-      };
-    if (index === 16)
-      return {
-        ordinal: 17,
-        role,
-        dependencies: reviewRoleCodes.slice(1, 16) as ReviewRoleCode[],
-      };
-    if (index === 17)
-      return { ordinal: 18, role, dependencies: ["adjudicator"] };
-    if (index === 18)
-      return { ordinal: 19, role, dependencies: ["teaching-designer"] };
-    if (index <= 22)
-      return {
-        ordinal: index + 1,
-        role,
-        dependencies: ["bundle-writer", "adjudicator", "teaching-designer"],
-      };
-    return {
-      ordinal: 24,
-      role,
-      dependencies: [
-        "audit-semantic",
-        "audit-teaching-alignment",
-        "audit-repository-integrity",
-        "audit-page-language",
-      ],
-    };
+export const reviewStages: readonly ReviewStage[] = [
+  { ordinal: 1, role: "context-mapper", dependencies: [] },
+  {
+    ordinal: 2,
+    role: "critical-review",
+    dependencies: ["context-mapper"],
   },
-);
+  {
+    ordinal: 3,
+    role: "candidate-builder",
+    dependencies: ["critical-review"],
+  },
+  {
+    ordinal: 4,
+    role: "candidate-audit",
+    dependencies: ["candidate-builder"],
+  },
+];
 
 export const proposalChangeSchema = z.object({
   id: z.uuid(),

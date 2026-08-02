@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { canonicalJson, sha256 } from "@situation-studio/domain";
+import {
+  PUBLICATION_COMPILER_DIGEST,
+  PUBLICATION_COMPILER_IDENTITY,
+  canonicalJson,
+  sha256,
+} from "@situation-studio/domain";
 
 export const leadershipCapabilitySchemaVersion =
   "leadership-studio-capabilities-v1" as const;
@@ -10,17 +15,22 @@ export const requiredLeadershipFeatures = [
   "scoped-renderer-context-v1",
   "typed-projection-parity-v1",
   "affected-route-proof-v2",
+  "affected-route-proof-json-v1",
 ] as const;
 
 // These are immutable package identities shared by the two repositories.
 // The content-contract digest is updated mechanically when the Leadership-
-// owned 0.2.0 package is packed and vendored.
+// owned 0.3.0 package is packed and vendored.
 export const requiredContentContractIdentity = {
-  version: "0.2.0",
+  version: "0.3.0",
   packageSha256:
-    "6441251640d45ac3b5280a8e586c108e0e678612c13f7421566b342326321aba",
+    "ef9a723608977b3f9ea3c25bd1a7cd5f323871854937c0e462a21ca057ee9f7f",
   validationPolicyHash:
-    "4485b61546c3abbc4d9dc1540d9a639eb7c765501246bd361a7ccd81a31de01e",
+    "9131270fbc6a2e579ee10752fddf3f1f133b257a554666ea946bb76439deceee",
+} as const;
+export const requiredPublicationCompilerIdentity = {
+  identity: PUBLICATION_COMPILER_IDENTITY,
+  digest: PUBLICATION_COMPILER_DIGEST,
 } as const;
 export const requiredSituationContractIdentity = {
   version: "1.0.0",
@@ -42,6 +52,10 @@ export const leadershipRuntimeCapabilitiesSchema = z.object({
       version: z.string().min(1).max(100),
       packageSha256: sha256Schema,
       validationPolicyHash: sha256Schema,
+    }),
+    publicationCompiler: z.object({
+      identity: z.record(z.string(), z.unknown()),
+      digest: sha256Schema,
     }),
     situation: z.object({
       version: z.string().min(1).max(100),
@@ -102,6 +116,8 @@ export function assertLeadershipRuntimeCompatible(
       requiredContentContractIdentity.packageSha256 ||
     candidate.contracts.content.validationPolicyHash !==
       requiredContentContractIdentity.validationPolicyHash ||
+    candidate.contracts.publicationCompiler.digest !==
+      requiredPublicationCompilerIdentity.digest ||
     candidate.contracts.situation.version !==
       requiredSituationContractIdentity.version ||
     candidate.contracts.situation.packageSha256 !==

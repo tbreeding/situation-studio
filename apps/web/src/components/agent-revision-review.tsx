@@ -39,6 +39,9 @@ export type ReviewChangeView = {
 export type ReviewProposalView = {
   id: string;
   summary: string;
+  currentRevisionId?: string;
+  currentBundleHash?: string;
+  supersededAt?: string | null;
   candidate: null | {
     body: string;
     bodyHash: string;
@@ -50,10 +53,7 @@ export type ReviewProposalView = {
 };
 
 export function isReviewChangeApplicable(change: ReviewChangeView) {
-  return (
-    change.applicationMode === "AUTOMATIC" ||
-    (change.targetKind === "SECTION" && change.beforeHash !== null)
-  );
+  return change.applicationMode === "AUTOMATIC";
 }
 
 function normalizeSectionReplacement(targetKey: string, replacement: string) {
@@ -162,6 +162,7 @@ export function AgentRevisionReview({
   proposal,
   inputRevisionId,
   currentRevisionId,
+  currentBundleHash,
   inputBundleHash,
   checkoutAvailable,
   pending,
@@ -175,6 +176,7 @@ export function AgentRevisionReview({
   proposal: ReviewProposalView;
   inputRevisionId: string;
   currentRevisionId: string | null;
+  currentBundleHash: string | null;
   inputBundleHash: string;
   checkoutAvailable: boolean;
   pending: boolean;
@@ -203,7 +205,15 @@ export function AgentRevisionReview({
   const unresolvedFindings = proposal.findings.filter(
     (finding) => !linkedFindingIds.has(finding.id),
   );
-  const controlsDisabled = !checkoutAvailable || pending || publicationLocked;
+  const proposalRevisionId = proposal.currentRevisionId ?? inputRevisionId;
+  const proposalBundleHash = proposal.currentBundleHash ?? inputBundleHash;
+  const proposalStale = Boolean(
+    proposal.supersededAt ||
+    currentRevisionId !== proposalRevisionId ||
+    currentBundleHash !== proposalBundleHash,
+  );
+  const controlsDisabled =
+    !checkoutAvailable || pending || publicationLocked || proposalStale;
   const reviewHeading =
     proposal.changes.length === 0
       ? "No suggested changes"
@@ -239,7 +249,10 @@ export function AgentRevisionReview({
           </details>
           <span className="candidateIdentity">
             Based on {inputBundleHash.slice(0, 10)}…
-            {currentRevisionId !== inputRevisionId ? " · draft has moved" : ""}
+            {proposal.currentRevisionId &&
+            proposal.currentRevisionId !== inputRevisionId
+              ? " · decisions applied to a newer exact revision"
+              : ""}
           </span>
         </div>
         {unresolvedChanges.length > 0 ? (
@@ -266,10 +279,11 @@ export function AgentRevisionReview({
         ) : null}
       </header>
 
-      {currentRevisionId !== inputRevisionId ? (
+      {proposalStale ? (
         <p className="staleCandidateNotice" role="status">
-          The saved draft changed after this review. Each acceptance still
-          checks its exact target and will stop on a conflict.
+          {proposal.supersededAt
+            ? "This proposal was superseded by a newer saved revision. Run a new review before applying suggestions."
+            : "The saved draft no longer matches this proposal’s exact revision and bundle hash. Reload before deciding it."}
         </p>
       ) : null}
 

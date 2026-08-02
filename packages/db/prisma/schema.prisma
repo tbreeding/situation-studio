@@ -261,6 +261,7 @@ model Situation {
   productionVersions   ProductionSituationVersion[]
   reviewJobs           ReviewJob[]
   publicationJobs      PublicationJob[]
+  preflightReceipts    PublicationPreflightReceipt[]
 
   @@index([visibility, title], map: "situations_inventory_idx")
   @@map("situations")
@@ -282,6 +283,7 @@ model SituationCheckout {
   holder             User      @relation("CheckoutHolder", fields: [holderId], references: [id], onDelete: Restrict)
   forcedBy           User?     @relation("CheckoutForceActor", fields: [forcedById], references: [id], onDelete: Restrict)
   draft              Draft     @relation(fields: [draftId], references: [id], onDelete: Restrict)
+  preflightReceipts  PublicationPreflightReceipt[]
 
   @@index([holderId, releasedAt], map: "checkouts_holder_active_idx")
   @@index([situationId, releasedAt], map: "checkouts_situation_active_idx")
@@ -350,6 +352,7 @@ model DraftRevision {
   reviewJobs       ReviewJob[]
   candidateReviews AgentCandidateRevision[]
   publicationJobs  PublicationJob[]
+  preflightReceipts PublicationPreflightReceipt[]
 
   @@unique([draftId, revision], map: "draft_revisions_number_key")
   @@index([draftId, createdAt], map: "draft_revisions_timeline_idx")
@@ -466,6 +469,7 @@ model ReviewJob {
   id                 String          @id @default(uuid()) @db.Uuid
   situationId        String          @map("situation_id") @db.Uuid
   inputRevisionId    String          @map("input_revision_id") @db.Uuid
+  inputBundleHash    String          @map("input_bundle_hash") @db.Char(64)
   checkoutId         String          @map("checkout_id") @db.Uuid
   checkoutFence      BigInt          @map("checkout_fence")
   fence              BigInt          @default(1)
@@ -549,6 +553,11 @@ model ReviewProposal {
   id              String                  @id @default(uuid()) @db.Uuid
   jobId           String                  @unique @map("job_id") @db.Uuid
   inputRevisionId String                  @map("input_revision_id") @db.Uuid
+  inputBundleHash String                  @map("input_bundle_hash") @db.Char(64)
+  currentRevisionId String                @map("current_revision_id") @db.Uuid
+  currentBundleHash String                @map("current_bundle_hash") @db.Char(64)
+  supersededAt    DateTime?               @map("superseded_at") @db.Timestamptz(3)
+  supersededByRevisionId String?          @map("superseded_by_revision_id") @db.Uuid
   summary         String                  @db.Text
   findingSnapshot Json                    @map("findings")
   proposalHash    String                  @unique @map("proposal_hash") @db.Char(64)
@@ -653,6 +662,9 @@ model PublicationJob {
   sourceKind                ProductionSourceKind          @map("source_kind")
   state                     PublicationJobState           @default(REQUESTED)
   targetBundleHash          String                        @map("target_bundle_hash") @db.Char(64)
+  preflightReceiptId        String?                       @unique @map("preflight_receipt_id") @db.Uuid
+  candidateHash             String?                       @map("candidate_hash") @db.Char(64)
+  legacyPreflightExempt     Boolean                       @default(false) @map("legacy_preflight_exempt")
   baseBundleHash            String?                       @map("base_bundle_hash") @db.Char(64)
   expectedPointerGeneration BigInt?                       @map("expected_pointer_generation")
   observedReleaseId         String?                       @map("observed_release_id") @db.Uuid
@@ -672,11 +684,68 @@ model PublicationJob {
   events                    PublicationEvent[]
   receipt                   VerificationReceipt?
   candidateSnapshot         PublicationCandidateSnapshot?
+  preflightReceipt          PublicationPreflightReceipt?  @relation(fields: [preflightReceiptId], references: [id], onDelete: Restrict)
   backups                   BackupReceipt[]
 
   @@index([state, createdAt], map: "publication_jobs_queue_idx")
   @@index([situationId, state], map: "publication_jobs_situation_idx")
   @@map("publication_jobs")
+}
+
+model PublicationPreflightReceipt {
+  id                        String                         @id @default(uuid()) @db.Uuid
+  publicationId             String                         @unique @map("publication_id") @db.Uuid
+  releaseId                 String                         @unique @map("release_id") @db.Uuid
+  situationId               String                         @map("situation_id") @db.Uuid
+  revisionId                String                         @map("revision_id") @db.Uuid
+  checkoutId                String                         @map("checkout_id") @db.Uuid
+  checkoutFence             BigInt                         @map("checkout_fence")
+  revisionBundleHash        String                         @map("revision_bundle_hash") @db.Char(64)
+  candidateHash             String                         @unique @map("candidate_hash") @db.Char(64)
+  baseReleaseId             String                         @map("base_release_id") @db.Uuid
+  baseManifestHash          String                         @map("base_manifest_hash") @db.Char(64)
+  expectedPointerGeneration BigInt                         @map("expected_pointer_generation")
+  contractIdentity          Json                           @map("contract_identity")
+  contractDigest            String                         @map("contract_digest") @db.Char(64)
+  validationResult          String                         @map("validation_result") @db.VarChar(40)
+  diagnostics               Json
+  routeExpectations         Json                           @map("route_expectations")
+  sourceKind                ProductionSourceKind           @map("source_kind")
+  manifestHash              String                         @map("manifest_hash") @db.Char(64)
+  manifestBody              String                         @map("manifest_body") @db.Text
+  artifactCount             Int                            @map("artifact_count")
+  edgeCount                 Int                            @map("edge_count")
+  totalByteLength           BigInt                         @map("total_byte_length")
+  compiledProjection        Json                           @map("compiled_projection")
+  createdAt                 DateTime                       @default(now()) @map("created_at") @db.Timestamptz(3)
+  sealedAt                  DateTime?                      @map("sealed_at") @db.Timestamptz(3)
+  situation                 Situation                      @relation(fields: [situationId], references: [id], onDelete: Restrict)
+  revision                  DraftRevision                  @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+  checkout                  SituationCheckout              @relation(fields: [checkoutId], references: [id], onDelete: Restrict)
+  artifacts                 PublicationCandidateArtifact[]
+  job                       PublicationJob?
+
+  @@index([revisionId, revisionBundleHash, createdAt], map: "publication_preflight_revision_idx")
+  @@index([situationId, createdAt], map: "publication_preflight_situation_idx")
+  @@map("publication_preflight_receipts")
+}
+
+model PublicationCandidateArtifact {
+  receiptId    String                      @map("receipt_id") @db.Uuid
+  logicalId    String                      @map("logical_id") @db.VarChar(240)
+  position     Int
+  artifactType String                      @map("artifact_type") @db.VarChar(40)
+  path         String                      @db.VarChar(1000)
+  contentHash  String                      @map("content_hash") @db.Char(64)
+  byteLength   Int                         @map("byte_length")
+  encoding     ContentEncoding
+  mediaType    String                      @map("media_type") @db.VarChar(120)
+  bytes        Bytes                       @db.ByteA
+  receipt      PublicationPreflightReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+
+  @@id([receiptId, logicalId])
+  @@unique([receiptId, position], map: "publication_candidate_artifacts_position_key")
+  @@map("publication_candidate_artifacts")
 }
 
 model PublicationCandidateSnapshot {

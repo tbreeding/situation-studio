@@ -2,6 +2,11 @@
 
 Status: complete locally on 2026-07-23.
 
+> Historical checkpoint evidence. The current unreleased sealed-receipt,
+> typed-route, claim-fenced, idempotent publisher boundary is described in
+> `../architecture.md` and
+> `../validation/deterministic-reliability-overhaul-2026-08-02.md`.
+
 The publisher assembles the newest complete Leadership release, replaces only
 the target bundle and owned variants, validates the complete candidate with
 Leadership's canonical content contract, inserts immutable release rows, and

@@ -1,5 +1,12 @@
 # Spec: Simplified Situation Studio
 
+> Historical implementation specification. Its 24-stage review and
+> review-time editor-lock details were superseded by the unreleased four-phase,
+> immutable-input design in `docs/architecture.md`. Current local acceptance
+> evidence is recorded in
+> `docs/validation/deterministic-reliability-overhaul-2026-08-02.md`; this
+> preserved spec does not authorize another deployment or publication.
+
 ## Goal
 
 Rebuild Situation Studio as a fast, reversible editorial workbench for

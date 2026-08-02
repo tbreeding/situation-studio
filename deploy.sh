@@ -733,7 +733,7 @@ if [[ "${SITUATION_STUDIO_PREFLIGHT_ONLY:-}" == "1" ]]; then
   exit 0
 fi
 
-echo "[2/8] Verifying the complete local workspace"
+echo "[2/9] Verifying the complete local workspace"
 pnpm verify
 
 echo "[3/8] Creating immutable committed-source release (${studio_archive_bytes} bytes)"

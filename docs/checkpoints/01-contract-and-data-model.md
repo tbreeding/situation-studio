@@ -2,6 +2,13 @@
 
 Status: accepted for local implementation on 2026-07-23.
 
+> Historical design checkpoint. The original observations and proposed
+> checkpoints below are retained as decision evidence. The current unreleased
+> contract is Leadership-owned `@leadership-field-guide/content-contracts`
+> 0.3.0 with the complete `situation-bundle-v2` snapshot and pure shared
+> validator/compiler described in `../architecture.md` and
+> `../validation/deterministic-reliability-overhaul-2026-08-02.md`.
+
 The user authorized continuation through all local checkpoints. Production
 migration, production data mutation, and deployment remain outside that
 authorization because the governing spec requires a later procedure-specific

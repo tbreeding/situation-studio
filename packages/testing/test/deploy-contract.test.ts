@@ -202,7 +202,9 @@ printf 'status:%s\\n' "\${status}"
       "leadership-studio-capabilities-v1",
       "typed-projection-parity-v1",
       "affected-route-proof-v2",
-      "6441251640d45ac3b5280a8e586c108e0e678612c13f7421566b342326321aba",
+      "affected-route-proof-json-v1",
+      "ef9a723608977b3f9ea3c25bd1a7cd5f323871854937c0e462a21ca057ee9f7f",
+      "5a0b47948760e9134eaac1727bc658de56c87e52bcc9e03db424bb80ea2d4c95",
     ])
       position(verifier, fragment);
   });

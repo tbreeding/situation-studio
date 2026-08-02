@@ -1,6 +1,11 @@
 # Checkpoint 7 — Creation, retirement, operations, and release candidate
 
-Status: complete locally on 2026-07-23; checkpoint 8 is not authorized.
+Status as of 2026-07-23: complete locally; checkpoint 8 was not then
+authorized.
+
+> Historical pre-deployment checkpoint. Checkpoint 8 was later authorized and
+> completed as recorded in `../../HANDOFF.md`; neither that authorization nor
+> this record authorizes another deployment or publication.
 
 Creation starts atomically with a validated template, stable slug, checkout,
 canonical default practice context, and promotion metadata. The lifecycle

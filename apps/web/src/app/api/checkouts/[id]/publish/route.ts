@@ -8,6 +8,10 @@ import {
 
 const inputSchema = z.object({
   fence: z.string().regex(/^\d+$/u),
+  revisionId: z.uuid(),
+  bundleHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  preflightReceiptId: z.uuid(),
+  candidateHash: z.string().regex(/^[a-f0-9]{64}$/u),
 });
 
 export async function POST(
@@ -29,6 +33,10 @@ export async function POST(
       actorId: auth.session.userId,
       checkoutId: id,
       fence: BigInt(input.fence),
+      revisionId: input.revisionId,
+      bundleHash: input.bundleHash,
+      preflightReceiptId: input.preflightReceiptId,
+      candidateHash: input.candidateHash,
     });
     return NextResponse.json({ jobId: job.id, state: job.state });
   } catch (error) {

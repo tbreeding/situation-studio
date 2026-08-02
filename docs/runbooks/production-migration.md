@@ -1,7 +1,8 @@
 # Production migration runbook
 
-This runbook is evidence for checkpoint 7. It is not authorization to execute
-checkpoint 8.
+This runbook originated as checkpoint 7 evidence for the separately authorized
+checkpoint 8 deployment, which is now historical and recorded below. It does
+not authorize another deployment, migration, review, or content publication.
 
 ## Required approval packet
 
@@ -27,64 +28,62 @@ this launch. The readiness response must report `backup.state = "deferred"`;
 do not create a synthetic receipt. No content publication is authorized, and
 backup configuration becomes a hard gate again before the first publication.
 That exception remains valid only for a genuine first release with no current
-Studio pointer. It is not accepted by any follow-up deployment or by the
-publication workflow.
+Studio pointer. It is not accepted by a follow-up deployment or publication.
 
-## Current continuity-recovery checkpoint
+## Current deployed follow-up checkpoint
 
-Production still runs release `20260729T085659Z` at commit `70da5cae...`.
-After explicit authorization, the exact helper safely released the retained
-lease from attempt `20260802T082029Z`, and full preflight passed for clean
-pushed commit `ee2ab3a...`.
+The focused-review follow-up deployment completed on 2026-08-02. Production
+points to immutable release `20260802T114927Z` at exact commit
+`328f9a8416f0b5ec1ad4d2a8e3c5e6336a2766d9`. The release grants only `SELECT`
+on `situation_checkouts` to `situation_studio_review_worker`; the post-grant
+schema guard, a real-PostgreSQL lane query under that role, and the live
+privilege check all passed.
 
-Attempt `20260802T095838Z` created verified encrypted off-site receipt
-`c634ec70-0d15-45e8-9c89-e1a46cfe31d8`, recorded its pre-migration marker,
-and successfully applied the focused-lane migration. Continuity then failed
-closed before candidate start or pointer change because the pre-migration
-projection emitted JSON `null` for each no-owner Boolean while the migrated
-non-null column correctly emitted `false`. Queue timestamps and the null lane
-owner otherwise matched. The previous release was restored and verified.
-Active-review, expected-lane, and actual-lane hashes are, respectively,
-`649abf47d2247264917ee51a4c213b8222190bb70a218127d030a547a5f4b269`,
-`5a4adcf161a363be72a662d8ec7ef2c9183bbbd25edabf6d3ac32c734913df82`,
-and `48f0eb54c66386b108f3c3174e59e0becbf53751cd961c6f9e9673048d4472a8`.
+The successful cutover receipt is
+`7faa3075-d8c2-4a48-beb2-dcc954976da1`, object
+`situation-studio-20260802T115032Z-7faa3075-d8c2-4a48-beb2-dcc954976da1.dump.gpg`,
+checksum
+`07c81103a58d74fe590364915ea8ac5a7a527a367fcdbda5857fdc16f738c0c6`,
+and byte length 747,152. The immutable backup marker records active-review hash
+`649abf47d2247264917ee51a4c213b8222190bb70a218127d030a547a5f4b269`
+and expected-lane hash
+`48f0eb54c66386b108f3c3174e59e0becbf53751cd961c6f9e9673048d4472a8`.
+The continuity marker records identical before/after review hashes, identical
+expected/actual lane hashes, `matched: true`, and `laneMatched: true`.
 
-The newer complete lease at
-`/home/admin/projects/situation-studio/shared/.deployment-lease` names commit
-`ee2ab3a290fc2daf01619141111097b607843aaa`, release
-`20260802T095838Z`, start `2026-08-02T09:58:40Z`, and operator `admin`; its
-observed token SHA-256 is
-`cb2638b53641196a70dea363c64c421fc283b84af7bc61e2e8020d78da8c6216`.
-Read-only reconciliation found no surviving deployment shell, the current
-pointer and all processes use the prior release, local live and ready pass,
-publication drain is `0|0|0`, and the candidate has a complete backup marker
-but no continuity marker.
+The current pointer and all three PM2 working directories name that immutable
+release. Web, review worker, and publisher are online with zero restarts. Local
+live and ready return 200; readiness reports compatible Leadership identity,
+fresh worker heartbeats, no publisher recovery, and backup evidence `READY`
+with a passed non-empty restore drill. The unauthenticated public probe returns
+403 with `private, no-store`. No deployment shell or lease remains.
 
-Obtain fresh authorization naming that state. Then re-read the exact token and
-use only the helper from release `20260802T095838Z`; never use recursive
-removal. Do not redeploy `ee2ab3a...`. The corrected candidate must coalesce
-the pre-migration nullable focused comparison to Boolean `false`, include a
-real-PostgreSQL empty-lane continuity test, and expose recent publisher and
-backup failures as separate safe receipt-level Operations evidence while
-keeping backup readiness independent of the newest attempt. It must be pushed
-and exactly approved, then restart from complete preflight rather than resuming
-the abandoned attempt.
+Authenticated validation covered 1440×1000 and 390×844 layouts, all five
+checkout resume anchors, and browser warn/error logs. Operations exposes
+receipt-level publisher and backup evidence with safe allow-listed diagnostics
+and keeps backup readiness independent of the latest attempt. No browser
+console warning or error was observed.
 
-That exact candidate was authorized and attempt `20260802T113720Z` passed
-preflight, fresh encrypted off-site backup, migration, and continuity. Receipt
-`9a98392e-34d5-4879-be84-84f94f9bf63b` is verified, and its continuity marker
-proves unchanged review hash `649abf47d...` plus matching expected and actual
-lane hash `48f0eb54c...`. Candidate readiness then failed closed because the
-focused-lane claim query reads `situation_checkouts` while the review runtime
-role lacked `SELECT` on that table. PostgreSQL `42501` crashed the review
-worker, keeping readiness at 503. The deployment restored and verified the
-prior release and released its lease; no deployment shell or lease remains.
+Only `high-performer-hurting-team` was resumed. Retained job
+`954d2835-8d2a-41e0-b06e-91582827a045` completed at 24 of 24 stages on attempt
+3 and created proposal `695c584e-8afc-4351-8728-bb4d7c7998db` with seven
+automatic and three manual-only pending suggestions. No proposal decision or
+publication was made. The other four retained jobs and proposals did not
+advance. Final review and publication drains are both `0|0|0`; five checkouts
+remain active. The post-review active-state and lane hashes are
+`c9e20501d0d90464a8a9634d8bcc7cdc8e21bface973a2295b899c451ccc7195`
+and `941e37f90200d974536166d926ebd15459f2a4cb3fe3c3684f9573749e8f72a0`.
 
-Do not redeploy `a0c7937...`. The next candidate must grant only `SELECT` on
-`situation_checkouts` to `situation_studio_review_worker`, require that exact
-privilege in the post-grant schema guard, and run the focused-lane checkout
-fence join under that role in real PostgreSQL. Obtain exact commit approval and
-restart from full preflight.
+Earlier failed attempts remain append-only recovery evidence. Attempt
+`20260802T095838Z` failed continuity on equivalent `null` versus `false`
+no-owner projection; attempt `20260802T113720Z` failed candidate readiness on
+missing checkout `SELECT`. Each restored and verified the previous release.
+Do not delete or rewrite their receipts, release directories, or evidence.
+
+This completed deployment does not authorize another review or a content
+publication. Future deployment work must begin with the full read-only
+preflight and a newly named exact commit approval; never reuse an old lease or
+resume an abandoned attempt midway.
 
 ## Read-only preflight
 
@@ -231,8 +230,11 @@ production dataset is never valid restore evidence.
    remains locked. Before any release directory is created, the candidate-owned
    verifier requires `web.env` to be exactly `deferred` for a genuine first
    release or exactly `required` for every follow-up.
-4. Record the explicit initial-launch backup deferral. Do not create a
-   synthetic receipt or represent that a production backup exists.
+4. On the first release only, record the explicit initial-launch backup
+   deferral; do not create a synthetic receipt or represent that a production
+   backup exists. On every follow-up release, require the verified encrypted
+   off-site backup receipt and non-empty restore evidence named in the approved
+   packet before continuing.
 5. Re-read and record the pre-migration official pointer, manifest, artifact
    bytes, API inventory, sitemap, feed, and baseline screenshots.
 6. Apply only the reviewed additive Leadership migration as its owner, deploy
@@ -332,6 +334,57 @@ restarts all three processes from it. Rollback is successful only after the
 `/health/ready` pass; failure to prove either condition is a critical deployment
 failure. Additive database migrations remain forward-only and must stay
 compatible with the previous release.
+
+## Unreleased deterministic-preflight migration
+
+The following procedure describes the local deterministic-reliability
+overhaul. It has not been applied to production and requires a separate exact
+deployment approval. Its implementation and local acceptance evidence are in
+[`../validation/deterministic-reliability-overhaul-2026-08-02.md`](../validation/deterministic-reliability-overhaul-2026-08-02.md).
+
+For subsequent releases, `deploy.sh` applies pending additive Studio migrations
+before process cutover by temporarily enabling login for the schema owner with
+the protected `STUDIO_OWNER_MIGRATION_PASSWORD`. The deterministic-preflight
+migration is
+`20260802120000_deterministic_publication_preflight`, SHA-256
+`4e52a104b1eeae504cc25e6ac6450e4af2065cbeffc8e7dee76897cd34cd60ff`.
+It is additive for reads and retained review/proposal writers, but a new
+publication insert deliberately requires a sealed receipt and is therefore not
+compatible with the old web publisher-request shape.
+
+For this migration the launcher first stops the old web process, leaving the
+old publisher running to drain every `REQUESTED`, `ASSEMBLING`, `PROMOTING`, or
+`VERIFYING` job. It waits at most five minutes, aborts if the drain is nonzero,
+then stops the publisher and applies the migration. No new publication write
+can race that window. The review worker may remain live because its old insert
+shape is backfilled and verified by compatibility triggers. The helper restores
+the schema owner to `NOLOGIN` on success or failure, reapplies the reviewed
+runtime grants, and verifies the new receipt tables, identity columns, and
+least-privilege access.
+
+The compatible Leadership release must be deployed and verified first. It
+must expose `@leadership-field-guide/content-contracts` 0.3.0 with archive
+SHA-256
+`ef9a723608977b3f9ea3c25bd1a7cd5f323871854937c0e462a21ca057ee9f7f`,
+validation-policy hash
+`9131270fbc6a2e579ee10752fddf3f1f133b257a554666ea946bb76439deceee`,
+compiler identity `leadership-publication-compiler-v1`, compiler digest
+`5a0b47948760e9134eaac1727bc658de56c87e52bcc9e03db424bb80ea2d4c95`,
+validator digest
+`0104cd5e4f02ed5172ca5b7c14e31a694e11319e703cbeb3eec4d226518fc53a`,
+typed route proof `affected-route-proof-json-v1`, and situation contract 1.0.0
+archive SHA-256
+`9cd3aeebb384edb2c1fb70647b55d0bbed147910216293fea2979d8eec7b17f4`.
+Recheck those exact capabilities and the no-store verification route before
+cutting Studio over.
+
+Migration or cutover failure restarts the prior processes and restores the
+prior release pointer where applicable. Once this migration has committed, an
+old-release rollback remains usable for editing and review but is intentionally
+fail-closed for new publication requests; restore the compatible new release
+before accepting publication work. Do not weaken the receipt trigger to regain
+old-writer publication availability. The additive migration remains
+forward-only.
 
 When the approved host is reached through a private address that is not the
 local SSH alias, set `SITUATION_STUDIO_DEPLOY_USER` explicitly. The launcher

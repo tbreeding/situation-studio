@@ -2,20 +2,23 @@
 
 Situation Studio is a private editorial workbench for Leadership situations.
 An editor checks out one situation, works in durable drafts, optionally runs a
-24-stage agent review, previews and compares exact content, and submits one
-validated change. Leadership remains the sole public content authority.
+four-phase agent review, previews and compares exact content, and submits one
+synchronously validated, immutable candidate. Leadership remains the sole
+public content authority.
 
 The redesign and guarded production release candidate are implemented through
 checkpoint 7 of
 [SPEC-situation-studio-redesign.md](SPEC-situation-studio-redesign.md).
-Checkpoint 8 follow-up deployment remains incomplete. The additive focused-
-lane migration is applied and compatible with the verified 2026-07-29 release,
-which production still runs after the latest guarded attempt proved continuity
-but failed candidate readiness because the least-privilege review role could
-not read the checkout fence used by focused-lane claiming. The reconciled
-recovery boundary is recorded in [HANDOFF.md](HANDOFF.md) and the [production
-migration runbook](docs/runbooks/production-migration.md).
-Production content changes require a later, separately named approval.
+Checkpoint 8 follow-up deployment completed on 2026-08-02. Production runs
+immutable release `20260802T114927Z` at exact `main` commit
+`328f9a8416f0b5ec1ad4d2a8e3c5e6336a2766d9`, with focused review ordering,
+safe review failure explanations, receipt-level Operations evidence, and the
+least-privilege checkout read required by the review worker. The verified
+backup, continuity, rollback, and authenticated validation evidence is recorded
+in [HANDOFF.md](HANDOFF.md) and the [production migration
+runbook](docs/runbooks/production-migration.md).
+Production content changes still require separate, specifically named
+approval.
 
 ## Runtime
 
@@ -80,3 +83,6 @@ Architecture, checkpoint evidence, and the production approval boundary are
 documented in [docs/architecture.md](docs/architecture.md),
 [docs/checkpoints](docs/checkpoints), and
 [docs/runbooks/production-migration.md](docs/runbooks/production-migration.md).
+The unreleased deterministic review-to-publication overhaul has a separate
+[local validation record](docs/validation/deterministic-reliability-overhaul-2026-08-02.md);
+that evidence is not a deployment or content-publication authorization.

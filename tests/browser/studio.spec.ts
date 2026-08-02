@@ -23,6 +23,7 @@ if (!databaseUrl || !adminPassword)
 
 const database = new Client({ connectionString: databaseUrl });
 const browserBackupReceiptId = randomUUID();
+const browserFailures = new WeakMap<Page, string[]>();
 
 type ReviewFixtureInput = {
   situationId: string;
@@ -100,16 +101,18 @@ async function insertSucceededReviewFixture(input: ReviewFixtureInput) {
   try {
     await database.query(
       `INSERT INTO review_jobs (
-         id, situation_id, input_revision_id, checkout_id, checkout_fence,
+         id, situation_id, input_revision_id, input_bundle_hash,
+         checkout_id, checkout_fence,
          state, context_hash, contract_version, policy_version,
          queued_at, started_at, finished_at
        ) VALUES (
-         $1, $2, $3, $4, $5, 'SUCCEEDED', $6, $7, $8, now(), now(), now()
+         $1, $2, $3, $4, $5, $6, 'SUCCEEDED', $7, $8, $9, now(), now(), now()
        )`,
       [
         jobId,
         input.situationId,
         input.revisionId,
+        input.inputBundleHash,
         input.checkoutId,
         input.checkoutFence,
         createHash("sha256").update(jobId).digest("hex"),
@@ -136,12 +139,15 @@ async function insertSucceededReviewFixture(input: ReviewFixtureInput) {
       );
     await database.query(
       `INSERT INTO review_proposals (
-         id, job_id, input_revision_id, summary, findings, proposal_hash
-       ) VALUES ($1, $2, $3, $4, $5::jsonb, $6)`,
+         id, job_id, input_revision_id, input_bundle_hash,
+         current_revision_id, current_bundle_hash,
+         summary, findings, proposal_hash
+       ) VALUES ($1, $2, $3, $4, $3, $4, $5, $6::jsonb, $7)`,
       [
         proposalId,
         jobId,
         input.revisionId,
+        input.inputBundleHash,
         input.proposalSummary ??
           (input.changes.length
             ? "A concise candidate revision with retained worker lineage."
@@ -237,6 +243,90 @@ async function insertSucceededReviewFixture(input: ReviewFixtureInput) {
     throw error;
   }
   return { jobId, proposalId, candidateHash };
+}
+
+type BrowserPublicationReceipt = {
+  id: string;
+  publicationId: string;
+  releaseId: string;
+  baseReleaseId: string;
+  candidateHash: string;
+  manifestHash: string;
+  expectedPointerGeneration: string;
+};
+
+async function insertSealedPublicationReceipt(input: {
+  seed: string;
+  situationId: string;
+  revisionId: string;
+  checkoutId: string;
+  checkoutFence: string;
+  bundleHash: string;
+}): Promise<BrowserPublicationReceipt> {
+  const receipt: BrowserPublicationReceipt = {
+    id: randomUUID(),
+    publicationId: randomUUID(),
+    releaseId: randomUUID(),
+    baseReleaseId: randomUUID(),
+    candidateHash: sha256(`${input.seed}:candidate`),
+    manifestHash: sha256(`${input.seed}:manifest`),
+    expectedPointerGeneration: "7",
+  };
+  const bytes = Buffer.from("browser publication fixture", "utf8");
+  await database.query(
+    `INSERT INTO publication_preflight_receipts (
+       id, publication_id, release_id, situation_id, revision_id,
+       checkout_id, checkout_fence, revision_bundle_hash, candidate_hash,
+       base_release_id, base_manifest_hash, expected_pointer_generation,
+       contract_identity, contract_digest, validation_result, diagnostics,
+       route_expectations, source_kind, manifest_hash, manifest_body,
+       artifact_count, edge_count, total_byte_length, compiled_projection
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+       $13::jsonb, $14, 'PASSED', '[]'::jsonb, '[]'::jsonb, 'MANUAL',
+       $15, '{}', 1, 0, $16, '{}'::jsonb
+     )`,
+    [
+      receipt.id,
+      receipt.publicationId,
+      receipt.releaseId,
+      input.situationId,
+      input.revisionId,
+      input.checkoutId,
+      input.checkoutFence,
+      input.bundleHash,
+      receipt.candidateHash,
+      receipt.baseReleaseId,
+      sha256(`${input.seed}:base-manifest`),
+      receipt.expectedPointerGeneration,
+      JSON.stringify({ schemaVersion: "browser-fixture-compiler-v1" }),
+      sha256(`${input.seed}:contract`),
+      receipt.manifestHash,
+      bytes.byteLength,
+    ],
+  );
+  await database.query(
+    `INSERT INTO publication_candidate_artifacts (
+       receipt_id, logical_id, position, artifact_type, path,
+       content_hash, byte_length, encoding, media_type, bytes
+     ) VALUES (
+       $1, $2, 0, 'SITUATION', $3, $4, $5, 'UTF8',
+       'text/mdx; charset=utf-8', $6
+     )`,
+    [
+      receipt.id,
+      `situation:${input.seed}`,
+      `content/situations/${input.seed}.mdx`,
+      createHash("sha256").update(bytes).digest("hex"),
+      bytes.byteLength,
+      bytes,
+    ],
+  );
+  await database.query(
+    "UPDATE publication_preflight_receipts SET sealed_at = now() WHERE id = $1",
+    [receipt.id],
+  );
+  return receipt;
 }
 
 async function signIn(
@@ -365,6 +455,22 @@ test.beforeAll(async () => {
   );
 });
 
+test.beforeEach(async ({ page }) => {
+  const failures: string[] = [];
+  browserFailures.set(page, failures);
+  page.on("console", (message) => {
+    if (message.type() === "error")
+      failures.push(`console.error: ${message.text()}`);
+  });
+  page.on("pageerror", (error) => {
+    failures.push(`pageerror: ${error.message}`);
+  });
+});
+
+test.afterEach(async ({ page }) => {
+  expect(browserFailures.get(page) ?? []).toEqual([]);
+});
+
 test("rejects off-site return destinations and exposes no public signup", async ({
   page,
 }) => {
@@ -376,7 +482,7 @@ test("rejects off-site return destinations and exposes no public signup", async 
     error: "Authentication required.",
   });
   await page.goto("/auth/login/begin?returnTo=%2F%2Fattacker.example%2Fsteal");
-  await expect(page).toHaveURL("http://localhost:3015/login");
+  await expect(page).toHaveURL("https://localhost:3015/login");
   await expect(
     page.getByRole("heading", { name: "Sign in to edit with care." }),
   ).toBeVisible();
@@ -633,10 +739,25 @@ test("agent revisions render as accessible diffs with fenced decisions and hones
     "SELECT count(*)::text AS count FROM draft_revisions WHERE draft_id = $1",
     [fixture.draft_id],
   );
-  await page.getByRole("button", { name: "Accept all (1)" }).click();
+  let continueProposal!: () => void;
+  const proposalGate = new Promise<void>((resolve) => {
+    continueProposal = resolve;
+  });
+  await page.route("**/api/review-proposals/*/accept-all", async (route) => {
+    await proposalGate;
+    await route.continue();
+  });
+  const acceptAll = page.getByRole("button", { name: "Accept all (1)" });
+  await acceptAll.click();
+  await expect(acceptAll).toBeDisabled();
+  await expect(
+    automaticHunk.getByRole("button", { name: "Edit suggestion" }),
+  ).toBeDisabled();
+  continueProposal();
   await expect(page.getByRole("button", { name: /^Accept all/u })).toHaveCount(
     0,
   );
+  await page.unroute("**/api/review-proposals/*/accept-all");
   await expect(
     page.locator("article.reviewHunk").filter({ hasText: "The short answer" }),
   ).toContainText("accepted");
@@ -827,39 +948,236 @@ test("durable checkout, autosave, preview, dialog focus, and check-in work end t
   await expect(page).toHaveURL(/[?&]tab=review(?:&|$)/u);
   await expectNoCriticalAccessibilityViolations(page);
 
+  await page.getByRole("tab", { name: "Edit" }).click();
+  await expect(title).toBeVisible();
+
+  let continuePreflight!: () => void;
+  const preflightGate = new Promise<void>((resolve) => {
+    continuePreflight = resolve;
+  });
+  await page.route("**/api/checkouts/*/preflight", async (route) => {
+    await preflightGate;
+    const request = route.request().postDataJSON() as {
+      revisionId: string;
+      bundleHash: string;
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        receiptId: randomUUID(),
+        revisionId: request.revisionId,
+        bundleHash: request.bundleHash,
+        candidateHash: "1".repeat(64),
+        manifestHash: "2".repeat(64),
+        situationArtifactHash: "3".repeat(64),
+        baseReleaseId: randomUUID(),
+        baseManifestHash: "4".repeat(64),
+        expectedPointerGeneration: "7",
+        contractDigest: "5".repeat(64),
+        validationResult: "PASSED",
+        validatedAt: new Date().toISOString(),
+        candidatePreview: {
+          schemaVersion: "publishable-situation-projection-v1",
+          situationId: situation.id,
+          releaseId: randomUUID(),
+          publicationId: randomUUID(),
+          visibility: "PUBLIC",
+          frontmatter: {
+            slug: "defensive-about-feedback",
+            title: changedTitle,
+          },
+          bodyMdx: "## The short answer\n\nExact browser candidate.",
+          bodyMdxHash: "6".repeat(64),
+          situationArtifactHash: "3".repeat(64),
+          managedComponents: {
+            practiceEmbed: {
+              compact: true,
+              practiceId: "listen-first",
+              surface: "situation",
+              variant: "feedback-defensiveness",
+            },
+            preparedAction: {
+              scenario: "defensive-about-feedback",
+              skill: "feedback",
+            },
+          },
+          relationships: [
+            {
+              kind: "PRACTICE",
+              originalLogicalId: "practice:listen-first",
+              resolvedLogicalId: "practice:listen-first",
+              contentHash: "7".repeat(64),
+              visibility: "GLOBAL",
+              position: 0,
+            },
+          ],
+          scopedArtifacts: [],
+          promotion: {
+            status: "ready",
+            canonical: "Exact browser candidate",
+          },
+          persistence: {
+            situation: {
+              slug: "defensive-about-feedback",
+              title: changedTitle,
+              studioSituationId: situation.id,
+              visibility: "PUBLIC",
+              bodyMdx: "## The short answer\n\nExact browser candidate.",
+            },
+            practice: {
+              authoredId: "listen-first",
+              resolvedLogicalId: "practice:listen-first",
+              contentHash: "7".repeat(64),
+              projectedId: "listen-first",
+              projectedVariant: "feedback-defensiveness",
+            },
+            artifactBindings: [],
+          },
+        },
+      }),
+    });
+  });
+
   const submit = page.getByRole("button", { name: "Submit to production" });
   await submit.click();
+  await expect(title).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Validating exact candidate…" }),
+  ).toBeDisabled();
+  continuePreflight();
   const dialog = page.getByRole("dialog", {
     name: "Submit this situation to Leadership?",
   });
   const keepEditing = dialog.getByRole("button", { name: "Keep editing" });
   const confirm = dialog.getByRole("button", { name: "Confirm submission" });
   await expect(keepEditing).toBeFocused();
+  await expect(dialog.getByText("Validation passed")).toBeVisible();
   await page.keyboard.press("Shift+Tab");
   await expect(confirm).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(keepEditing).toBeFocused();
+  await dialog.getByText("Review the exact compiled candidate").click();
+  await expect(dialog.locator(".candidatePreview pre")).toContainText(
+    '"relationships"',
+  );
+  await expect(dialog.locator(".candidatePreview pre")).toContainText(
+    '"promotion"',
+  );
+  await keepEditing.focus();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(submit).toBeFocused();
+  await page.unroute("**/api/checkouts/*/preflight");
 
-  await page.route("**/api/checkouts/*/publish", async (route) => {
+  await page.evaluate(() => {
+    const originalFetch = window.fetch.bind(window);
+    let releasePublish!: () => void;
+    const publishGate = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
+    const testWindow = window as typeof window & {
+      __releaseBrowserPublish?: () => void;
+    };
+    testWindow.__releaseBrowserPublish = releasePublish;
+    testWindow.fetch = async (input, init) => {
+      const rawUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const requestUrl = new URL(rawUrl, window.location.href);
+      if (
+        requestUrl.pathname.startsWith("/api/checkouts/") &&
+        requestUrl.pathname.endsWith("/publish")
+      ) {
+        await publishGate;
+        return new Response(
+          JSON.stringify({ error: "The action could not be completed." }),
+          {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      return originalFetch(input, init);
+    };
+  });
+  await page.route("**/api/checkouts/*/preflight", async (route) => {
+    const request = route.request().postDataJSON() as {
+      revisionId: string;
+      bundleHash: string;
+    };
     await route.fulfill({
-      status: 500,
-      contentType: "text/html",
-      body: "<h1>Unexpected server failure</h1>",
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        receiptId: randomUUID(),
+        revisionId: request.revisionId,
+        bundleHash: request.bundleHash,
+        candidateHash: "1".repeat(64),
+        manifestHash: "2".repeat(64),
+        situationArtifactHash: "3".repeat(64),
+        baseReleaseId: randomUUID(),
+        baseManifestHash: "4".repeat(64),
+        expectedPointerGeneration: "7",
+        contractDigest: "5".repeat(64),
+        validationResult: "PASSED",
+        validatedAt: new Date().toISOString(),
+        candidatePreview: {
+          schemaVersion: "publishable-situation-projection-v1",
+          visibility: "PUBLIC",
+          frontmatter: {
+            slug: "defensive-about-feedback",
+            title: changedTitle,
+          },
+          bodyMdx: "## The short answer\n\nExact browser candidate.",
+          bodyMdxHash: "6".repeat(64),
+          managedComponents: {
+            practiceEmbed: {
+              compact: true,
+              practiceId: "listen-first",
+              surface: "situation",
+              variant: "feedback-defensiveness",
+            },
+            preparedAction: {
+              scenario: "defensive-about-feedback",
+              skill: "feedback",
+            },
+          },
+          relationships: [],
+          scopedArtifacts: [],
+          promotion: null,
+        },
+      }),
     });
   });
   await submit.click();
   await dialog.getByRole("button", { name: "Confirm submission" }).click();
+  await expect(title).toBeDisabled();
+  await page.evaluate(() => {
+    const releasePublish = (
+      window as typeof window & {
+        __releaseBrowserPublish?: () => void;
+      }
+    ).__releaseBrowserPublish;
+    if (!releasePublish)
+      throw new Error("The browser publication gate is unavailable.");
+    releasePublish();
+  });
   await expect(page.locator(".actionError")).toContainText(
     "The action could not be completed.",
   );
-  await expect(page.getByRole("heading", { name: changedTitle })).toBeVisible();
-  await page.unroute("**/api/checkouts/*/publish");
+  await expect(
+    page
+      .locator("header.workspaceHeader")
+      .getByRole("heading", { name: changedTitle }),
+  ).toBeVisible();
+  await page.unroute("**/api/checkouts/*/preflight");
 
   await page.getByRole("button", { name: "Check in" }).click();
-  await expect(page).toHaveURL("http://localhost:3015/");
+  await expect(page).toHaveURL("https://localhost:3015/");
   await expect(
     page
       .locator("article.inventoryRow")
@@ -1031,13 +1349,13 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
     });
     await expect(progress).toHaveAttribute(
       "aria-valuetext",
-      "1 of 24 stages complete",
+      "1 of 4 stages complete",
     );
     await expect(
-      page.getByText("1 of 24 stages complete", { exact: true }),
+      page.getByText("1 of 4 stages complete", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByText("Nonviolent communication critique", { exact: true }),
+      page.getByText("Running the integrated critical review", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByText("Review continues safely on the server."),
@@ -1112,7 +1430,7 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
 
     await expect(page.getByText("RETRYING", { exact: true })).toBeVisible();
     await expect(
-      page.getByText("Nonviolent communication critique", { exact: true }),
+      page.getByText("Running the integrated critical review", { exact: true }),
     ).toBeVisible();
     const retryStatus = page.locator(".reviewRetryStatus");
     await expect(retryStatus).toContainText(
@@ -1132,7 +1450,10 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
       `UPDATE review_jobs
         SET state = 'FAILED',
             finished_at = now(),
-            retry_not_before = NULL
+            retry_not_before = NULL,
+            lane_owner = false,
+            claim_token = NULL,
+            lease_expires_at = NULL
       WHERE id = $1`,
       [job.id],
     );
@@ -1192,15 +1513,16 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
       WHERE id = $1`,
       [job.id],
     );
-    await expect(page.locator(".workspacePage > .srOnly")).toContainText(
+    await expect(page.locator('[aria-live="polite"]')).toContainText(
       "Review complete.",
       { timeout: 10_000 },
     );
-    await expect(page.getByText("No suggested changes")).toBeVisible({
+    await page
+      .getByText("View overall review rationale", { exact: true })
+      .click();
+    await expect(page.getByText(proposalSummary)).toBeVisible({
       timeout: 10_000,
     });
-    await page.getByText("View overall review rationale").click();
-    await expect(page.getByText(proposalSummary)).toBeVisible();
 
     const cancellationStream = page.waitForResponse(
       (response) =>
@@ -1217,7 +1539,7 @@ test("workspace streams worker progress, retry, terminal, and proposal state wit
     ).toBeVisible();
     await expect(page.getByText("Review cancelled.")).toBeVisible();
     await page.getByRole("button", { name: "Check in" }).click();
-    await expect(page).toHaveURL("http://localhost:3015/");
+    await expect(page).toHaveURL("https://localhost:3015/");
   } finally {
     await cleanupBrowserFixture(browserCheckout.id);
   }
@@ -1251,7 +1573,6 @@ test("restored publication explains bounded live-verification evidence", async (
   await expect(page).toHaveURL(
     new RegExp(`/situations/${situation.slug}$`, "u"),
   );
-
   const workspace = await database.query<{
     checkout_id: string;
     checkout_fence: string;
@@ -1281,31 +1602,43 @@ test("restored publication explains bounded live-verification evidence", async (
   const jobId = randomUUID();
   const recoveryJobId = randomUUID();
   try {
+    const restoredReceipt = await insertSealedPublicationReceipt({
+      seed: `restored-${jobId}`,
+      situationId: situation.id,
+      revisionId: active.revision_id,
+      checkoutId: active.checkout_id,
+      checkoutFence: active.checkout_fence,
+      bundleHash: active.bundle_hash,
+    });
     await database.query("BEGIN");
     try {
       await database.query(
         `INSERT INTO publication_jobs (
          id, publication_id, situation_id, target_revision_id, checkout_id,
          checkout_fence, source_kind, state, target_bundle_hash,
-         base_bundle_hash, observed_release_id, leadership_release_id,
-         leadership_manifest_hash, previous_release_id, started_at,
-         finished_at, failure_code
+         preflight_receipt_id, candidate_hash, base_bundle_hash,
+         expected_pointer_generation, observed_release_id,
+         leadership_release_id, leadership_manifest_hash,
+         previous_release_id, started_at, finished_at, failure_code
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, 'MANUAL', 'RESTORED', $7, $7, $8, $8,
-         $9, $10, now() - interval '1 minute', now(),
+         $1, $2, $3, $4, $5, $6, 'MANUAL', 'RESTORED', $7, $8, $9, $7,
+         $10, $11, $12, $13, $11, now() - interval '1 minute', now(),
          'RUNTIME_HEALTH_UNAVAILABLE_RESTORED'
        )`,
         [
           jobId,
-          randomUUID(),
+          restoredReceipt.publicationId,
           situation.id,
           active.revision_id,
           active.checkout_id,
           active.checkout_fence,
           active.bundle_hash,
-          randomUUID(),
-          "a".repeat(64),
-          randomUUID(),
+          restoredReceipt.id,
+          restoredReceipt.candidateHash,
+          restoredReceipt.expectedPointerGeneration,
+          restoredReceipt.baseReleaseId,
+          restoredReceipt.releaseId,
+          restoredReceipt.manifestHash,
         ],
       );
       const events = [
@@ -1366,31 +1699,43 @@ test("restored publication explains bounded live-verification evidence", async (
     await expectNoCriticalAccessibilityViolations(page);
     await expectNoPageOverflow(page);
 
+    const recoveryReceipt = await insertSealedPublicationReceipt({
+      seed: `recovery-${recoveryJobId}`,
+      situationId: situation.id,
+      revisionId: active.revision_id,
+      checkoutId: active.checkout_id,
+      checkoutFence: active.checkout_fence,
+      bundleHash: active.bundle_hash,
+    });
     await database.query("BEGIN");
     try {
       await database.query(
         `INSERT INTO publication_jobs (
          id, publication_id, situation_id, target_revision_id, checkout_id,
          checkout_fence, source_kind, state, target_bundle_hash,
-         base_bundle_hash, observed_release_id, leadership_release_id,
-         leadership_manifest_hash, previous_release_id, started_at,
-         failure_code, created_at
+         preflight_receipt_id, candidate_hash, base_bundle_hash,
+         expected_pointer_generation, observed_release_id,
+         leadership_release_id, leadership_manifest_hash,
+         previous_release_id, started_at, failure_code, created_at
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, 'MANUAL', 'RECOVERY_REQUIRED', $7, $7,
-         $8, $8, $9, $10, now() - interval '1 minute',
+         $1, $2, $3, $4, $5, $6, 'MANUAL', 'RECOVERY_REQUIRED', $7, $8,
+         $9, $7, $10, $11, $12, $13, $11, now() - interval '1 minute',
          'AUTOMATIC_RESTORATION_FAILED', clock_timestamp() + interval '1 second'
        )`,
         [
           recoveryJobId,
-          randomUUID(),
+          recoveryReceipt.publicationId,
           situation.id,
           active.revision_id,
           active.checkout_id,
           active.checkout_fence,
           active.bundle_hash,
-          randomUUID(),
-          "b".repeat(64),
-          randomUUID(),
+          recoveryReceipt.id,
+          recoveryReceipt.candidateHash,
+          recoveryReceipt.expectedPointerGeneration,
+          recoveryReceipt.baseReleaseId,
+          recoveryReceipt.releaseId,
+          recoveryReceipt.manifestHash,
         ],
       );
       const recoveryEvents = [
@@ -1530,7 +1875,7 @@ test("restored publication explains bounded live-verification evidence", async (
     await page.reload();
 
     await page.getByRole("button", { name: "Check in" }).click();
-    await expect(page).toHaveURL("http://localhost:3015/");
+    await expect(page).toHaveURL("https://localhost:3015/");
   } finally {
     await cleanupBrowserFixture(active.checkout_id, [jobId, recoveryJobId]);
   }
@@ -1592,7 +1937,7 @@ test("deactivation revokes an editor session and admin-only navigation", async (
       editorPage.getByRole("link", { name: "Operations" }),
     ).toHaveCount(0);
     await editorPage.goto("/operations");
-    await expect(editorPage).toHaveURL("http://localhost:3015/");
+    await expect(editorPage).toHaveURL("https://localhost:3015/");
 
     const userRow = page
       .locator(".userList article")

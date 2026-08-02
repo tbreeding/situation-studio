@@ -7,6 +7,7 @@ import {
   leadershipTypedParityPredicate,
   requiredContentContractIdentity,
   requiredLeadershipFeatures,
+  requiredPublicationCompilerIdentity,
   requiredSituationContractIdentity,
   runtimeCapabilitiesFromHealth,
   type LeadershipRuntimeCapabilities,
@@ -22,6 +23,7 @@ function compatible() {
     },
     contracts: {
       content: requiredContentContractIdentity,
+      publicationCompiler: requiredPublicationCompilerIdentity,
       situation: requiredSituationContractIdentity,
     },
     database: { predicate: leadershipTypedParityPredicate },

@@ -1,8 +1,13 @@
 import {
   AdapterFailure,
   bundleWriterOutputSchema,
+  candidateAuditOutputSchema,
+  candidateBuilderOutputSchema,
+  candidateEditSchema,
+  changeIntentSchema,
   normalizedOutputSchema,
   providerAttemptsMetadataSchema,
+  runDeterministic,
   runWithFallback,
   type ProviderAttemptMetadata,
   type AdapterResult,
@@ -14,29 +19,31 @@ import {
   type DatabaseClient,
 } from "@situation-studio/db";
 import {
+  applyDeterministicSituationChange,
   bundleHash,
-  applySituationSectionTarget,
   canonicalText,
   canonicalJson,
-  createScopedVariant,
-  parseScopedVariantTargetKey,
+  deterministicSituationChangeTargetBefore,
+  normalizeSituationSectionReplacement,
   parseSituationSections,
   parseSituationSectionTargetKey,
   requiredSituationSections,
-  relationshipSchema,
+  publishableSituationMetadataKeys,
   serializeSituationSections,
   sha256,
-  situationSectionTargetBefore,
   situationSectionTargetsOverlap,
   situationBundleSchema,
   situationMetadataKeys,
-  situationMetadataSchema,
-  validateScopedArtifactBody,
+  toPublishableSituationSnapshot,
+  validatePublishableSituationSnapshot,
   validateSituationBundle,
+  verifyExactScopedArtifactDescriptors,
+  legacyReviewRoleCodes,
   reviewRoleCodes,
   type ReviewFailurePhase,
   type ReviewFailureReasonCode,
   type SituationSectionTarget,
+  type PublishableSituationSnapshot,
 } from "@situation-studio/domain";
 import {
   REVIEW_POLICY_VERSION,
@@ -52,8 +59,10 @@ export type ReviewProviderConfiguration =
     };
 
 export const REVIEW_STAGE_MAX_ATTEMPTS = 3;
+export const REVIEW_MAX_REPAIR_ATTEMPTS = 1;
 export const DEFAULT_REVIEW_RETRY_DELAYS_MS = [5_000, 30_000] as const;
-export const REVIEW_PROVIDER_TIMEOUT_MS = 60 * 60_000;
+export const REVIEW_PROVIDER_TIMEOUT_MS = 90_000;
+export const REVIEW_TOTAL_DEADLINE_MS = 8 * 60_000;
 export const LEGACY_REVIEW_POLICY_VERSION = "situation-bundle-policy-v1";
 
 export type ReviewWorkerTiming = {
@@ -87,6 +96,7 @@ export type ReviewApplicationFailureEvent = {
 export type ReviewProcessingOptions = {
   timing?: ReviewWorkerTiming;
   runStage?: typeof runWithFallback;
+  candidateValidator?: ReviewCandidateValidationHook;
   onStageTiming?: (event: ReviewStageTimingEvent) => void;
   onApplicationFailure?: (event: ReviewApplicationFailureEvent) => void;
 };
@@ -180,6 +190,10 @@ function failureReasonCode(
   error: AdapterFailure,
   phase: ReviewFailurePhase,
 ): ReviewFailureReasonCode {
+  if (/total review deadline/iu.test(error.message))
+    return "REVIEW_JOB_DEADLINE_EXCEEDED";
+  if (/candidate audit requires revision/iu.test(error.message))
+    return "CANDIDATE_AUDIT_REVISE";
   if (/metadata field .* is not valid JSON/iu.test(error.message))
     return "CANDIDATE_METADATA_JSON_INVALID";
   if (/references missing finding/iu.test(error.message))
@@ -207,9 +221,45 @@ function canonicalFindingReference(value: string) {
   const separator = value.indexOf(":");
   if (separator <= 0) return value;
   const role = value.slice(0, separator).toLowerCase();
-  return reviewRoleCodes.includes(role as (typeof reviewRoleCodes)[number])
-    ? `${role}${value.slice(separator)}`
-    : value;
+  const knownRoles: readonly string[] = [
+    ...reviewRoleCodes,
+    ...legacyReviewRoleCodes,
+  ];
+  return knownRoles.includes(role) ? `${role}${value.slice(separator)}` : value;
+}
+
+const boundedPolicyRoles: Record<string, readonly string[]> = {
+  "context-mapper": ["surface-mapper"],
+  "critical-review": [
+    "critic-nvc",
+    "critic-negotiation",
+    "critic-coaching",
+    "critic-team-health",
+    "critic-radical-candor",
+    "critic-change-systems",
+    "critic-manager-tools",
+    "adjudicator",
+  ],
+  "candidate-builder": ["teaching-designer", "bundle-writer"],
+  "candidate-audit": [
+    "audit-semantic",
+    "audit-teaching-alignment",
+    "audit-repository-integrity",
+    "audit-page-language",
+  ],
+};
+
+const candidateMetadataKeys = [
+  ...new Set([...situationMetadataKeys, ...publishableSituationMetadataKeys]),
+];
+
+function packagedPolicyForRole(role: string, policyVersion: string) {
+  const sourceRoles = boundedPolicyRoles[role];
+  return sourceRoles
+    ? sourceRoles
+        .map((sourceRole) => reviewPolicyForRole(sourceRole, policyVersion))
+        .join("\n\n")
+    : reviewPolicyForRole(role, policyVersion);
 }
 
 export function rolePrompt(
@@ -224,6 +274,34 @@ export function rolePrompt(
     "Give every finding a stable ID unique within your role and list the role codes whose evidence supports it.",
     "Return exact structured output; do not claim to have changed content.",
   ];
+  if (role === "context-mapper")
+    common.push(
+      "Map the pinned situation, required teaching surfaces, linked artifacts, and concrete evidence gaps. Do not propose edits.",
+    );
+  if (role === "critical-review")
+    common.push(
+      "Run one integrated critical pass across the supplied leadership frameworks. Reconcile conflicts inside this response instead of delegating specialist or rebuttal stages.",
+      "Emit only typed findings. Mark a finding blocking only when the candidate cannot safely or coherently proceed without resolving it.",
+    );
+  if (role === "candidate-builder")
+    common.push(
+      "Synthesize the smallest coherent candidate that addresses the retained findings without changing unrelated content.",
+      "Return constrained changeIntents only. Never invent IDs, hashes, application modes, or patch operations; the server owns those fields and derives them from the pinned revision.",
+      "Every intent must link at least one upstream finding as role-code:finding-id and retain the evidence role codes that informed it.",
+      `For SECTION intents, targetKey must be one of these top-level sections: ${requiredSituationSections.join(" | ")}.`,
+      "A smaller structural target may use section/subheading for the body beneath a ###-or-deeper heading, or section#named-block for a blockquote whose bold label slug matches the anchor.",
+      "For a top-level or /subheading SECTION intent, afterBody contains only the target body and never its Markdown heading. For a #named-block intent, afterBody contains the complete replacement blockquote and must retain the same bold label.",
+      "For SCOPED_VARIANT, targetKey names an existing relationship logical ID. It may append #new-variant-id when afterBody is a complete JSON artifact whose id exactly matches that suffix.",
+      "A PRACTICE scoped variant must be complete JSON with at least two rounds and two to four choices per round. A SOURCE scoped variant must be complete JSON with id, title, URL, publisher, and note.",
+      `A METADATA targetKey should be one of: ${candidateMetadataKeys.join(" | ")}. Unsupported concepts, embeds, relationships, and broad bundle changes remain visible for editor judgment but are never made automatically by the model.`,
+      "Keep the summary and default explanation concise; put deeper reasoning in rationale.",
+    );
+  if (role === "candidate-audit")
+    common.push(
+      "Audit the exact materializedCandidate and echo its candidateHash exactly.",
+      "Return verdict PASS only when no unresolved blocking finding remains. Return REVISE with every blocking finding reference otherwise.",
+      "Do not propose edits. A single bounded repair pass may consume this audit; there is no open-ended debate.",
+    );
   if (role === "bundle-writer")
     common.push(
       "Your job is synthesis and repair, not additional critique. Treat the adjudicator and teaching-designer outputs as authoritative.",
@@ -243,7 +321,7 @@ export function rolePrompt(
       "Keep the summary and default explanation concise; put deeper reasoning in rationale.",
     );
   if (policyVersion === LEGACY_REVIEW_POLICY_VERSION) return common.join("\n");
-  common.push(reviewPolicyForRole(role, policyVersion));
+  common.push(packagedPolicyForRole(role, policyVersion));
   return common.join("\n");
 }
 
@@ -286,6 +364,7 @@ export async function claimNextReview(
           selected &&
           (!selected.checkoutActive ||
             selected.state === "SUCCEEDED" ||
+            selected.state === "FAILED" ||
             selected.state === "CANCELLED")
         ) {
           await transaction.reviewJob.update({
@@ -329,7 +408,6 @@ export async function claimNextReview(
             });
         }
         if (!selected) return null;
-        if (selected.state === "FAILED") return null;
         if (
           selected.state === "QUEUED" &&
           selected.retryNotBefore &&
@@ -392,6 +470,7 @@ async function buildEvidence(
   database: DatabaseClient,
   jobId: string,
   stepId: string,
+  candidateValidator: ReviewCandidateValidationHook = validateSituationBundle,
 ) {
   const job = await database.reviewJob.findUniqueOrThrow({
     where: { id: jobId },
@@ -435,12 +514,20 @@ async function buildEvidence(
       )
     : [];
   const dependencyOutputs = job.steps
-    .filter((candidate) =>
-      step.roleCode === "bundle-writer"
-        ? ["adjudicator", "teaching-designer"].includes(candidate.roleCode) &&
+    .filter((candidate) => {
+      if (step.roleCode === "candidate-builder")
+        return (
+          candidate.roleCode === "critical-review" ||
+          (candidate.roleCode === "candidate-audit" &&
+            candidate.runs[0]?.structuredOutput)
+        );
+      if (step.roleCode === "bundle-writer")
+        return (
+          ["adjudicator", "teaching-designer"].includes(candidate.roleCode) &&
           candidate.state === "SUCCEEDED"
-        : dependencies.includes(candidate.roleCode),
-    )
+        );
+      return dependencies.includes(candidate.roleCode);
+    })
     .map((candidate) => ({
       role: candidate.roleCode,
       outputHash: candidate.outputHash,
@@ -456,6 +543,19 @@ async function buildEvidence(
     include: { content: true },
     orderBy: { logicalId: "asc" },
   });
+  const materializedCandidate =
+    step.roleCode === "candidate-audit"
+      ? materializeCandidateForSteps({
+          inputRevisionId: job.inputRevisionId,
+          inputBundleHash: job.inputRevision.bundleHash,
+          bundleManifest: job.inputRevision.bundleManifest,
+          body,
+          steps: job.steps,
+          candidateValidator,
+        })
+      : null;
+  if (materializedCandidate)
+    await assertSharedCandidateSnapshot(database, materializedCandidate);
   return canonicalJson({
     contractVersion: job.contractVersion,
     policyVersion: job.policyVersion,
@@ -493,58 +593,261 @@ async function buildEvidence(
         : null,
     })),
     dependencies: dependencyOutputs,
+    ...(materializedCandidate
+      ? {
+          materializedCandidate: {
+            body: materializedCandidate.body,
+            bodyHash: materializedCandidate.bodyHash,
+            bundle: materializedCandidate.bundle,
+            bundleHash: materializedCandidate.bundleHash,
+            candidateHash: materializedCandidate.candidateHash,
+            changes: materializedCandidate.changes,
+            discardedIntents: materializedCandidate.discardedIntents,
+          },
+        }
+      : {}),
   });
 }
 
 type CandidateBundle = ReturnType<typeof situationBundleSchema.parse>;
-type CandidateEdit = ReturnType<
+type PublishableCandidateBundle = Extract<
+  CandidateBundle,
+  { schemaVersion: "situation-bundle-v2" }
+>;
+type CandidateIntent = ReturnType<typeof changeIntentSchema.parse>;
+type LegacyCandidateEdit = ReturnType<
   typeof bundleWriterOutputSchema.parse
 >["candidateEdits"][number];
+type ServerCandidateChange = CandidateIntent & {
+  id: string;
+  applicationMode: "AUTOMATIC" | "MANUAL";
+  beforeHash: string | null;
+  writtenByRoleCode: string;
+};
+export type CandidateStepRecord = {
+  id: string;
+  ordinal: number;
+  roleCode: string;
+  state: string;
+  runs: Array<{ structuredOutput: Prisma.JsonValue | null }>;
+};
 
-function scopedVariantRelationship(bundle: CandidateBundle, targetKey: string) {
-  const target = parseScopedVariantTargetKey(targetKey);
-  if (!target)
-    throw new AdapterFailure(
-      "APPLICATION",
-      `Candidate scoped target ${targetKey} is invalid.`,
-      false,
-    );
-  const relationship = bundle.relationships.find(
-    (candidate) => candidate.logicalId === target.logicalId,
-  );
-  if (!relationship)
-    throw new AdapterFailure(
-      "APPLICATION",
-      `Candidate scoped target ${targetKey} is not linked.`,
-      false,
-    );
-  return { relationship, target };
-}
+export type ReviewCandidateValidationHook = typeof validateSituationBundle;
 
-function validateScopedVariantIdentity(
-  targetKey: string,
-  variantId: string | null,
-  afterBody: string,
-) {
-  if (!variantId) return;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(afterBody);
-  } catch {
-    throw new AdapterFailure(
+class LegacyReviewCandidateRequiresSyncError extends AdapterFailure {
+  constructor() {
+    super(
       "APPLICATION",
-      `Candidate scoped target ${targetKey} is not valid JSON.`,
+      "The pinned legacy draft must be synchronized to a validated v2 revision before review can materialize a candidate.",
       false,
     );
   }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    (parsed as { id?: unknown }).id !== variantId
-  )
+}
+
+function assertPublishableReviewCandidateSchema(
+  bundle: CandidateBundle,
+): asserts bundle is PublishableCandidateBundle {
+  if (bundle.schemaVersion !== "situation-bundle-v2")
+    throw new LegacyReviewCandidateRequiresSyncError();
+}
+
+type DiscardedIntent = {
+  intent: CandidateIntent;
+  sourcePosition: number;
+  reason: string;
+};
+
+function deterministicUuid(seed: string) {
+  const digest = sha256(seed);
+  const variant = ((Number.parseInt(digest[16] ?? "0", 16) & 0x3) | 0x8)
+    .toString(16)
+    .slice(-1);
+  return [
+    digest.slice(0, 8),
+    digest.slice(8, 12),
+    `5${digest.slice(13, 16)}`,
+    `${variant}${digest.slice(17, 20)}`,
+    digest.slice(20, 32),
+  ].join("-");
+}
+
+function builderStepFor(steps: CandidateStepRecord[]) {
+  return (
+    steps.find((step) => step.roleCode === "candidate-builder") ??
+    steps.find((step) => step.roleCode === "bundle-writer") ??
+    null
+  );
+}
+
+function builderIntents(step: CandidateStepRecord) {
+  const structuredOutput = step.runs[0]?.structuredOutput;
+  if (step.roleCode === "candidate-builder") {
+    const output = candidateBuilderOutputSchema.parse(structuredOutput);
+    if (output.role !== "candidate-builder")
+      throw new AdapterFailure(
+        "APPLICATION",
+        "The candidate output did not identify the Candidate Builder truthfully.",
+        false,
+      );
+    return { output, intents: output.changeIntents };
+  }
+  const output = bundleWriterOutputSchema.parse(structuredOutput);
+  if (output.role !== "bundle-writer")
     throw new AdapterFailure(
       "APPLICATION",
-      `Candidate scoped target ${targetKey} must match the replacement artifact ID.`,
+      "The candidate output did not identify the legacy Bundle Writer truthfully.",
+      false,
+    );
+  return {
+    output,
+    intents: output.candidateEdits.map(
+      ({
+        id: _id,
+        applicationMode: _applicationMode,
+        beforeHash: _beforeHash,
+        writtenByRoleCode: _writtenByRoleCode,
+        ...intent
+      }) => changeIntentSchema.parse(intent),
+    ),
+  };
+}
+
+function findingKeysForSteps(steps: CandidateStepRecord[]) {
+  const keys = new Set<string>();
+  for (const step of steps) {
+    const parsed = normalizedOutputSchema.safeParse(
+      step.runs[0]?.structuredOutput,
+    );
+    if (!parsed.success) continue;
+    for (const finding of parsed.data.findings)
+      keys.add(`${step.roleCode}:${finding.id}`);
+  }
+  return keys;
+}
+
+function filterIntentReferences(
+  steps: CandidateStepRecord[],
+  intents: CandidateIntent[],
+) {
+  const findingKeys = findingKeysForSteps(steps);
+  const accepted: CandidateIntent[] = [];
+  const acceptedSourcePositions: number[] = [];
+  const discarded: DiscardedIntent[] = [];
+  for (const [sourcePosition, intent] of intents.entries()) {
+    const missing = [...new Set(intent.upstreamFindingIds)]
+      .map(canonicalFindingReference)
+      .filter((findingKey) => !findingKeys.has(findingKey));
+    if (missing.length) {
+      discarded.push({
+        intent,
+        sourcePosition,
+        reason: `The intent references missing finding ${missing.join(", ")}.`,
+      });
+    } else {
+      accepted.push(intent);
+      acceptedSourcePositions.push(sourcePosition);
+    }
+  }
+  return { accepted, acceptedSourcePositions, discarded };
+}
+
+function materializeCandidateForSteps(input: {
+  inputRevisionId: string;
+  inputBundleHash: string;
+  bundleManifest: Prisma.JsonValue;
+  body: string;
+  steps: CandidateStepRecord[];
+  candidateValidator?: ReviewCandidateValidationHook;
+}) {
+  const builder = builderStepFor(input.steps);
+  if (!builder)
+    throw new AdapterFailure(
+      "APPLICATION",
+      "The candidate-builder stage is missing.",
+      false,
+    );
+  const { intents } = builderIntents(builder);
+  const references = filterIntentReferences(input.steps, intents);
+  const candidate = materializeCandidateRevision({
+    inputRevisionId: input.inputRevisionId,
+    inputBundleHash: input.inputBundleHash,
+    bundleManifest: input.bundleManifest,
+    body: input.body,
+    changes: references.accepted,
+    writtenByRoleCode: builder.roleCode,
+    ...(input.candidateValidator
+      ? { candidateValidator: input.candidateValidator }
+      : {}),
+  });
+  return {
+    ...candidate,
+    discardedIntents: [
+      ...references.discarded,
+      ...candidate.discardedIntents.map((discarded) => ({
+        ...discarded,
+        sourcePosition:
+          references.acceptedSourcePositions[discarded.sourcePosition] ??
+          discarded.sourcePosition,
+      })),
+    ],
+  };
+}
+
+export async function assertSharedCandidateSnapshot(
+  database: DatabaseClient,
+  candidate: Pick<
+    ReturnType<typeof materializeCandidateRevision>,
+    "bundle" | "body"
+  >,
+) {
+  assertPublishableReviewCandidateSchema(candidate.bundle);
+  if (candidate.bundle.visibility === "UNPUBLISHED")
+    throw new AdapterFailure(
+      "APPLICATION",
+      "The candidate lacks an explicit PUBLIC or RETIRED runtime intent.",
+      false,
+    );
+  const persisted = await database.scopedArtifactVariant.findMany({
+    where: {
+      ownerSituationId: candidate.bundle.situationId,
+      logicalId: {
+        in: candidate.bundle.artifacts.map((artifact) => artifact.logicalId),
+      },
+    },
+    include: { content: true },
+  });
+  const exact = verifyExactScopedArtifactDescriptors({
+    situationId: candidate.bundle.situationId,
+    situationSlug: candidate.bundle.metadata.slug,
+    descriptors: candidate.bundle.artifacts,
+    persisted,
+  });
+  if (!exact.ok)
+    throw new AdapterFailure("APPLICATION", exact.errors.join(" "), false);
+  let snapshot: PublishableSituationSnapshot;
+  try {
+    snapshot = toPublishableSituationSnapshot({
+      bundle: candidate.bundle,
+      body: candidate.body,
+      scopedArtifactBodies: exact.bodies,
+    });
+  } catch (error) {
+    throw new AdapterFailure(
+      "APPLICATION",
+      error instanceof Error ? error.message : String(error),
+      false,
+    );
+  }
+  const validated = await validatePublishableSituationSnapshot(snapshot);
+  if (!validated.ok)
+    throw new AdapterFailure(
+      "APPLICATION",
+      validated.diagnostics
+        .map(
+          (diagnostic) =>
+            `${diagnostic.path.join(".") || "snapshot"}: ${diagnostic.message}`,
+        )
+        .join(" "),
       false,
     );
 }
@@ -552,33 +855,21 @@ function validateScopedVariantIdentity(
 function candidateTargetBefore(
   bundle: CandidateBundle,
   sections: ReturnType<typeof parseSituationSections>,
-  change: CandidateEdit,
+  change: CandidateIntent,
 ) {
-  if (change.targetKind === "SECTION") {
-    const before = situationSectionTargetBefore(sections, change.targetKey);
-    return {
-      beforeBody: before,
-      beforeHash: sha256(canonicalText(before)),
-    };
-  }
-  if (change.targetKind === "METADATA") {
-    if (!Object.hasOwn(bundle.metadata, change.targetKey))
-      return { beforeBody: null, beforeHash: null };
-    const before =
-      bundle.metadata[change.targetKey as keyof typeof bundle.metadata];
-    const beforeBody = canonicalJson(before);
-    return { beforeBody, beforeHash: sha256(beforeBody) };
-  }
-  if (change.targetKind === "SCOPED_VARIANT") {
-    const { relationship: before } = scopedVariantRelationship(
+  if (
+    change.targetKind === "SECTION" ||
+    change.targetKind === "METADATA" ||
+    change.targetKind === "SCOPED_VARIANT"
+  )
+    return deterministicSituationChangeTargetBefore(
       bundle,
-      change.targetKey,
+      serializeSituationSections(sections),
+      {
+        targetKind: change.targetKind,
+        targetKey: change.targetKey,
+      },
     );
-    return {
-      beforeBody: canonicalJson(before),
-      beforeHash: before.contentHash,
-    };
-  }
   if (change.targetKind === "RELATIONSHIP") {
     const before =
       bundle.relationships.find(
@@ -598,139 +889,72 @@ function applyCandidateEdit(
     bundle: CandidateBundle;
     sections: ReturnType<typeof parseSituationSections>;
   },
-  change: CandidateEdit,
+  change: ServerCandidateChange,
 ) {
-  if (change.targetKind === "SECTION") {
-    const nextSections = applySituationSectionTarget(
-      input.sections,
-      change.targetKey,
-      change.afterBody,
+  if (
+    change.targetKind !== "SECTION" &&
+    change.targetKind !== "METADATA" &&
+    change.targetKind !== "SCOPED_VARIANT"
+  )
+    throw new AdapterFailure(
+      "APPLICATION",
+      `Candidate target ${change.targetKind} is not automatically applicable.`,
+      false,
     );
-    return { bundle: input.bundle, sections: nextSections };
-  }
-  if (change.targetKind === "METADATA") {
-    let after: unknown;
-    try {
-      after = JSON.parse(change.afterBody);
-    } catch {
-      throw new AdapterFailure(
-        "APPLICATION",
-        `Candidate metadata field ${change.targetKey} is not valid JSON.`,
-        false,
-      );
-    }
-    const metadata = situationMetadataSchema.parse({
-      ...input.bundle.metadata,
-      [change.targetKey]: after,
+  try {
+    const applied = applyDeterministicSituationChange({
+      bundle: input.bundle,
+      body: serializeSituationSections(input.sections),
+      change: {
+        targetKind: change.targetKind,
+        targetKey: change.targetKey,
+        beforeHash: change.beforeHash,
+        afterBody: change.afterBody,
+      },
     });
     return {
-      bundle: situationBundleSchema.parse({ ...input.bundle, metadata }),
-      sections: input.sections,
+      bundle: applied.bundle,
+      sections: parseSituationSections(applied.body),
     };
+  } catch (error) {
+    throw new AdapterFailure(
+      "APPLICATION",
+      error instanceof Error ? error.message : String(error),
+      false,
+    );
   }
-  if (change.targetKind === "SCOPED_VARIANT") {
-    const { relationship, target } = scopedVariantRelationship(
-      input.bundle,
-      change.targetKey,
-    );
-    if (
-      !relationship ||
-      ![
-        "GUIDE",
-        "PRACTICE",
-        "SOURCE",
-        "LESSON_PLAN",
-        "PREPARATION_PROMPT",
-      ].includes(relationship.kind)
-    )
-      throw new AdapterFailure(
-        "APPLICATION",
-        `Candidate scoped target ${change.targetKey} cannot be forked.`,
-        false,
-      );
-    validateScopedVariantIdentity(
-      change.targetKey,
-      target.variantId,
-      change.afterBody,
-    );
-    const scopedValidation = validateScopedArtifactBody(
-      relationship.kind,
-      change.afterBody,
-    );
-    if (!scopedValidation.valid)
-      throw new AdapterFailure(
-        "APPLICATION",
-        `Candidate scoped target ${change.targetKey} is invalid: ${scopedValidation.errors.join(" ")}`,
-        false,
-      );
-    const variant = createScopedVariant({
-      situationId: input.bundle.situationId,
-      kind: relationship.kind as
-        "GUIDE" | "PRACTICE" | "SOURCE" | "LESSON_PLAN" | "PREPARATION_PROMPT",
-      originalLogicalId: relationship.logicalId,
-      originalContentHash: relationship.contentHash,
-      changedBody: change.afterBody,
-    });
-    const relationships = input.bundle.relationships.map((candidate) =>
-      candidate.logicalId === relationship.logicalId
-        ? {
-            ...candidate,
-            logicalId: variant.artifact.logicalId,
-            contentHash: variant.artifact.contentHash,
-            visibility: variant.artifact.visibility,
-          }
-        : candidate,
-    );
+}
+
+function normalizeCandidateMetadataReplacement(
+  bundle: CandidateBundle,
+  intent: CandidateIntent,
+) {
+  if (intent.targetKind !== "METADATA") return intent;
+  const supportedKeys =
+    bundle.schemaVersion === "situation-bundle-v2"
+      ? (publishableSituationMetadataKeys as readonly string[])
+      : (situationMetadataKeys as readonly string[]);
+  if (
+    !supportedKeys.includes(intent.targetKey) ||
+    !(intent.targetKey in bundle.metadata)
+  )
+    return intent;
+  const current =
+    bundle.metadata[intent.targetKey as keyof typeof bundle.metadata];
+  try {
     return {
-      bundle: situationBundleSchema.parse({
-        ...input.bundle,
-        artifacts: [...input.bundle.artifacts, variant.artifact],
-        relationships,
-        contextHashes: relationships.map((candidate) => candidate.contentHash),
-      }),
-      sections: input.sections,
+      ...intent,
+      afterBody: canonicalJson(JSON.parse(intent.afterBody) as unknown),
     };
-  }
-  if (change.targetKind === "RELATIONSHIP") {
-    let after: unknown;
-    try {
-      after = JSON.parse(change.afterBody);
-    } catch {
-      throw new AdapterFailure(
-        "APPLICATION",
-        `Candidate relationship ${change.targetKey} is not valid JSON.`,
-        false,
-      );
-    }
-    const parsedAfter = after === null ? null : relationshipSchema.parse(after);
-    if (parsedAfter && parsedAfter.logicalId !== change.targetKey)
-      throw new AdapterFailure(
-        "APPLICATION",
-        "A relationship replacement must retain its target logical ID.",
-        false,
-      );
-    const existingIndex = input.bundle.relationships.findIndex(
-      (candidate) => candidate.logicalId === change.targetKey,
+  } catch {
+    if (typeof current === "string")
+      return { ...intent, afterBody: canonicalJson(intent.afterBody) };
+    throw new AdapterFailure(
+      "APPLICATION",
+      `Candidate metadata field ${intent.targetKey} is not valid JSON.`,
+      false,
     );
-    const relationships = [...input.bundle.relationships];
-    if (existingIndex >= 0 && parsedAfter)
-      relationships[existingIndex] = parsedAfter;
-    else if (existingIndex >= 0) relationships.splice(existingIndex, 1);
-    else if (parsedAfter) relationships.push(parsedAfter);
-    return {
-      bundle: situationBundleSchema.parse({
-        ...input.bundle,
-        relationships,
-        contextHashes: relationships.map((candidate) => candidate.contentHash),
-      }),
-      sections: input.sections,
-    };
   }
-  throw new AdapterFailure(
-    "APPLICATION",
-    `Candidate target ${change.targetKind} is not automatically applicable.`,
-    false,
-  );
 }
 
 export function materializeCandidateRevision(input: {
@@ -738,94 +962,183 @@ export function materializeCandidateRevision(input: {
   inputBundleHash: string;
   bundleManifest: Prisma.JsonValue;
   body: string;
-  changes: CandidateEdit[];
+  changes: CandidateIntent[] | LegacyCandidateEdit[];
+  writtenByRoleCode?: string;
+  candidateValidator?: ReviewCandidateValidationHook;
 }) {
   let bundle = situationBundleSchema.parse(input.bundleManifest);
   let sections = parseSituationSections(input.body);
   const seenTargets = new Set<string>();
   const seenSectionTargets: SituationSectionTarget[] = [];
   const materializedChanges: Array<
-    CandidateEdit & {
+    ServerCandidateChange & {
       beforeBody: string | null;
       actualBeforeHash: string | null;
     }
   > = [];
-  for (const rawChange of input.changes) {
+  const discardedIntents: DiscardedIntent[] = [];
+  const candidateValidator =
+    input.candidateValidator ?? validateSituationBundle;
+  for (const [sourcePosition, rawChange] of input.changes.entries()) {
+    const legacyChange = candidateEditSchema.safeParse(rawChange);
+    let intentSource: unknown = rawChange;
+    if (legacyChange.success) {
+      const {
+        id: _id,
+        applicationMode: _applicationMode,
+        beforeHash: _beforeHash,
+        writtenByRoleCode: _writtenByRoleCode,
+        ...intent
+      } = legacyChange.data;
+      intentSource = intent;
+    }
+    const parsedIntent = changeIntentSchema.safeParse(intentSource);
+    if (!parsedIntent.success) {
+      const fallback = rawChange as Partial<CandidateIntent>;
+      discardedIntents.push({
+        intent: {
+          targetKind: fallback.targetKind ?? "BUNDLE",
+          targetKey: fallback.targetKey ?? "invalid-change-intent",
+          afterBody: fallback.afterBody ?? "",
+          problem: fallback.problem ?? "The change intent was malformed.",
+          explanation:
+            fallback.explanation ?? "The server could not safely apply it.",
+          rationale:
+            fallback.rationale ??
+            parsedIntent.error.issues[0]?.message ??
+            "Invalid change intent.",
+          upstreamFindingIds: fallback.upstreamFindingIds ?? [
+            "candidate-builder:invalid-intent",
+          ],
+          evidenceRoleCodes: fallback.evidenceRoleCodes ?? [],
+        } as CandidateIntent,
+        sourcePosition,
+        reason:
+          parsedIntent.error.issues[0]?.message ??
+          "The candidate change intent was malformed.",
+      });
+      continue;
+    }
+    const intent = normalizeCandidateMetadataReplacement(
+      bundle,
+      parsedIntent.data,
+    );
     const change =
-      rawChange.targetKind === "SECTION"
+      intent.targetKind === "SECTION"
         ? {
-            ...rawChange,
-            afterBody: normalizeSectionReplacement(
-              rawChange.targetKey,
-              rawChange.afterBody,
+            ...intent,
+            afterBody: normalizeSituationSectionReplacement(
+              intent.targetKey,
+              intent.afterBody,
             ),
           }
-        : rawChange.targetKind === "METADATA"
-          ? {
-              ...rawChange,
-              afterBody: normalizeMetadataReplacement(
-                bundle,
-                rawChange.targetKey,
-                rawChange.afterBody,
-              ),
-            }
-          : rawChange;
-    const targetIdentity = `${change.targetKind}:${change.targetKey}`;
-    if (seenTargets.has(targetIdentity))
-      throw new AdapterFailure(
-        "APPLICATION",
-        `Candidate target ${targetIdentity} appears more than once.`,
-        false,
-      );
-    if (change.targetKind === "SECTION") {
-      const sectionTarget = parseSituationSectionTargetKey(change.targetKey);
-      if (!sectionTarget)
+        : intent;
+    try {
+      const targetIdentity = `${change.targetKind}:${change.targetKey}`;
+      if (seenTargets.has(targetIdentity))
         throw new AdapterFailure(
           "APPLICATION",
-          `Candidate section target ${change.targetKey} is invalid.`,
+          `Candidate target ${targetIdentity} appears more than once.`,
           false,
         );
-      if (
-        seenSectionTargets.some((candidate) =>
-          situationSectionTargetsOverlap(candidate, sectionTarget),
+      let sectionTarget: SituationSectionTarget | null = null;
+      if (change.targetKind === "SECTION") {
+        sectionTarget = parseSituationSectionTargetKey(change.targetKey);
+        if (!sectionTarget)
+          throw new AdapterFailure(
+            "APPLICATION",
+            `Candidate section target ${change.targetKey} is invalid.`,
+            false,
+          );
+        if (
+          seenSectionTargets.some((candidate) =>
+            situationSectionTargetsOverlap(candidate, sectionTarget!),
+          )
         )
-      )
+          throw new AdapterFailure(
+            "APPLICATION",
+            `Candidate section target ${change.targetKey} overlaps another candidate target.`,
+            false,
+          );
+      }
+      const before = candidateTargetBefore(bundle, sections, change);
+      const applicationMode: "AUTOMATIC" | "MANUAL" =
+        change.targetKind === "SECTION"
+          ? before.beforeHash
+            ? "AUTOMATIC"
+            : "MANUAL"
+          : change.targetKind === "METADATA"
+            ? before.beforeHash &&
+              (bundle.schemaVersion === "situation-bundle-v2"
+                ? (publishableSituationMetadataKeys as readonly string[])
+                : (situationMetadataKeys as readonly string[])
+              ).includes(change.targetKey)
+              ? "AUTOMATIC"
+              : "MANUAL"
+            : change.targetKind === "SCOPED_VARIANT"
+              ? bundle.schemaVersion === "situation-bundle-v1"
+                ? "AUTOMATIC"
+                : "MANUAL"
+              : "MANUAL";
+      const materializedChange: ServerCandidateChange = {
+        ...change,
+        id: deterministicUuid(
+          canonicalJson({
+            inputRevisionId: input.inputRevisionId,
+            sourcePosition,
+            intent: change,
+          }),
+        ),
+        applicationMode,
+        beforeHash: before.beforeHash,
+        writtenByRoleCode: input.writtenByRoleCode ?? "candidate-builder",
+      };
+      let nextBundle = bundle;
+      let nextSections = sections;
+      if (applicationMode === "AUTOMATIC")
+        ({ bundle: nextBundle, sections: nextSections } = applyCandidateEdit(
+          { bundle, sections },
+          materializedChange,
+        ));
+      const nextBody = serializeSituationSections(nextSections);
+      nextBundle = situationBundleSchema.parse({
+        ...nextBundle,
+        bodyHash: sha256(canonicalText(nextBody)),
+      });
+      const incrementalValidation = candidateValidator(nextBundle, nextBody);
+      if (!incrementalValidation.valid || !incrementalValidation.bundleHash)
         throw new AdapterFailure(
           "APPLICATION",
-          `Candidate section target ${change.targetKey} overlaps another candidate target.`,
+          incrementalValidation.errors.join(" ") ||
+            "The candidate change would create an invalid revision.",
           false,
         );
-      seenSectionTargets.push(sectionTarget);
+      bundle = nextBundle;
+      sections = nextSections;
+      seenTargets.add(targetIdentity);
+      if (sectionTarget) seenSectionTargets.push(sectionTarget);
+      materializedChanges.push({
+        ...materializedChange,
+        beforeBody: before.beforeBody,
+        actualBeforeHash: before.beforeHash,
+      });
+    } catch (error) {
+      discardedIntents.push({
+        intent,
+        sourcePosition,
+        reason:
+          error instanceof Error
+            ? error.message.slice(0, 1_000)
+            : "The candidate change could not be safely materialized.",
+      });
     }
-    seenTargets.add(targetIdentity);
-    const before = candidateTargetBefore(bundle, sections, change);
-    const applicationMode =
-      change.targetKind === "SECTION" && before.beforeHash
-        ? "AUTOMATIC"
-        : change.targetKind === "METADATA" && before.beforeHash === null
-          ? "MANUAL"
-          : change.applicationMode;
-    const materializedChange = {
-      ...change,
-      applicationMode,
-    } satisfies CandidateEdit;
-    materializedChanges.push({
-      ...materializedChange,
-      beforeBody: before.beforeBody,
-      actualBeforeHash: before.beforeHash,
-    });
-    if (applicationMode === "AUTOMATIC")
-      ({ bundle, sections } = applyCandidateEdit(
-        { bundle, sections },
-        materializedChange,
-      ));
   }
   const body = serializeSituationSections(sections);
   bundle = situationBundleSchema.parse({
     ...bundle,
     bodyHash: sha256(canonicalText(body)),
   });
-  const validation = validateSituationBundle(bundle, body);
+  const validation = candidateValidator(bundle, body);
   if (!validation.valid || !validation.bundleHash)
     throw new AdapterFailure(
       "APPLICATION",
@@ -846,31 +1159,84 @@ export function materializeCandidateRevision(input: {
       }),
     ),
     changes: materializedChanges,
+    discardedIntents,
   };
 }
 
-function normalizeMetadataReplacement(
-  bundle: CandidateBundle,
-  targetKey: string,
-  afterBody: string,
+export function validateCandidateAuditOutput(
+  rawOutput: unknown,
+  candidateHash: string,
+  steps: CandidateStepRecord[],
+  candidate: Pick<ReturnType<typeof materializeCandidateRevision>, "changes">,
 ) {
-  try {
-    JSON.parse(afterBody);
-    return afterBody;
-  } catch {
-    if (!Object.hasOwn(bundle.metadata, targetKey)) return afterBody;
-    const current = bundle.metadata[targetKey as keyof typeof bundle.metadata];
-    return typeof current === "string" ? canonicalJson(afterBody) : afterBody;
+  const output = candidateAuditOutputSchema.parse(rawOutput);
+  if (output.role !== "candidate-audit")
+    throw new AdapterFailure(
+      "INVALID_OUTPUT",
+      "The candidate audit did not identify its role truthfully.",
+      true,
+    );
+  if (output.candidateHash !== candidateHash)
+    throw new AdapterFailure(
+      "INVALID_OUTPUT",
+      "The candidate audit did not evaluate the exact materialized candidate hash.",
+      true,
+    );
+  const severityByKey = new Map<string, string>();
+  for (const step of steps) {
+    const parsed = normalizedOutputSchema.safeParse(
+      step.runs[0]?.structuredOutput,
+    );
+    if (!parsed.success) continue;
+    for (const finding of parsed.data.findings)
+      severityByKey.set(`${step.roleCode}:${finding.id}`, finding.severity);
   }
-}
-
-function normalizeSectionReplacement(targetKey: string, afterBody: string) {
-  const normalized = canonicalText(afterBody);
-  const lines = normalized.split("\n");
-  const firstLine = lines[0]?.trim() ?? "";
-  const heading = firstLine.match(/^#{1,6}\s+(.+)$/u)?.[1]?.trim();
-  if (heading !== targetKey) return normalized;
-  return canonicalText(lines.slice(1).join("\n").trimStart());
+  for (const finding of output.findings)
+    severityByKey.set(`candidate-audit:${finding.id}`, finding.severity);
+  const automaticallyAddressedFindingKeys = new Set(
+    candidate.changes
+      .filter((change) => change.applicationMode === "AUTOMATIC")
+      .flatMap((change) => change.upstreamFindingIds)
+      .map(canonicalFindingReference),
+  );
+  const blockingFindingKeys = output.blockingFindingIds.map((reference) => {
+    const canonical = canonicalFindingReference(reference);
+    const findingKey = severityByKey.has(canonical)
+      ? canonical
+      : severityByKey.has(`candidate-audit:${reference}`)
+        ? `candidate-audit:${reference}`
+        : null;
+    if (!findingKey)
+      throw new AdapterFailure(
+        "INVALID_OUTPUT",
+        `Candidate audit references missing finding ${reference}.`,
+        true,
+      );
+    if (severityByKey.get(findingKey) !== "blocking")
+      throw new AdapterFailure(
+        "INVALID_OUTPUT",
+        `Candidate audit blocker ${reference} is not a blocking finding.`,
+        true,
+      );
+    return findingKey;
+  });
+  const declaredBlockingFindingKeys = new Set(blockingFindingKeys);
+  const omittedUpstreamBlockers = [...severityByKey.entries()]
+    .filter(
+      ([findingKey, severity]) =>
+        severity === "blocking" &&
+        !findingKey.startsWith("candidate-audit:") &&
+        !automaticallyAddressedFindingKeys.has(findingKey) &&
+        !declaredBlockingFindingKeys.has(findingKey),
+    )
+    .map(([findingKey]) => findingKey);
+  if (omittedUpstreamBlockers.length)
+    throw new AdapterFailure(
+      "INVALID_OUTPUT",
+      `Candidate audit omitted unresolved upstream blocker ${omittedUpstreamBlockers.join(", ")}.`,
+      true,
+    );
+  return { output, blockingFindingKeys };
 }
 
 async function renewReviewLease(
@@ -1138,6 +1504,7 @@ async function recordFailure(
         failurePhase: input.phase,
         failureStageOrdinal: step.ordinal,
         failureStageRole: step.roleCode,
+        laneOwner: false,
         claimToken: null,
         leaseExpiresAt: null,
       },
@@ -1215,6 +1582,7 @@ async function recordApplicationFailure(
         failurePhase: input.phase,
         failureStageOrdinal: step.ordinal,
         failureStageRole: step.roleCode,
+        laneOwner: false,
         claimToken: null,
         leaseExpiresAt: null,
       },
@@ -1244,11 +1612,78 @@ async function recordApplicationFailure(
   });
 }
 
+async function scheduleCandidateRepair(
+  database: DatabaseClient,
+  input: {
+    jobId: string;
+    fence: bigint;
+    claimToken: string;
+    builderStepId: string;
+    auditStepId: string;
+  },
+  timing?: ReviewWorkerTiming,
+) {
+  const now = currentTime(timing);
+  return database.$transaction(async (transaction) => {
+    const active = await transaction.reviewJob.findFirst({
+      where: {
+        id: input.jobId,
+        state: "RUNNING",
+        fence: input.fence,
+        claimToken: input.claimToken,
+      },
+    });
+    if (!active) return false;
+    const completedAudits = await transaction.agentRun.count({
+      where: { stepId: input.auditStepId, outputHash: { not: null } },
+    });
+    if (completedAudits > REVIEW_MAX_REPAIR_ATTEMPTS) return false;
+    await transaction.reviewStep.update({
+      where: { id: input.builderStepId },
+      data: {
+        state: "READY",
+        outputHash: null,
+        startedAt: null,
+        finishedAt: null,
+      },
+    });
+    await transaction.reviewStep.update({
+      where: { id: input.auditStepId },
+      data: {
+        state: "PENDING",
+        outputHash: null,
+        startedAt: null,
+        finishedAt: null,
+      },
+    });
+    await transaction.$executeRaw`
+      INSERT INTO audit_events (
+        id, actor_id, action, subject_type, subject_id, payload, occurred_at
+      )
+      VALUES (
+        ${crypto.randomUUID()}::uuid,
+        NULL,
+        'REVIEW_CANDIDATE_REPAIR_SCHEDULED',
+        'REVIEW_JOB',
+        ${input.jobId},
+        ${JSON.stringify({
+          systemActor: "review-worker",
+          maximumRepairAttempts: REVIEW_MAX_REPAIR_ATTEMPTS,
+          repairAttempt: completedAudits,
+        })}::jsonb,
+        ${now}
+      )
+    `;
+    return true;
+  });
+}
+
 async function materializeProposal(
   database: DatabaseClient,
   jobId: string,
   claimToken: string,
   timing?: ReviewWorkerTiming,
+  candidateValidator: ReviewCandidateValidationHook = validateSituationBundle,
 ) {
   const now = currentTime(timing);
   const job = await database.reviewJob.findUniqueOrThrow({
@@ -1273,18 +1708,14 @@ async function materializeProposal(
       },
     },
   });
-  const writerStep = job.steps.find(
-    (candidate) => candidate.roleCode === "bundle-writer",
-  );
-  const output = bundleWriterOutputSchema.parse(
-    writerStep?.runs[0]?.structuredOutput,
-  );
-  if (output.role !== "bundle-writer")
+  const builderStep = builderStepFor(job.steps);
+  if (!builderStep)
     throw new AdapterFailure(
       "APPLICATION",
-      "The candidate revision did not identify the Bundle Writer truthfully.",
+      "The review has no completed candidate-builder stage.",
       false,
     );
+  const { output } = builderIntents(builderStep);
   const body = job.inputRevision.artifacts[0]?.content.textBody;
   if (!body)
     throw new AdapterFailure(
@@ -1346,20 +1777,50 @@ async function materializeProposal(
       });
     }
   }
-  const candidate = materializeCandidateRevision({
+  const candidate = materializeCandidateForSteps({
     inputRevisionId: job.inputRevisionId,
     inputBundleHash: job.inputRevision.bundleHash,
     bundleManifest: job.inputRevision.bundleManifest,
     body,
-    changes: output.candidateEdits,
+    steps: job.steps,
+    candidateValidator,
   });
-  const changes = candidate.changes.map((change) => {
-    if (change.writtenByRoleCode !== "bundle-writer")
+  await assertSharedCandidateSnapshot(database, candidate);
+  const auditStep = job.steps.find(
+    (candidate) => candidate.roleCode === "candidate-audit",
+  );
+  if (auditStep) {
+    const audit = validateCandidateAuditOutput(
+      auditStep.runs[0]?.structuredOutput,
+      candidate.candidateHash,
+      job.steps,
+      candidate,
+    );
+    if (audit.output.verdict !== "PASS" || audit.blockingFindingKeys.length > 0)
       throw new AdapterFailure(
         "APPLICATION",
-        "Candidate replacement authorship must name bundle-writer.",
+        "Candidate audit requires revision before proposal materialization.",
         false,
       );
+  }
+  for (const discarded of candidate.discardedIntents) {
+    const findingKey = `${builderStep.roleCode}:discarded-intent-${discarded.sourcePosition + 1}`;
+    if (findingsByKey.has(findingKey)) continue;
+    findingsByKey.set(findingKey, {
+      id: deterministicUuid(
+        canonicalJson({ jobId: job.id, findingKey, intent: discarded.intent }),
+      ),
+      findingKey,
+      severity: "IMPORTANT",
+      targetKind: discarded.intent.targetKind,
+      targetKey: discarded.intent.targetKey,
+      summary: "A candidate suggestion was kept non-actionable.",
+      rationale: discarded.reason,
+      sourceRoleCode: builderStep.roleCode,
+      evidenceRoleCodes: [...new Set(discarded.intent.evidenceRoleCodes)],
+    });
+  }
+  const changes = candidate.changes.map((change) => {
     const linkedFindings = [...new Set(change.upstreamFindingIds)].map(
       (findingKey) => {
         const finding = findingsByKey.get(
@@ -1420,12 +1881,31 @@ async function materializeProposal(
       where: { jobId: job.id },
     });
     if (!existing) {
+      const currentRevision = await transaction.draftRevision.findFirst({
+        where: { draftId: job.inputRevision.draftId },
+        orderBy: { revision: "desc" },
+        select: { id: true, bundleHash: true },
+      });
+      if (!currentRevision)
+        throw new AdapterFailure(
+          "APPLICATION",
+          "The review input draft no longer has an authoritative revision.",
+          false,
+        );
+      const superseded =
+        currentRevision.id !== job.inputRevisionId ||
+        currentRevision.bundleHash !== job.inputRevision.bundleHash;
       const proposalId = crypto.randomUUID();
       await transaction.reviewProposal.create({
         data: {
           id: proposalId,
           jobId: job.id,
           inputRevisionId: job.inputRevisionId,
+          inputBundleHash: job.inputRevision.bundleHash,
+          currentRevisionId: job.inputRevisionId,
+          currentBundleHash: job.inputRevision.bundleHash,
+          supersededAt: superseded ? now : null,
+          supersededByRevisionId: superseded ? currentRevision.id : null,
           summary: output.summary,
           findingSnapshot: findingSnapshot as Prisma.InputJsonValue,
           proposalHash,
@@ -1528,12 +2008,49 @@ export async function processClaimedReview(
             },
           },
         },
-        steps: { orderBy: { ordinal: "asc" } },
+        steps: {
+          include: {
+            runs: {
+              where: { outputHash: { not: null } },
+              orderBy: { attempt: "desc" },
+              take: 1,
+            },
+          },
+          orderBy: { ordinal: "asc" },
+        },
       },
     });
     if (job.state !== "RUNNING") return;
     const activeClaim = claimToken ?? job.claimToken;
     if (!activeClaim || job.claimToken !== activeClaim) return;
+    const totalDeadlineAt =
+      (job.startedAt ?? currentTime(options.timing)).getTime() +
+      REVIEW_TOTAL_DEADLINE_MS;
+    const totalRemainingMs =
+      totalDeadlineAt - currentTime(options.timing).getTime();
+    if (totalRemainingMs <= 0) {
+      const deadlineStep =
+        job.steps.find((step) => step.state !== "SUCCEEDED") ??
+        job.steps.at(-1);
+      if (deadlineStep)
+        await recordApplicationFailure(
+          database,
+          {
+            jobId: job.id,
+            stepId: deadlineStep.id,
+            fence: job.fence,
+            claimToken: activeClaim,
+            phase: "RUN_STAGE",
+            error: new AdapterFailure(
+              "APPLICATION",
+              "The total review deadline was exceeded.",
+              false,
+            ),
+          },
+          options.timing,
+        );
+      return;
+    }
     await renewReviewLease(
       database,
       {
@@ -1552,16 +2069,15 @@ export async function processClaimedReview(
             job.id,
             activeClaim,
             options.timing,
+            options.candidateValidator,
           );
         } catch (error) {
-          const writerStep = job.steps.find(
-            (step) => step.roleCode === "bundle-writer",
-          );
-          if (writerStep) {
+          const builderStep = builderStepFor(job.steps);
+          if (builderStep) {
             reportApplicationFailure(options.onApplicationFailure, {
               jobId: job.id,
-              stageOrdinal: writerStep.ordinal,
-              stageRole: writerStep.roleCode,
+              stageOrdinal: builderStep.ordinal,
+              stageRole: builderStep.roleCode,
               phase: "MATERIALIZE_PROPOSAL",
               error,
             });
@@ -1569,7 +2085,7 @@ export async function processClaimedReview(
               database,
               {
                 jobId: job.id,
-                stepId: writerStep.id,
+                stepId: builderStep.id,
                 fence: job.fence,
                 claimToken: activeClaim,
                 phase: "MATERIALIZE_PROPOSAL",
@@ -1591,7 +2107,12 @@ export async function processClaimedReview(
       )._max.attempt ?? 0;
     let evidence: string;
     try {
-      evidence = await buildEvidence(database, job.id, ready.id);
+      evidence = await buildEvidence(
+        database,
+        job.id,
+        ready.id,
+        options.candidateValidator,
+      );
     } catch (error) {
       reportApplicationFailure(options.onApplicationFailure, {
         jobId: job.id,
@@ -1614,10 +2135,14 @@ export async function processClaimedReview(
       );
       return;
     }
+    const localDeterministicStage =
+      ready.roleCode === "deterministic-validator";
     const requestedProvider =
-      configuration.mode === "deterministic" ? "deterministic" : "codex";
+      configuration.mode === "deterministic" || localDeterministicStage
+        ? "deterministic"
+        : "codex";
     const requestedModel =
-      configuration.mode === "deterministic"
+      configuration.mode === "deterministic" || localDeterministicStage
         ? "deterministic-provider-v1"
         : configuration.codex.model;
     const run = await database.$transaction(async (transaction) => {
@@ -1650,9 +2175,21 @@ export async function processClaimedReview(
     });
     if (!run) return;
     const stageStartedAt = Date.now();
+    const stageTotalRemainingMs =
+      totalDeadlineAt - currentTime(options.timing).getTime();
+    const stageBudgetMs = Math.max(
+      1,
+      Math.min(REVIEW_PROVIDER_TIMEOUT_MS, stageTotalRemainingMs),
+    );
     let providerCompleted = false;
+    let stageDeadlineExpired = false;
     let failurePhase: ReviewFailurePhase = "RUN_STAGE";
     const controller = new AbortController();
+    const deadlineTimer = setTimeout(() => {
+      stageDeadlineExpired = true;
+      controller.abort();
+    }, stageBudgetMs);
+    deadlineTimer.unref();
     const monitor = setInterval(() => {
       void renewReviewLease(
         database,
@@ -1666,41 +2203,63 @@ export async function processClaimedReview(
     }, 1_000);
     monitor.unref();
     try {
-      if (ready.roleCode === "deterministic-validator") {
-        failurePhase = "VALIDATE_INPUT";
-        const body = job.inputRevision.artifacts[0]?.content.textBody ?? "";
-        const validation = validateSituationBundle(
-          job.inputRevision.bundleManifest,
-          body,
-        );
-        if (
-          !validation.valid ||
-          validation.bundleHash !== job.inputRevision.bundleHash
-        )
+      const request = {
+        role: ready.roleCode,
+        effort: "high" as const,
+        system: rolePrompt(ready.roleCode, job.policyVersion),
+        evidence,
+        outputKind:
+          ready.roleCode === "candidate-builder"
+            ? ("candidate-builder" as const)
+            : ready.roleCode === "candidate-audit"
+              ? ("candidate-audit" as const)
+              : ready.roleCode === "bundle-writer"
+                ? ("bundle-writer" as const)
+                : ("review" as const),
+        signal: controller.signal,
+      };
+      let result: AdapterResult;
+      if (localDeterministicStage) {
+        failurePhase = "VALIDATE_CANDIDATE";
+        const body = job.inputRevision.artifacts[0]?.content.textBody;
+        if (!body)
           throw new AdapterFailure(
             "APPLICATION",
-            "Deterministic validation failed.",
+            "The pinned candidate input body is unavailable.",
             false,
           );
+        materializeCandidateForSteps({
+          inputRevisionId: job.inputRevisionId,
+          inputBundleHash: job.inputRevision.bundleHash,
+          bundleManifest: job.inputRevision.bundleManifest,
+          body,
+          steps: job.steps,
+          ...(options.candidateValidator
+            ? { candidateValidator: options.candidateValidator }
+            : {}),
+        });
+        result = await runDeterministic({
+          ...request,
+          provider: "deterministic",
+          model: "deterministic-provider-v1",
+          outputKind: "review",
+        });
+      } else {
+        failurePhase = "RUN_STAGE";
+        result = await runStage(request, configuration, {
+          providerTimeoutMs: stageBudgetMs,
+        });
       }
-      failurePhase = "RUN_STAGE";
-      const result = await runStage(
-        {
-          role: ready.roleCode,
-          effort: "high",
-          system: rolePrompt(ready.roleCode, job.policyVersion),
-          evidence,
-          outputKind:
-            ready.roleCode === "bundle-writer" ? "bundle-writer" : "review",
-          signal: controller.signal,
-        },
-        configuration,
-        { providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS },
-      );
-      if (ready.roleCode === "bundle-writer") {
+      if (
+        ready.roleCode === "candidate-builder" ||
+        ready.roleCode === "bundle-writer"
+      ) {
         failurePhase = "VALIDATE_CANDIDATE";
         try {
-          const output = bundleWriterOutputSchema.parse(result.output);
+          const intents =
+            ready.roleCode === "candidate-builder"
+              ? candidateBuilderOutputSchema.parse(result.output).changeIntents
+              : bundleWriterOutputSchema.parse(result.output).candidateEdits;
           const body =
             job.inputRevision.artifacts[0]?.content.textBody ??
             (() => {
@@ -1710,13 +2269,18 @@ export async function processClaimedReview(
                 false,
               );
             })();
-          materializeCandidateRevision({
+          const candidate = materializeCandidateRevision({
             inputRevisionId: job.inputRevisionId,
             inputBundleHash: job.inputRevision.bundleHash,
             bundleManifest: job.inputRevision.bundleManifest,
             body,
-            changes: output.candidateEdits,
+            changes: intents,
+            writtenByRoleCode: ready.roleCode,
+            ...(options.candidateValidator
+              ? { candidateValidator: options.candidateValidator }
+              : {}),
           });
+          await assertSharedCandidateSnapshot(database, candidate);
         } catch (error) {
           reportApplicationFailure(options.onApplicationFailure, {
             jobId: job.id,
@@ -1725,6 +2289,8 @@ export async function processClaimedReview(
             phase: "VALIDATE_CANDIDATE",
             error,
           });
+          if (error instanceof LegacyReviewCandidateRequiresSyncError)
+            throw error;
           throw new AdapterFailure(
             "INVALID_OUTPUT",
             error instanceof Error
@@ -1735,6 +2301,56 @@ export async function processClaimedReview(
           );
         }
       }
+      let auditRequiresRevision = false;
+      if (ready.roleCode === "candidate-audit") {
+        failurePhase = "VALIDATE_CANDIDATE";
+        let candidateHash: string | null = null;
+        try {
+          const parsedEvidence = JSON.parse(evidence) as {
+            materializedCandidate?: { candidateHash?: unknown };
+          };
+          if (
+            typeof parsedEvidence.materializedCandidate?.candidateHash ===
+            "string"
+          )
+            candidateHash = parsedEvidence.materializedCandidate.candidateHash;
+        } catch {
+          // The exact evidence is validated below.
+        }
+        if (!candidateHash)
+          throw new AdapterFailure(
+            "APPLICATION",
+            "The exact materialized candidate is missing from audit evidence.",
+            false,
+          );
+        const candidate = materializeCandidateForSteps({
+          inputRevisionId: job.inputRevisionId,
+          inputBundleHash: job.inputRevision.bundleHash,
+          bundleManifest: job.inputRevision.bundleManifest,
+          body:
+            job.inputRevision.artifacts[0]?.content.textBody ??
+            (() => {
+              throw new AdapterFailure(
+                "APPLICATION",
+                "The pinned candidate input body is unavailable.",
+                false,
+              );
+            })(),
+          steps: job.steps,
+          ...(options.candidateValidator
+            ? { candidateValidator: options.candidateValidator }
+            : {}),
+        });
+        const audit = validateCandidateAuditOutput(
+          result.output,
+          candidateHash,
+          job.steps,
+          candidate,
+        );
+        auditRequiresRevision =
+          audit.output.verdict === "REVISE" ||
+          audit.blockingFindingKeys.length > 0;
+      }
       providerCompleted = true;
       reportStageTiming(options.onStageTiming, {
         event: "review_stage_provider_timing",
@@ -1744,7 +2360,7 @@ export async function processClaimedReview(
         stageAttempt: run.attempt,
         stageOutcome: "SUCCEEDED",
         stageDurationMs: Date.now() - stageStartedAt,
-        providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
+        providerTimeoutMs: stageBudgetMs,
         providerAttempts: providerAttemptsMetadataSchema.parse(
           result.providerAttempts,
         ),
@@ -1761,7 +2377,61 @@ export async function processClaimedReview(
         },
         options.timing,
       );
+      if (auditRequiresRevision) {
+        const builderStep = builderStepFor(job.steps);
+        const scheduled =
+          builderStep &&
+          (await scheduleCandidateRepair(
+            database,
+            {
+              jobId: job.id,
+              fence: job.fence,
+              claimToken: activeClaim,
+              builderStepId: builderStep.id,
+              auditStepId: ready.id,
+            },
+            options.timing,
+          ));
+        if (scheduled) continue;
+        const error = new AdapterFailure(
+          "APPLICATION",
+          "Candidate audit requires revision after the bounded repair pass.",
+          false,
+        );
+        reportApplicationFailure(options.onApplicationFailure, {
+          jobId: job.id,
+          stageOrdinal: ready.ordinal,
+          stageRole: ready.roleCode,
+          phase: "VALIDATE_CANDIDATE",
+          error,
+        });
+        await recordApplicationFailure(
+          database,
+          {
+            jobId: job.id,
+            stepId: ready.id,
+            fence: job.fence,
+            claimToken: activeClaim,
+            phase: "VALIDATE_CANDIDATE",
+            error,
+          },
+          options.timing,
+        );
+        return;
+      }
     } catch (error) {
+      const recordedError = stageDeadlineExpired
+        ? new AdapterFailure(
+            stageTotalRemainingMs <= REVIEW_PROVIDER_TIMEOUT_MS
+              ? "APPLICATION"
+              : "TRANSIENT",
+            stageTotalRemainingMs <= REVIEW_PROVIDER_TIMEOUT_MS
+              ? "The total review deadline was exceeded."
+              : "The review stage exceeded its 90-second deadline.",
+            stageTotalRemainingMs > REVIEW_PROVIDER_TIMEOUT_MS,
+            error instanceof AdapterFailure ? error.providerAttempts : [],
+          )
+        : error;
       if (!providerCompleted)
         reportStageTiming(options.onStageTiming, {
           event: "review_stage_provider_timing",
@@ -1771,10 +2441,12 @@ export async function processClaimedReview(
           stageAttempt: run.attempt,
           stageOutcome: "FAILED",
           stageDurationMs: Date.now() - stageStartedAt,
-          providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
+          providerTimeoutMs: stageBudgetMs,
           providerAttempts:
-            error instanceof AdapterFailure
-              ? providerAttemptsMetadataSchema.parse(error.providerAttempts)
+            recordedError instanceof AdapterFailure
+              ? providerAttemptsMetadataSchema.parse(
+                  recordedError.providerAttempts,
+                )
               : [],
         });
       await recordFailure(
@@ -1787,12 +2459,13 @@ export async function processClaimedReview(
           claimToken: activeClaim,
           attempt: run.attempt,
           phase: failurePhase,
-          error,
+          error: recordedError,
         },
         options.timing,
       );
       return;
     } finally {
+      clearTimeout(deadlineTimer);
       clearInterval(monitor);
     }
   }

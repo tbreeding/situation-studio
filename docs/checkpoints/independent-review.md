@@ -1,7 +1,11 @@
 # Independent architecture, security, and resilience review
 
-Status: all high- and medium-severity local findings resolved on 2026-07-23.
-Checkpoint 8 remains unauthorized.
+Status as of 2026-07-23: all high- and medium-severity local findings were
+resolved; checkpoint 8 was not then authorized.
+
+> Historical pre-deployment review. Checkpoint 8 was later authorized and
+> completed as recorded in `../../HANDOFF.md`. Current unreleased overhaul
+> evidence is separate and this review does not authorize another release.
 
 Three independent reviewers assessed cross-database authority, runtime and
 credential isolation, immutable history, checkout fencing, scoped variants,

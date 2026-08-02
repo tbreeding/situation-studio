@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added an immutable, one-way-sealed publication preflight receipt containing the exact revision, Leadership base, compiler identity, complete candidate projection, route expectations, and every compiled artifact byte.
+- Added synchronous production validation and an exact compiled-candidate preview before the editor can confirm submission.
+- Added receipt-level Operations diagnostics for recent publisher and backup failures, with safe typed explanations and allow-listed codes, while keeping publication backup readiness independent of the newest backup attempt.
+
 ### Changed
 
+- Replaced new 24-stage reviews with four bounded phases: context mapping, integrated critical review, server-owned candidate construction, and a typed blocking audit with at most one repair pass. Retained 22/24-stage jobs remain readable for rolling compatibility.
+- Changed Studio revisions to a complete v2 publishable snapshot and made the Leadership-owned pure validator/compiler the shared save, review, proposal, preflight, and publisher contract.
+- Fenced saves, reviews, proposal decisions, preflight, and publication to exact revision and bundle identities; proposal decisions now return the authoritative resulting revision for immediate editor adoption.
+- Changed publisher verification to use the typed no-store Leadership route proof with bounded transient convergence retries and exact sealed candidate reuse. Once that live release is verified, interrupted Studio finalization resumes forward without restoring Leadership.
 - Changed agent review orchestration to keep one review focused through retry waits and terminal failures, pause later reviews until it succeeds or is explicitly stopped, and show safe stage-specific failure explanations. Retrying a historical failure now focuses and resumes that exact retained job, or reports which existing focus must be finished or stopped first.
 - Changed automatic section-suggestion acceptance to reject additions, removals, or attribute changes to managed `PracticeEmbed` and `PreparedAction` tags; make those component edits explicitly in the raw MDX editor.
 - Changed publication to fail closed for default new-situation drafts and scoped guide variants that content-contract 0.2.0 cannot yet represent as a valid canonical Leadership snapshot.
@@ -23,8 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed retained legacy drafts so starting review first records and adopts a fenced, validated v2 action checkpoint; direct v1 review requests and v1 worker candidates now fail closed.
+- Prevented managed-component drift, including removal of a `PracticeEmbed` variant, from being saved, proposed as actionable, or submitted for publication.
+- Fixed overlapping saves, stale review/publication commands, superseded proposal decisions, and router refreshes that could otherwise leave an editor showing stale local state.
+- Fixed publication relationship divergence, ambiguous promotion reconciliation, claim-unfenced mutations, non-atomic success recording, and restoration after an already verified release.
+- Fixed deployment compatibility for the receipt-enforcing migration by quiescing web publication writes, draining the old publisher, and restarting the prior processes on migration or cutover failure. An old-release rollback remains fail-closed for new publication requests.
+- Fixed historical Leadership release reads after publishing a situation-scoped practice by restoring the authored practice ID and embed variant while retaining the resolved scoped relationship.
 - Fixed focused-lane rollout so the least-privilege review worker can read the active checkout fence used by lane claiming, and made release schema application verify that grant before candidate start.
-- Added receipt-level Operations diagnostics for recent publisher and backup failures, with safe typed explanations and allow-listed codes, and separated publication backup readiness from the state of the newest backup attempt.
 - Fixed follow-up deployment continuity when active checkouts have no running review by projecting the pre-migration no-owner state as Boolean `false`, matching the migrated non-null lane column instead of failing on an equivalent `null` representation.
 - Fixed remote deployment cutover so the complete SSH program is buffered before execution and subprocesses cannot consume unparsed shell source from standard input and falsely report a no-op cutover as successful.
 - Fixed backup workers to send parameterized SQL through standard input, where `psql` performs variable substitution, instead of passing it through `--command` and leaving receipt fences as invalid literal syntax.
@@ -38,3 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed follow-up deployment cutover so Studio stops new work, waits for unfinished publication attempts, and records an `active-review-state-continuity-v2` receipt proving both unchanged active checkout/draft/review state and the lane migration's expected queue order and owner.
 - Fixed deployment rollback so migration, continuity, local-health, or protected-public-gate failures restore the exact previous release and require its local live and ready checks to pass.
 - Fixed first-release preflight so it proves `web.env` is explicitly in deferred backup mode before creating a release; follow-up preflight proves required mode through the same candidate-owned verifier.
+
+### Security
+
+- Database triggers prevent mutation of sealed preflight receipts and candidate artifacts and reject every new publication job without an exact matching sealed receipt.
+- Global relationship suggestions remain manual-only, and unsupported scoped guide publication is rejected before an actionable proposal or publication job can be created.

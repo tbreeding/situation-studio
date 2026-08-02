@@ -5,14 +5,17 @@ import {
   type ProductionSourceKind,
 } from "@situation-studio/db";
 import {
-  CONTRACT_VERSION,
-  VALIDATION_POLICY_VERSION,
+  PUBLISHABLE_CONTRACT_VERSION,
+  PUBLISHABLE_VALIDATION_POLICY_VERSION,
   bundleHash,
+  canonicalJson,
   canonicalText,
+  parseManagedSituationComponents,
+  publishableSituationBundleSchema,
   sha256,
   situationBundleSchema,
   type SituationBundle,
-  type SituationMetadata,
+  type PublishableSituationBundle,
 } from "@situation-studio/domain";
 
 export * from "./runtime-capabilities";
@@ -36,7 +39,13 @@ type SituationRow = {
   title: string;
   description: string;
   stakes: string;
-  primary_skill: string;
+  primary_skill:
+    | "one-on-ones"
+    | "feedback"
+    | "coaching"
+    | "delegation"
+    | "team-dynamics"
+    | "transition-to-manager";
   preparation_time: "5 minutes" | "15 minutes" | "30 minutes";
   emotional_load: "low" | "medium" | "high";
   pattern: "first-occurrence" | "emerging-pattern" | "repeated-pattern";
@@ -46,6 +55,10 @@ type SituationRow = {
   author_id: string;
   reviewer_id: string;
   practice_id: string;
+  practice_variant: string;
+  field_note_present: true;
+  safety_escalation_note_present: true;
+  review_status: "human-approved";
   body_mdx: string;
   social_hook: string;
   campaign_cluster: string;
@@ -59,8 +72,9 @@ type SituationRow = {
   promotion: Record<string, unknown> | null;
 };
 
-type ArtifactRow = {
+export type LeadershipArtifactSnapshot = {
   logical_id: string;
+  path: string;
   type: string;
   content_hash: string;
   byte_length: number;
@@ -88,7 +102,7 @@ export type LeadershipSituationSnapshot = {
   title: string;
   body: string;
   bundle: SituationBundle;
-  artifacts: ArtifactRow[];
+  artifacts: LeadershipArtifactSnapshot[];
 };
 
 export type LeadershipReleaseSnapshot = {
@@ -104,6 +118,7 @@ export type LeadershipReleaseSnapshot = {
     artifactCount: number;
     edgeCount: number;
   };
+  artifacts: LeadershipArtifactSnapshot[];
   situations: LeadershipSituationSnapshot[];
 };
 
@@ -134,6 +149,22 @@ function artifactKind(type: string) {
       | "PREPARATION_PROMPT"
       | "PROMOTION";
   return null;
+}
+
+function authoredPracticeId(
+  row: Pick<SituationRow, "practice_id" | "slug">,
+  binding: BindingRow | undefined,
+) {
+  if (!binding) return row.practice_id;
+  const prefix = "practice:";
+  if (
+    !binding.original_logical_id.startsWith(prefix) ||
+    binding.original_logical_id.length === prefix.length
+  )
+    throw new Error(
+      `Leadership PRACTICE binding for ${row.slug} has invalid original logical ID ${binding.original_logical_id}.`,
+    );
+  return binding.original_logical_id.slice(prefix.length);
 }
 
 async function readLeadershipRelease(
@@ -175,10 +206,8 @@ async function readLeadershipRelease(
     );
     const release = releaseResult.rows[0];
     if (!release) throw new Error("Leadership has no official release.");
-    const [situationsResult, artifactsResult, bindingsResult] =
-      await Promise.all([
-        client.query<SituationRow>(
-          `
+    const situationsResult = await client.query<SituationRow>(
+      `
           SELECT
             situation.id,
             situation.slug,
@@ -195,6 +224,10 @@ async function readLeadershipRelease(
             situation.author_id,
             situation.reviewer_id,
             situation.practice_id,
+            situation.practice_variant,
+            situation.field_note_present,
+            situation.safety_escalation_note_present,
+            situation.review_status,
             situation.body_mdx,
             situation.social_hook,
             situation.campaign_cluster,
@@ -249,12 +282,13 @@ async function readLeadershipRelease(
           WHERE situation.release_id = $1
           ORDER BY situation.slug
         `,
-          [release.release_id],
-        ),
-        client.query<ArtifactRow>(
-          `
+      [release.release_id],
+    );
+    const artifactsResult = await client.query<LeadershipArtifactSnapshot>(
+      `
           SELECT
             membership.logical_id,
+            membership.canonical_path AS path,
             membership.type::text,
             membership.content_hash,
             membership.byte_length,
@@ -274,19 +308,18 @@ async function readLeadershipRelease(
           WHERE membership.release_id = $1
           ORDER BY membership.sort_order
         `,
-          [release.release_id],
-        ),
-        client.query<BindingRow>(
-          `
+      [release.release_id],
+    );
+    const bindingsResult = await client.query<BindingRow>(
+      `
           SELECT situation_slug, artifact_type::text, original_logical_id,
                  resolved_logical_id, visibility::text, position
             FROM situation_artifact_bindings
            WHERE release_id = $1
            ORDER BY situation_slug, position
         `,
-          [release.release_id],
-        ),
-      ]);
+      [release.release_id],
+    );
     const artifacts = new Map(
       artifactsResult.rows.map((artifact) => [artifact.logical_id, artifact]),
     );
@@ -298,9 +331,11 @@ async function readLeadershipRelease(
       const scopedResolved = new Set(
         bindings.map((binding) => binding.resolved_logical_id),
       );
+      const practiceBinding = bindings.find(
+        (binding) => binding.artifact_type === "PRACTICE",
+      );
       const resolvedPractice =
-        bindings.find((binding) => binding.artifact_type === "PRACTICE")
-          ?.resolved_logical_id ?? `practice:${row.practice_id}`;
+        practiceBinding?.resolved_logical_id ?? `practice:${row.practice_id}`;
       const resolvedGuides = [
         ...bindings
           .filter((binding) => binding.artifact_type === "GUIDE")
@@ -325,12 +360,20 @@ async function readLeadershipRelease(
       ];
       const contextArtifacts = relationshipIds
         .map((logicalId) => artifacts.get(logicalId))
-        .filter((artifact): artifact is ArtifactRow => Boolean(artifact));
+        .filter((artifact): artifact is LeadershipArtifactSnapshot =>
+          Boolean(artifact),
+        );
       const selectedArtifacts = [
         ...(situationArtifact ? [situationArtifact] : []),
         ...contextArtifacts,
       ];
-      const metadata: SituationMetadata = {
+      const situationId = crypto.randomUUID();
+      const body = canonicalText(row.body_mdx);
+      const managedComponents = parseManagedSituationComponents(
+        `content/situations/${row.slug}.mdx`,
+        body,
+      );
+      const metadata: PublishableSituationBundle["metadata"] = {
         slug: row.slug,
         title: row.title,
         description: row.description,
@@ -347,11 +390,19 @@ async function readLeadershipRelease(
         lastReviewed: dateOnly(row.last_reviewed),
         author: row.author_id,
         reviewer: row.reviewer_id,
+        sourceReferences: row.source_ids,
+        relatedSituationIds: row.related_slugs,
+        practiceId: authoredPracticeId(row, practiceBinding),
+        practiceVariant:
+          practiceBinding && practiceBinding.visibility !== "GLOBAL"
+            ? managedComponents.practiceEmbed.variant
+            : row.practice_variant,
+        fieldNotePresent: row.field_note_present,
+        safetyEscalationNotePresent: row.safety_escalation_note_present,
         socialHook: row.social_hook,
         campaignCluster: row.campaign_cluster,
+        reviewStatus: row.review_status,
       };
-      const situationId = crypto.randomUUID();
-      const body = canonicalText(row.body_mdx);
       const scopedBundleArtifacts = contextArtifacts
         .filter((artifact) => artifact.visibility !== "GLOBAL")
         .map((artifact) => ({
@@ -359,35 +410,60 @@ async function readLeadershipRelease(
           kind: artifactKind(artifact.type) ?? "SOURCE",
           contentHash: artifact.content_hash,
           byteLength: artifact.byte_length,
+          path: artifact.path,
+          encoding: artifact.encoding,
+          mediaType: artifact.media_type,
           visibility: artifact.visibility,
           ownerSituationId: situationId,
           forkedFromLogicalId: artifact.forked_from_logical_id,
           forkedFromContentHash: artifact.forked_from_content_hash,
         }));
-      const bundle: SituationBundle = {
-        schemaVersion: "situation-bundle-v1",
-        contractVersion: CONTRACT_VERSION,
-        validationPolicyVersion: VALIDATION_POLICY_VERSION,
+      const relationships: PublishableSituationBundle["relationships"] =
+        contextArtifacts.map((artifact, position) => {
+          const binding = bindings.find(
+            (candidate) =>
+              candidate.resolved_logical_id === artifact.logical_id,
+          );
+          const kind = artifactKind(artifact.type);
+          if (
+            !kind ||
+            ![
+              "PRACTICE",
+              "GUIDE",
+              "SOURCE",
+              "LESSON_PLAN",
+              "PREPARATION_PROMPT",
+            ].includes(kind)
+          )
+            throw new Error(
+              `Leadership relationship ${artifact.logical_id} has unsupported kind ${artifact.type}.`,
+            );
+          return {
+            kind: kind as PublishableSituationBundle["relationships"][number]["kind"],
+            logicalId: artifact.logical_id,
+            originalLogicalId:
+              binding?.original_logical_id ?? artifact.logical_id,
+            position,
+            contentHash: artifact.content_hash,
+            visibility: binding?.visibility ?? "GLOBAL",
+          };
+        });
+      const bundle: SituationBundle = publishableSituationBundleSchema.parse({
+        schemaVersion: "situation-bundle-v2",
+        contractVersion: PUBLISHABLE_CONTRACT_VERSION,
+        validationPolicyVersion: PUBLISHABLE_VALIDATION_POLICY_VERSION,
         situationId,
         visibility: row.visibility,
         metadata,
         bodyHash: sha256(body),
+        managedComponents,
         artifacts: scopedBundleArtifacts,
-        relationships: contextArtifacts.map((artifact, position) => ({
-          kind: artifact.type,
-          logicalId: artifact.logical_id,
-          position,
-          contentHash: artifact.content_hash,
-          visibility:
-            bindings.find(
-              (binding) => binding.resolved_logical_id === artifact.logical_id,
-            )?.visibility ?? "GLOBAL",
-        })),
-        promotion: row.promotion ?? {},
+        relationships,
+        promotion: row.visibility === "RETIRED" ? null : row.promotion,
         contextHashes: contextArtifacts.map(
           (artifact) => artifact.content_hash,
         ),
-      };
+      });
       return {
         slug: row.slug,
         title: row.title,
@@ -410,6 +486,7 @@ async function readLeadershipRelease(
         artifactCount: release.artifact_count,
         edgeCount: release.edge_count,
       },
+      artifacts: artifactsResult.rows,
       situations: snapshots,
     };
   } catch (error) {
@@ -422,6 +499,39 @@ async function readLeadershipRelease(
 
 export async function readOfficialLeadershipRelease(databaseUrl: string) {
   return readLeadershipRelease(databaseUrl);
+}
+
+export async function readOfficialLeadershipCompilationBase(
+  databaseUrl: string,
+) {
+  const release = await readLeadershipRelease(databaseUrl);
+  return {
+    identity: release.identity,
+    situations: release.situations,
+    manifestBody: canonicalJson(release.identity.manifest),
+    bodies: new Map(
+      release.artifacts.map((artifact) => {
+        if (artifact.encoding === "UTF8") {
+          if (artifact.text_body === null)
+            throw new Error(
+              `Leadership artifact ${artifact.logical_id} has no UTF-8 body.`,
+            );
+          return [
+            artifact.content_hash,
+            new TextEncoder().encode(canonicalText(artifact.text_body)),
+          ] as const;
+        }
+        if (artifact.binary_body === null)
+          throw new Error(
+            `Leadership artifact ${artifact.logical_id} has no binary body.`,
+          );
+        return [
+          artifact.content_hash,
+          new Uint8Array(artifact.binary_body),
+        ] as const;
+      }),
+    ),
+  };
 }
 
 export async function readLeadershipReleaseHistory(databaseUrl: string) {

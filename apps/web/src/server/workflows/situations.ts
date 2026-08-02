@@ -1,37 +1,50 @@
 import { Prisma, type DatabaseClient } from "@situation-studio/db";
 import {
-  CONTRACT_VERSION,
-  VALIDATION_POLICY_VERSION,
-  applySituationSectionTarget,
+  PUBLISHABLE_CONTRACT_VERSION,
+  PUBLISHABLE_VALIDATION_POLICY_VERSION,
+  DeterministicChangeApplicationError,
+  applyDeterministicSituationChange,
   assertSafeManagedMdx,
   bundleHash,
+  compilePublishableSituationSnapshot,
   canonicalText,
-  canonicalJson,
   createScopedVariant,
-  parseScopedVariantTargetKey,
-  parseSituationSections,
-  relationshipSchema,
+  parseManagedSituationComponents,
+  normalizeSituationSectionReplacement,
+  proposalPreservesManagedMdxComponents as sharedProposalPreservesManagedMdxComponents,
   requiredSituationSections,
   reviewStages,
   serializeSituationSections,
   sha256,
-  situationSectionTargetBefore,
   situationBundleSchema,
-  situationMetadataSchema,
+  publishableSituationBundleSchema,
+  publishableBundleHash,
+  publicationConflictDecision,
+  PUBLICATION_COMPILER_DIGEST,
+  PUBLICATION_COMPILER_IDENTITY,
+  toPublishableSituationSnapshot,
+  validatePublishableSituationSnapshot,
   validateScopedArtifactBody,
   validateSituationBundle,
   type SituationBundle,
-  type SituationMetadata,
   type SituationSections,
+  type PublishableSituationBundle,
+  type PublishableSituationSnapshot,
 } from "@situation-studio/domain";
 import { REVIEW_POLICY_VERSION } from "@situation-studio/review-policy";
-import { LeadershipCapabilityError } from "@situation-studio/leadership-bridge";
+import {
+  LeadershipCapabilityError,
+  readOfficialLeadershipCompilationBase,
+  readOfficialLeadershipRelease,
+} from "@situation-studio/leadership-bridge";
 import { database } from "@/server/database";
 import {
   PUBLICATION_BACKUP_NOT_READY_CODE,
   publicationBackupStatus,
   type PublicationBackupStatus,
 } from "@/server/health/publication-backup-policy";
+import { verifyExactScopedArtifactDescriptors } from "@/publication-preflight";
+import { environment } from "@/server/environment";
 import { requireCompatibleLeadershipRuntime } from "@/server/leadership-compatibility";
 import { reconcileLeadershipRelease } from "@/server/leadership-sync";
 
@@ -42,6 +55,7 @@ export class WorkflowError extends Error {
     message: string,
     readonly status = 409,
     readonly code = "WORKFLOW_CONFLICT",
+    readonly details?: unknown,
   ) {
     super(message);
   }
@@ -174,7 +188,68 @@ async function assertDraftMutationAllowed(
   situationId: string,
 ) {
   await assertNoActivePublication(transaction, situationId);
-  await assertNoActiveReview(transaction, situationId);
+}
+
+async function assertSharedPublishableSnapshot(
+  transaction: Transaction,
+  bundle: SituationBundle,
+  body: string,
+) {
+  if (bundle.schemaVersion !== "situation-bundle-v2") return null;
+  if (bundle.visibility === "UNPUBLISHED")
+    throw new WorkflowError(
+      "This older draft must set an explicit Public publication intent before it can be saved as a canonical snapshot.",
+      422,
+      "PUBLICATION_INTENT_REQUIRED",
+    );
+  const persisted = await transaction.scopedArtifactVariant.findMany({
+    where: {
+      ownerSituationId: bundle.situationId,
+      logicalId: { in: bundle.artifacts.map((artifact) => artifact.logicalId) },
+    },
+    include: { content: true },
+  });
+  const exact = verifyExactScopedArtifactDescriptors({
+    situationId: bundle.situationId,
+    situationSlug: bundle.metadata.slug,
+    descriptors: bundle.artifacts,
+    persisted,
+  });
+  if (!exact.ok)
+    throw new WorkflowError(
+      exact.errors.join(" "),
+      422,
+      "INVALID_SCOPED_ARTIFACT",
+      { diagnostics: exact.errors },
+    );
+  let snapshot: PublishableSituationSnapshot;
+  try {
+    snapshot = toPublishableSituationSnapshot({
+      bundle,
+      body,
+      scopedArtifactBodies: exact.bodies,
+    });
+  } catch (error) {
+    throw new WorkflowError(
+      error instanceof Error ? error.message : String(error),
+      422,
+      "INVALID_CONTENT",
+    );
+  }
+  const validated = await validatePublishableSituationSnapshot(snapshot);
+  if (!validated.ok)
+    throw new WorkflowError(
+      validated.diagnostics
+        .map(
+          (diagnostic) =>
+            `${diagnostic.path.join(".") || "snapshot"}: ${diagnostic.message}`,
+        )
+        .join(" "),
+      422,
+      "INVALID_CONTENT",
+      { diagnostics: validated.diagnostics },
+    );
+  return validated;
 }
 
 const templateSections = Object.fromEntries(
@@ -191,11 +266,20 @@ export function newSituationTemplate(input: {
   slug: string;
   title: string;
   today?: string;
-  defaultPractice?: SituationBundle["relationships"][number];
+  defaultPractice: SituationBundle["relationships"][number];
+  defaultSource: SituationBundle["relationships"][number];
+  defaultSourceReference: string;
+  defaultRelatedSituationIds: string[];
 }): { bundle: SituationBundle; body: string } {
   const today = input.today ?? new Date().toISOString().slice(0, 10);
-  const body = serializeSituationSections(templateSections);
-  const metadata: SituationMetadata = {
+  const practiceId = input.defaultPractice.logicalId.replace(/^practice:/u, "");
+  const sections = {
+    ...templateSections,
+    "Two-minute practice": `<PracticeEmbed compact practiceId="${practiceId}" surface="situation" variant="default" />`,
+    "I have my next move": `<PreparedAction scenario="${input.slug}" skill="coaching" />`,
+  };
+  const body = serializeSituationSections(sections);
+  const metadata: PublishableSituationBundle["metadata"] = {
     slug: input.slug,
     title: input.title,
     description:
@@ -214,21 +298,49 @@ export function newSituationTemplate(input: {
     lastReviewed: today,
     author: "studio-editor",
     reviewer: "studio-editor",
+    sourceReferences: [input.defaultSourceReference],
+    relatedSituationIds: input.defaultRelatedSituationIds,
+    practiceId,
+    practiceVariant: "default",
+    fieldNotePresent: true,
+    safetyEscalationNotePresent: true,
     socialHook:
       "A clear next move for the management conversation you have been postponing.",
     campaignCluster: "manager_conversations",
+    reviewStatus: "human-approved",
   };
-  const relationships = input.defaultPractice ? [input.defaultPractice] : [];
+  const practice = input.defaultPractice;
+  const source = input.defaultSource;
+  const relationships: PublishableSituationBundle["relationships"] = [
+    {
+      ...practice,
+      kind: "PRACTICE",
+      originalLogicalId:
+        (practice as { originalLogicalId?: string }).originalLogicalId ??
+        practice.logicalId,
+    },
+    {
+      ...source,
+      kind: "SOURCE",
+      originalLogicalId:
+        (source as { originalLogicalId?: string }).originalLogicalId ??
+        source.logicalId,
+    },
+  ];
   return {
     body,
-    bundle: {
-      schemaVersion: "situation-bundle-v1",
-      contractVersion: CONTRACT_VERSION,
-      validationPolicyVersion: VALIDATION_POLICY_VERSION,
+    bundle: publishableSituationBundleSchema.parse({
+      schemaVersion: "situation-bundle-v2",
+      contractVersion: PUBLISHABLE_CONTRACT_VERSION,
+      validationPolicyVersion: PUBLISHABLE_VALIDATION_POLICY_VERSION,
       situationId: input.situationId,
-      visibility: "UNPUBLISHED",
+      visibility: "PUBLIC",
       metadata,
       bodyHash: sha256(body),
+      managedComponents: parseManagedSituationComponents(
+        `content/situations/${input.slug}.mdx`,
+        body,
+      ),
       artifacts: [],
       relationships,
       promotion: {
@@ -246,30 +358,72 @@ export function newSituationTemplate(input: {
       contextHashes: relationships.map(
         (relationship) => relationship.contentHash,
       ),
-    },
+    }),
   };
 }
 
-async function defaultPracticeRelationship(transaction: Transaction) {
+async function defaultTemplateContext(
+  transaction: Transaction,
+  newSituationSlug: string,
+) {
   const versions = await transaction.productionSituationVersion.findMany({
     orderBy: { productionAt: "desc" },
-    take: 100,
-    select: { bundleManifest: true },
+    distinct: ["situationId"],
+    select: { situationId: true, bundleManifest: true },
   });
-  let fallback: SituationBundle["relationships"][number] | undefined;
+  let practice: SituationBundle["relationships"][number] | undefined;
+  let source:
+    | {
+        relationship: SituationBundle["relationships"][number];
+        reference: string;
+      }
+    | undefined;
+  const relatedSituationIds: string[] = [];
   for (const version of versions) {
     const bundle = situationBundleSchema.safeParse(version.bundleManifest);
     if (!bundle.success) continue;
+    if (
+      bundle.data.metadata.slug !== newSituationSlug &&
+      !relatedSituationIds.includes(bundle.data.metadata.slug)
+    )
+      relatedSituationIds.push(bundle.data.metadata.slug);
     const practices = bundle.data.relationships.filter(
-      (relationship) => relationship.kind === "PRACTICE",
+      (relationship) =>
+        relationship.kind === "PRACTICE" &&
+        relationship.visibility === "GLOBAL",
     );
     const preferred = practices.find(
       (relationship) => relationship.logicalId === "practice:listen-first",
     );
-    if (preferred) return { ...preferred, position: 0 };
-    fallback ??= practices[0];
+    practice = preferred ?? practice ?? practices[0];
+    if (!source && bundle.data.schemaVersion === "situation-bundle-v2") {
+      const relationship = bundle.data.relationships.find(
+        (candidate) =>
+          candidate.kind === "SOURCE" && candidate.visibility === "GLOBAL",
+      );
+      if (relationship) {
+        const logicalReference = relationship.originalLogicalId.replace(
+          /^source:/u,
+          "",
+        );
+        source = {
+          relationship,
+          reference: bundle.data.metadata.sourceReferences.includes(
+            logicalReference,
+          )
+            ? logicalReference
+            : bundle.data.metadata.sourceReferences[0]!,
+        };
+      }
+    }
   }
-  return fallback ? { ...fallback, position: 0 } : undefined;
+  if (!practice || !source || relatedSituationIds.length < 2) return null;
+  return {
+    defaultPractice: { ...practice, position: 0 },
+    defaultSource: { ...source.relationship, position: 0 },
+    defaultSourceReference: source.reference,
+    defaultRelatedSituationIds: relatedSituationIds.slice(0, 2),
+  };
 }
 
 async function putTextBlob(
@@ -292,6 +446,122 @@ async function putTextBlob(
   return { hash, body: canonical };
 }
 
+function canonicalScopedArtifactPath(input: {
+  slug: string;
+  kind: string;
+  logicalId: string;
+  mediaType: string;
+}) {
+  const identity = input.logicalId
+    .replace(/[^a-zA-Z0-9._-]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+  const extension = input.mediaType.startsWith("application/json")
+    ? "json"
+    : "mdx";
+  return `content/scoped/${input.slug}/${input.kind.toLowerCase()}/${identity}.${extension}`;
+}
+
+async function synchronizeLegacyBundle(
+  transaction: Transaction,
+  input: {
+    draftId: string;
+    situationId: string;
+    bundle: SituationBundle;
+    body: string;
+    authoritativeBase?: PublishableSituationBundle;
+  },
+): Promise<SituationBundle> {
+  if (input.bundle.schemaVersion === "situation-bundle-v2") return input.bundle;
+  const draft = await transaction.draft.findUniqueOrThrow({
+    where: { id: input.draftId },
+    include: {
+      baseProductionVersion: true,
+    },
+  });
+  const base = input.authoritativeBase
+    ? { success: true as const, data: input.authoritativeBase }
+    : draft.baseProductionVersion
+      ? publishableSituationBundleSchema.safeParse(
+          draft.baseProductionVersion.bundleManifest,
+        )
+      : null;
+  if (!base?.success)
+    throw new WorkflowError(
+      "This legacy draft has no exact Leadership snapshot to synchronize from. Check it in, synchronize production, and check it out again.",
+      409,
+      "LEGACY_DRAFT_REQUIRES_SYNC",
+    );
+  const baseBundle = base.data;
+  const relationships = input.bundle.relationships.map(
+    (relationship, position) => {
+      const baseline = baseBundle.relationships.find(
+        (candidate) =>
+          candidate.logicalId === relationship.logicalId ||
+          candidate.originalLogicalId === relationship.logicalId,
+      );
+      return {
+        ...relationship,
+        originalLogicalId:
+          baseline?.originalLogicalId ?? relationship.logicalId,
+        position,
+      };
+    },
+  );
+  const artifacts = input.bundle.artifacts.map((artifact) => {
+    const baseline = baseBundle.artifacts.find(
+      (candidate) => candidate.logicalId === artifact.logicalId,
+    );
+    const selectedMediaType =
+      artifact.kind === "PRACTICE" || artifact.kind === "SOURCE"
+        ? "application/json; charset=utf-8"
+        : "text/mdx; charset=utf-8";
+    return {
+      ...artifact,
+      path:
+        baseline?.path ??
+        canonicalScopedArtifactPath({
+          slug: input.bundle.metadata.slug,
+          kind: artifact.kind,
+          logicalId: artifact.logicalId,
+          mediaType: selectedMediaType,
+        }),
+      encoding: baseline?.encoding ?? "UTF8",
+      mediaType: baseline?.mediaType ?? selectedMediaType,
+    };
+  });
+  try {
+    return publishableSituationBundleSchema.parse({
+      schemaVersion: "situation-bundle-v2",
+      contractVersion: PUBLISHABLE_CONTRACT_VERSION,
+      validationPolicyVersion: PUBLISHABLE_VALIDATION_POLICY_VERSION,
+      situationId: input.situationId,
+      visibility: input.bundle.visibility,
+      metadata: {
+        ...baseBundle.metadata,
+        ...input.bundle.metadata,
+      },
+      bodyHash: sha256(canonicalText(input.body)),
+      managedComponents: parseManagedSituationComponents(
+        `content/situations/${input.bundle.metadata.slug}.mdx`,
+        input.body,
+      ),
+      artifacts,
+      relationships,
+      promotion:
+        input.bundle.visibility === "RETIRED" ? null : input.bundle.promotion,
+      contextHashes: relationships.map(
+        (relationship) => relationship.contentHash,
+      ),
+    });
+  } catch (error) {
+    throw new WorkflowError(
+      `The legacy draft could not be synchronized safely: ${error instanceof Error ? error.message : String(error)}`,
+      422,
+      "LEGACY_DRAFT_SYNC_INVALID",
+    );
+  }
+}
+
 async function createRevision(
   transaction: Transaction,
   input: {
@@ -300,12 +570,19 @@ async function createRevision(
     bundle: SituationBundle;
     body: string;
     namedCheckpoint: string;
+    expectedParentRevisionId?: string;
+    expectedParentBundleHash?: string;
+    preserveProposalId?: string;
   },
 ) {
   const draft = await transaction.draft.findUniqueOrThrow({
     where: { id: input.draftId },
     include: {
-      revisions: { orderBy: { revision: "desc" }, take: 1 },
+      revisions: {
+        orderBy: { revision: "desc" },
+        take: 1,
+        include: { artifacts: { include: { content: true } } },
+      },
     },
   });
   const canonicalBody = canonicalText(input.body);
@@ -313,8 +590,23 @@ async function createRevision(
     ...input.bundle,
     bodyHash: sha256(canonicalBody),
   });
+  await assertSharedPublishableSnapshot(
+    transaction,
+    parsedBundle,
+    canonicalBody,
+  );
   const nextBundleHash = bundleHash(parsedBundle);
   const previous = draft.revisions[0];
+  if (
+    input.expectedParentRevisionId !== undefined &&
+    (previous?.id !== input.expectedParentRevisionId ||
+      previous.bundleHash !== input.expectedParentBundleHash)
+  )
+    throw new WorkflowError(
+      "This draft changed before the save completed. Reload the authoritative revision before saving again.",
+      409,
+      "STALE_REVISION",
+    );
   if (previous?.bundleHash === nextBundleHash) return previous;
   const blob = await putTextBlob(transaction, canonicalBody);
   const revision = await transaction.draftRevision.create({
@@ -342,15 +634,62 @@ async function createRevision(
         ],
       },
     },
+    include: { artifacts: { include: { content: true } } },
   });
-  await transaction.draft.update({
-    where: { id: draft.id },
+  const advanced = await transaction.draft.updateMany({
+    where: {
+      id: draft.id,
+      currentRevisionNumber: draft.currentRevisionNumber,
+      currentBundleHash: draft.currentBundleHash,
+    },
     data: {
       currentRevisionNumber: revision.revision,
       currentBundleHash: revision.bundleHash,
     },
   });
+  if (advanced.count !== 1)
+    throw new WorkflowError(
+      "This draft changed before the revision could be recorded. Reload and retry.",
+      409,
+      "STALE_REVISION",
+    );
+  if (previous)
+    await transaction.reviewProposal.updateMany({
+      where: {
+        currentRevisionId: previous.id,
+        supersededAt: null,
+        ...(input.preserveProposalId
+          ? { id: { not: input.preserveProposalId } }
+          : {}),
+      },
+      data: {
+        supersededAt: new Date(),
+        supersededByRevisionId: revision.id,
+      },
+    });
   return revision;
+}
+
+function authoritativeRevisionPayload(
+  revision: Awaited<ReturnType<typeof createRevision>>,
+) {
+  const body = revision.artifacts.find(
+    (artifact) => artifact.kind === "SITUATION",
+  )?.content.textBody;
+  if (!body)
+    throw new WorkflowError(
+      "The authoritative revision body is unavailable.",
+      500,
+      "REVISION_BODY_MISSING",
+    );
+  return {
+    revisionId: revision.id,
+    revision: revision.revision,
+    bundleHash: revision.bundleHash,
+    bundle: situationBundleSchema.parse(revision.bundleManifest),
+    body,
+    savedAt: revision.createdAt.toISOString(),
+  };
 }
 
 async function createDraftFromProduction(
@@ -393,9 +732,15 @@ async function createDraftFromProduction(
   const body =
     baseVersion?.artifacts.find((artifact) => artifact.kind === "SITUATION")
       ?.content.textBody ?? null;
-  const defaultPractice = baseVersion
+  const defaultContext = baseVersion
     ? undefined
-    : await defaultPracticeRelationship(transaction);
+    : await defaultTemplateContext(transaction, situation.slug);
+  if (!baseVersion && !defaultContext)
+    throw new WorkflowError(
+      "A new situation requires a synchronized Leadership practice, source, and at least two related situations. Synchronize production before creating it.",
+      422,
+      "NEW_SITUATION_CONTEXT_REQUIRED",
+    );
   const baseline = baseVersion
     ? {
         bundle: situationBundleSchema.parse(baseVersion.bundleManifest),
@@ -405,7 +750,7 @@ async function createDraftFromProduction(
         situationId: situation.id,
         slug: situation.slug,
         title: situation.title,
-        ...(defaultPractice ? { defaultPractice } : {}),
+        ...defaultContext!,
       });
   await createRevision(transaction, {
     draftId: draft.id,
@@ -554,49 +899,173 @@ export async function saveDraft(input: {
   fence: bigint;
   bundle: unknown;
   body: string;
+  expectedParentRevisionId: string;
+  expectedParentBundleHash: string;
   namedCheckpoint?: string;
 }) {
-  return database().$transaction(
-    async (transaction) => {
-      const checkout = await transaction.situationCheckout.findFirst({
-        where: {
-          id: input.checkoutId,
-          holderId: input.actorId,
-          fence: input.fence,
-          releasedAt: null,
-        },
-        include: {
-          situation: true,
-          draft: true,
-        },
-      });
-      if (!checkout)
-        throw new WorkflowError(
-          "The checkout changed. Reload before saving.",
-          409,
-          "STALE_CHECKOUT",
-        );
-      await assertDraftMutationAllowed(transaction, checkout.situationId);
-      const parsed = situationBundleSchema.parse(input.bundle);
-      if (parsed.situationId !== checkout.situationId)
-        throw new WorkflowError("The draft does not belong to this checkout.");
-      const validation = validateSituationBundle(parsed, input.body);
-      if (!validation.valid)
-        throw new WorkflowError(
-          validation.errors.join(" "),
-          422,
-          "INVALID_CONTENT",
-        );
-      return createRevision(transaction, {
-        draftId: checkout.draftId,
-        actorId: input.actorId,
-        bundle: parsed,
-        body: input.body,
-        namedCheckpoint: input.namedCheckpoint ?? "Autosave",
-      });
-    },
-    { isolationLevel: "Serializable" },
-  );
+  let authoritativeLegacyBase: PublishableSituationBundle | undefined;
+  if (
+    input.bundle &&
+    typeof input.bundle === "object" &&
+    (input.bundle as { schemaVersion?: unknown }).schemaVersion ===
+      "situation-bundle-v1"
+  ) {
+    const checkout = await database().situationCheckout.findFirst({
+      where: {
+        id: input.checkoutId,
+        holderId: input.actorId,
+        fence: input.fence,
+        releasedAt: null,
+      },
+      include: { situation: true },
+    });
+    const leadershipUrl = environment().LEADERSHIP_STUDIO_READER_DATABASE_URL;
+    if (!checkout || !leadershipUrl)
+      throw new WorkflowError(
+        "This legacy draft needs a live read-only Leadership synchronization before it can be saved.",
+        409,
+        "LEGACY_DRAFT_REQUIRES_SYNC",
+      );
+    const official = await readOfficialLeadershipRelease(leadershipUrl);
+    if (official.identity.releaseId !== checkout.situation.productionReleaseId)
+      throw new WorkflowError(
+        "Leadership changed while this legacy draft was open. Refresh production before synchronizing it.",
+        409,
+        "LEGACY_DRAFT_REQUIRES_SYNC",
+      );
+    const authoritative = official.situations.find(
+      (situation) => situation.slug === checkout.situation.slug,
+    );
+    if (!authoritative)
+      throw new WorkflowError(
+        "The legacy draft has no matching Leadership situation snapshot.",
+        409,
+        "LEGACY_DRAFT_REQUIRES_SYNC",
+      );
+    authoritativeLegacyBase = publishableSituationBundleSchema.parse({
+      ...authoritative.bundle,
+      situationId: checkout.situationId,
+    });
+  }
+  try {
+    return await database().$transaction(
+      async (transaction) => {
+        const checkout = await transaction.situationCheckout.findFirst({
+          where: {
+            id: input.checkoutId,
+            holderId: input.actorId,
+            fence: input.fence,
+            releasedAt: null,
+          },
+          include: {
+            situation: true,
+            draft: true,
+          },
+        });
+        if (!checkout)
+          throw new WorkflowError(
+            "The checkout changed. Reload before saving.",
+            409,
+            "STALE_CHECKOUT",
+          );
+        await assertDraftMutationAllowed(transaction, checkout.situationId);
+        const previousRevision = await transaction.draftRevision.findFirst({
+          where: { draftId: checkout.draftId },
+          orderBy: { revision: "desc" },
+          select: { bundleManifest: true },
+        });
+        const previousBundle = previousRevision
+          ? situationBundleSchema.parse(previousRevision.bundleManifest)
+          : null;
+        const stored = situationBundleSchema.parse(input.bundle);
+        const parsed = await synchronizeLegacyBundle(transaction, {
+          draftId: checkout.draftId,
+          situationId: checkout.situationId,
+          bundle: stored,
+          body: input.body,
+          ...(authoritativeLegacyBase
+            ? { authoritativeBase: authoritativeLegacyBase }
+            : {}),
+        });
+        if (parsed.situationId !== checkout.situationId)
+          throw new WorkflowError(
+            "The draft does not belong to this checkout.",
+          );
+        const validation = validateSituationBundle(parsed, input.body);
+        if (!validation.valid)
+          throw new WorkflowError(
+            validation.errors.join(" "),
+            422,
+            "INVALID_CONTENT",
+          );
+        const revision = await createRevision(transaction, {
+          draftId: checkout.draftId,
+          actorId: input.actorId,
+          bundle: parsed,
+          body: input.body,
+          namedCheckpoint: input.namedCheckpoint ?? "Autosave",
+          expectedParentRevisionId: input.expectedParentRevisionId,
+          expectedParentBundleHash: input.expectedParentBundleHash,
+        });
+        if (stored.schemaVersion === "situation-bundle-v1")
+          await transaction.draft.update({
+            where: { id: checkout.draftId },
+            data: {
+              baseBundleHash: authoritativeLegacyBase
+                ? publishableBundleHash(authoritativeLegacyBase)
+                : checkout.draft.baseBundleHash,
+            },
+          });
+        if (stored.schemaVersion === "situation-bundle-v1")
+          await transaction.auditEvent.create({
+            data: {
+              actorId: input.actorId,
+              action: "LEGACY_DRAFT_SYNCHRONIZED",
+              subjectType: "DRAFT_REVISION",
+              subjectId: revision.id,
+              payload: {
+                previousSchemaVersion: stored.schemaVersion,
+                schemaVersion: parsed.schemaVersion,
+                bundleHash: revision.bundleHash,
+              },
+            },
+          });
+        if (
+          previousBundle?.schemaVersion === "situation-bundle-v2" &&
+          previousBundle.visibility === "UNPUBLISHED" &&
+          parsed.schemaVersion === "situation-bundle-v2" &&
+          parsed.visibility === "PUBLIC"
+        )
+          await transaction.auditEvent.create({
+            data: {
+              actorId: input.actorId,
+              action: "PUBLICATION_INTENT_SET",
+              subjectType: "DRAFT_REVISION",
+              subjectId: revision.id,
+              payload: {
+                previousRevisionVisibility: "UNPUBLISHED",
+                intendedRuntimeVisibility: "PUBLIC",
+                bundleHash: revision.bundleHash,
+              },
+            },
+          });
+        return revision;
+      },
+      { isolationLevel: "Serializable" },
+    );
+  } catch (error) {
+    if (error instanceof WorkflowError) throw error;
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (error.code === "P2034" || error.code === "P2002")
+    )
+      throw new WorkflowError(
+        "This draft changed before the save completed. Reload the authoritative revision before saving again.",
+        409,
+        "STALE_REVISION",
+      );
+    throw error;
+  }
 }
 
 export async function checkInSituation(input: {
@@ -795,8 +1264,9 @@ export async function queueReview(input: {
   actorId: string;
   checkoutId: string;
   fence: bigint;
+  revisionId: string;
+  bundleHash: string;
 }) {
-  const runtimeCapabilities = await compatibleLeadershipRuntimeForWorkflow();
   try {
     return await database().$transaction(
       async (transaction) => {
@@ -839,16 +1309,36 @@ export async function queueReview(input: {
         await assertNoActivePublication(transaction, checkout.situationId);
         const revision = checkout.draft.revisions[0];
         if (!revision) throw new WorkflowError("Save the draft before review.");
+        if (
+          revision.id !== input.revisionId ||
+          revision.bundleHash !== input.bundleHash
+        )
+          throw new WorkflowError(
+            "The draft changed before review was requested. Review the latest saved revision.",
+            409,
+            "STALE_REVISION",
+          );
         const body = revision.artifacts.find(
           (artifact) => artifact.kind === "SITUATION",
         )?.content.textBody;
         if (!body)
           throw new WorkflowError("Save the situation body before review.");
+        const reviewBundle = situationBundleSchema.parse(
+          revision.bundleManifest,
+        );
+        if (reviewBundle.schemaVersion !== "situation-bundle-v2")
+          throw new WorkflowError(
+            "Save an action checkpoint to synchronize this legacy draft before starting review.",
+            409,
+            "LEGACY_DRAFT_REQUIRES_SYNC",
+          );
+        await assertSharedPublishableSnapshot(transaction, reviewBundle, body);
         assertManagedSituationMdx(body);
         const job = await transaction.reviewJob.create({
           data: {
             situationId: checkout.situationId,
             inputRevisionId: revision.id,
+            inputBundleHash: revision.bundleHash,
             checkoutId: checkout.id,
             checkoutFence: checkout.fence,
             contextHash: sha256(
@@ -879,9 +1369,8 @@ export async function queueReview(input: {
             subjectId: job.id,
             payload: {
               inputRevisionId: revision.id,
+              inputBundleHash: revision.bundleHash,
               stepCount: job.steps.length,
-              leadershipCapabilityDigest: runtimeCapabilities.capabilityDigest,
-              leadershipRuntimeCommit: runtimeCapabilities.deployment.commit,
             },
           },
         });
@@ -902,6 +1391,8 @@ export async function queueReview(input: {
 export async function cancelReview(input: {
   actorId: string;
   jobId: string;
+  revisionId: string;
+  bundleHash: string;
   reason?: string;
 }) {
   return database().$transaction(
@@ -914,6 +1405,15 @@ export async function cancelReview(input: {
       });
       if (!job)
         throw new WorkflowError("The review can no longer be stopped.", 404);
+      if (
+        job.inputRevisionId !== input.revisionId ||
+        job.inputBundleHash !== input.bundleHash
+      )
+        throw new WorkflowError(
+          "The review input changed before this command was applied.",
+          409,
+          "STALE_REVIEW",
+        );
       const checkout = await transaction.situationCheckout.findFirst({
         where: {
           id: job.checkoutId,
@@ -970,8 +1470,12 @@ export async function cancelReview(input: {
   );
 }
 
-export async function retryReview(input: { actorId: string; jobId: string }) {
-  const runtimeCapabilities = await compatibleLeadershipRuntimeForWorkflow();
+export async function retryReview(input: {
+  actorId: string;
+  jobId: string;
+  revisionId: string;
+  bundleHash: string;
+}) {
   try {
     return await database().$transaction(
       async (transaction) => {
@@ -986,6 +1490,15 @@ export async function retryReview(input: { actorId: string; jobId: string }) {
         });
         if (!job)
           throw new WorkflowError("The failed review is unavailable.", 404);
+        if (
+          job.inputRevisionId !== input.revisionId ||
+          job.inputBundleHash !== input.bundleHash
+        )
+          throw new WorkflowError(
+            "The failed review does not match this exact pinned revision.",
+            409,
+            "STALE_REVIEW",
+          );
         const body = job.inputRevision.artifacts.find(
           (artifact) => artifact.kind === "SITUATION",
         )?.content.textBody;
@@ -1018,11 +1531,6 @@ export async function retryReview(input: { actorId: string; jobId: string }) {
             409,
             "REVIEW_LANE_BUSY",
           );
-        if (!job.laneOwner)
-          await transaction.reviewJob.update({
-            where: { id: job.id },
-            data: { laneOwner: true },
-          });
         await transaction.reviewStep.update({
           where: { id: failed.id },
           data: { state: "READY", startedAt: null, finishedAt: null },
@@ -1055,8 +1563,8 @@ export async function retryReview(input: { actorId: string; jobId: string }) {
             subjectId: job.id,
             payload: {
               resumedOrdinal: failed.ordinal,
-              leadershipCapabilityDigest: runtimeCapabilities.capabilityDigest,
-              leadershipRuntimeCommit: runtimeCapabilities.deployment.commit,
+              inputRevisionId: job.inputRevisionId,
+              inputBundleHash: job.inputBundleHash,
             },
           },
         });
@@ -1078,144 +1586,544 @@ export async function retryReview(input: { actorId: string; jobId: string }) {
   }
 }
 
-export async function requestPublication(input: {
+function jsonInput(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function publicationSourceKind(input: {
+  restorationParentId: string | null;
+  productionBundleHash: string | null;
+  visibility: "PUBLIC" | "RETIRED" | "UNPUBLISHED";
+  agentAssisted: boolean;
+}) {
+  return input.restorationParentId
+    ? ("RESTORE" as const)
+    : !input.productionBundleHash
+      ? ("CREATE" as const)
+      : input.visibility === "RETIRED"
+        ? ("RETIRE" as const)
+        : input.agentAssisted
+          ? ("AGENT_ASSISTED" as const)
+          : ("MANUAL" as const);
+}
+
+function leadershipBaseMatchesReceipt(
+  receipt: {
+    baseReleaseId: string;
+    baseManifestHash: string;
+    expectedPointerGeneration: bigint;
+  },
+  base: {
+    identity: { releaseId: string; manifestHash: string; generation: string };
+  },
+) {
+  return (
+    receipt.baseReleaseId === base.identity.releaseId &&
+    receipt.baseManifestHash === base.identity.manifestHash &&
+    receipt.expectedPointerGeneration === BigInt(base.identity.generation)
+  );
+}
+
+export async function preflightPublication(input: {
   actorId: string;
   checkoutId: string;
   fence: bigint;
+  revisionId: string;
+  bundleHash: string;
 }) {
-  await reconcileLeadershipRelease();
+  await reconcileLeadershipRelease({ force: true });
   const runtimeCapabilities = await compatibleLeadershipRuntimeForWorkflow();
-  return database().$transaction(
+  const leadershipUrl = environment().LEADERSHIP_STUDIO_READER_DATABASE_URL;
+  if (!leadershipUrl)
+    throw new WorkflowError(
+      "Leadership preflight is unavailable.",
+      503,
+      "PREFLIGHT_UNAVAILABLE",
+    );
+  const [checkout, base] = await Promise.all([
+    database().situationCheckout.findFirst({
+      where: {
+        id: input.checkoutId,
+        holderId: input.actorId,
+        fence: input.fence,
+        releasedAt: null,
+      },
+      include: {
+        situation: true,
+        draft: {
+          include: {
+            revisions: {
+              where: { id: input.revisionId, bundleHash: input.bundleHash },
+              take: 1,
+              include: { artifacts: { include: { content: true } } },
+            },
+          },
+        },
+      },
+    }),
+    readOfficialLeadershipCompilationBase(leadershipUrl),
+  ]);
+  if (!checkout)
+    throw new WorkflowError(
+      "The checkout changed. Reload before validation.",
+      409,
+      "STALE_CHECKOUT",
+    );
+  if (
+    checkout.draft.currentBundleHash !== input.bundleHash ||
+    checkout.draft.currentRevisionNumber !==
+      checkout.draft.revisions[0]?.revision ||
+    checkout.draft.revisions[0]?.id !== input.revisionId
+  )
+    throw new WorkflowError(
+      "The draft changed before publication validation. Save and validate the current revision.",
+      409,
+      "STALE_REVISION",
+    );
+  const revision = checkout.draft.revisions[0];
+  const body = revision.artifacts.find(
+    (artifact) => artifact.kind === "SITUATION",
+  )?.content.textBody;
+  if (!body) throw new WorkflowError("The exact revision body is unavailable.");
+  const parsedBundle = publishableSituationBundleSchema.safeParse(
+    revision.bundleManifest,
+  );
+  if (!parsedBundle.success)
+    throw new WorkflowError(
+      "This draft must be synchronized to the complete v2 publishable snapshot before preflight.",
+      422,
+      "PUBLISHABLE_SNAPSHOT_REQUIRED",
+    );
+  if (parsedBundle.data.visibility === "UNPUBLISHED")
+    throw new WorkflowError(
+      "Choose Public as the saved publication intent before running production validation.",
+      422,
+      "PUBLICATION_INTENT_REQUIRED",
+    );
+  const validation = validateSituationBundle(parsedBundle.data, body);
+  if (!validation.valid || validation.bundleHash !== revision.bundleHash)
+    throw new WorkflowError(
+      validation.errors.join(" ") || "Exact revision validation failed.",
+      422,
+      "VALIDATION_FAILED",
+    );
+  const observedTarget = base.situations.find(
+    (situation) => situation.slug === checkout.situation.slug,
+  );
+  const observedBundleHash = observedTarget
+    ? bundleHash(
+        publishableSituationBundleSchema.parse({
+          ...observedTarget.bundle,
+          situationId: checkout.situationId,
+        }),
+      )
+    : null;
+  const conflict = publicationConflictDecision({
+    draftBaseBundleHash: checkout.draft.baseBundleHash,
+    observedTargetBundleHash: observedBundleHash,
+    baseReleaseId: checkout.draft.baseReleaseId,
+    observedReleaseId: base.identity.releaseId,
+  });
+  if (conflict.kind === "NEEDS_REFRESH")
+    throw new WorkflowError(
+      "The target situation changed in Leadership. Refresh the draft and run preflight again.",
+      409,
+      "PREFLIGHT_BASE_CHANGED",
+    );
+  const scoped = await database().scopedArtifactVariant.findMany({
+    where: {
+      ownerSituationId: checkout.situationId,
+      logicalId: {
+        in: parsedBundle.data.artifacts.map((artifact) => artifact.logicalId),
+      },
+    },
+    include: { content: true },
+  });
+  const scopedEvidence = verifyExactScopedArtifactDescriptors({
+    situationId: checkout.situationId,
+    situationSlug: parsedBundle.data.metadata.slug,
+    descriptors: parsedBundle.data.artifacts,
+    persisted: scoped,
+  });
+  if (!scopedEvidence.ok)
+    throw new WorkflowError(
+      scopedEvidence.errors.join(" "),
+      422,
+      "INVALID_SCOPED_ARTIFACT",
+      { diagnostics: scopedEvidence.errors },
+    );
+  const scopedBodies = scopedEvidence.bodies;
+  const agentAssisted =
+    (await database().proposalChange.count({
+      where: { appliedRevisionId: revision.id, state: "ACCEPTED" },
+    })) > 0;
+  const sourceKind = publicationSourceKind({
+    restorationParentId: checkout.draft.restorationParentId,
+    productionBundleHash: checkout.situation.productionBundleHash,
+    visibility: parsedBundle.data.visibility,
+    agentAssisted,
+  });
+  const publicationBundle = publishableSituationBundleSchema.parse({
+    ...parsedBundle.data,
+    visibility: parsedBundle.data.visibility,
+    promotion: parsedBundle.data.promotion,
+  });
+  const publicationId = crypto.randomUUID();
+  const releaseId = crypto.randomUUID();
+  let snapshot: PublishableSituationSnapshot;
+  try {
+    snapshot = toPublishableSituationSnapshot({
+      bundle: publicationBundle,
+      body,
+      scopedArtifactBodies: scopedBodies,
+    });
+  } catch (error) {
+    throw new WorkflowError(
+      error instanceof Error ? error.message : String(error),
+      422,
+      "PREFLIGHT_VALIDATION_FAILED",
+      {
+        diagnostics: [
+          {
+            code: "PUBLISHABLE_SNAPSHOT_INVALID",
+            path: ["snapshot"],
+            message: error instanceof Error ? error.message : String(error),
+          },
+        ],
+      },
+    );
+  }
+  const compiled = await compilePublishableSituationSnapshot({
+    snapshot,
+    base: {
+      releaseId: base.identity.releaseId,
+      manifestBody: base.manifestBody,
+      bodies: base.bodies,
+    },
+    publication: {
+      releaseId,
+      publicationId,
+      parentReleaseId: base.identity.releaseId,
+      expectedBaseGeneration: base.identity.generation,
+      sourceKind,
+    },
+  });
+  if (!compiled.ok)
+    throw new WorkflowError(
+      compiled.diagnostics
+        .map((item) => `${item.path.join(".") || "snapshot"}: ${item.message}`)
+        .join(" "),
+      422,
+      "PREFLIGHT_VALIDATION_FAILED",
+      { diagnostics: compiled.diagnostics },
+    );
+  if (
+    compiled.compiler.digest !== PUBLICATION_COMPILER_DIGEST ||
+    runtimeCapabilities.contracts.publicationCompiler.digest !==
+      PUBLICATION_COMPILER_DIGEST
+  )
+    throw new WorkflowError(
+      "Leadership and Studio publication compiler identities differ.",
+      409,
+      "PREFLIGHT_COMPILER_MISMATCH",
+    );
+  const confirmedBase =
+    await readOfficialLeadershipCompilationBase(leadershipUrl);
+  if (
+    confirmedBase.identity.releaseId !== base.identity.releaseId ||
+    confirmedBase.identity.manifestHash !== base.identity.manifestHash ||
+    confirmedBase.identity.generation !== base.identity.generation
+  )
+    throw new WorkflowError(
+      "Leadership changed while validation was running. Run preflight again against the new base.",
+      409,
+      "PREFLIGHT_BASE_CHANGED",
+    );
+  const totalByteLength = compiled.candidate.artifacts.reduce(
+    (total, artifact) => total + BigInt(artifact.bytes.byteLength),
+    0n,
+  );
+  const receipt = await database().$transaction(
     async (transaction) => {
-      const checkout = await transaction.situationCheckout.findFirst({
+      const current = await transaction.situationCheckout.findFirst({
         where: {
-          id: input.checkoutId,
+          id: checkout.id,
           holderId: input.actorId,
           fence: input.fence,
           releasedAt: null,
-        },
-        include: {
-          situation: true,
           draft: {
-            include: {
-              revisions: {
-                orderBy: { revision: "desc" },
-                take: 1,
-                include: { artifacts: { include: { content: true } } },
-              },
+            currentRevisionNumber: revision.revision,
+            currentBundleHash: input.bundleHash,
+            revisions: {
+              some: { id: input.revisionId, bundleHash: input.bundleHash },
             },
           },
         },
       });
-      if (!checkout)
-        throw new WorkflowError("The checkout is no longer active.");
+      if (!current)
+        throw new WorkflowError(
+          "The draft changed while preflight was running. Validate again.",
+          409,
+          "STALE_REVISION",
+        );
       await assertNoActivePublication(transaction, checkout.situationId);
-      await assertNoActiveReview(transaction, checkout.situationId);
-      const backupStatus =
-        await publicationBackupStatusForTransaction(transaction);
-      if (!backupStatus.ready)
-        throw new WorkflowError(
-          backupStatus.message,
-          503,
-          PUBLICATION_BACKUP_NOT_READY_CODE,
-        );
-      const revision = checkout.draft.revisions[0];
-      const body = revision?.artifacts.find(
-        (artifact) => artifact.kind === "SITUATION",
-      )?.content.textBody;
-      if (!revision || !body)
-        throw new WorkflowError("The latest saved revision is unavailable.");
-      assertManagedSituationMdx(body);
-      const targetBundle = situationBundleSchema.parse(revision.bundleManifest);
-      const agentAssisted = await transaction.proposalChange.count({
-        where: { appliedRevisionId: revision.id, state: "ACCEPTED" },
-      });
-      const sourceKind = checkout.draft.restorationParentId
-        ? "RESTORE"
-        : !checkout.situation.productionBundleHash
-          ? "CREATE"
-          : targetBundle.visibility === "RETIRED"
-            ? "RETIRE"
-            : agentAssisted
-              ? "AGENT_ASSISTED"
-              : "MANUAL";
-      const validation = validateSituationBundle(revision.bundleManifest, body);
-      if (!validation.valid || validation.bundleHash !== revision.bundleHash)
-        throw new WorkflowError(
-          validation.errors.join(" ") || "Exact-hash validation failed.",
-          422,
-          "VALIDATION_FAILED",
-        );
-      for (const relationship of targetBundle.relationships) {
-        if (
-          relationship.visibility === "GLOBAL" ||
-          (relationship.kind !== "PRACTICE" && relationship.kind !== "SOURCE")
-        )
-          continue;
-        const artifact = await transaction.scopedArtifactVariant.findUnique({
-          where: { logicalId: relationship.logicalId },
-          include: { content: true },
-        });
-        const retainedBody =
-          artifact?.contentHash === relationship.contentHash
-            ? (artifact.content.textBody ?? "")
-            : "";
-        const scopedValidation = validateScopedArtifactBody(
-          relationship.kind,
-          retainedBody,
-        );
-        if (!scopedValidation.valid)
-          throw new WorkflowError(
-            `Scoped ${relationship.kind.toLowerCase()} ${relationship.logicalId} is invalid: ${scopedValidation.errors.join(" ")}`,
-            422,
-            "INVALID_SCOPED_ARTIFACT",
-          );
-      }
-      const job = await transaction.publicationJob.create({
+      const created = await transaction.publicationPreflightReceipt.create({
         data: {
-          publicationId: crypto.randomUUID(),
+          publicationId,
+          releaseId,
           situationId: checkout.situationId,
-          targetRevisionId: revision.id,
+          revisionId: revision.id,
           checkoutId: checkout.id,
           checkoutFence: checkout.fence,
+          revisionBundleHash: revision.bundleHash,
+          candidateHash: compiled.candidate.completeCandidateHash,
+          baseReleaseId: base.identity.releaseId,
+          baseManifestHash: base.identity.manifestHash,
+          expectedPointerGeneration: BigInt(base.identity.generation),
+          contractIdentity: jsonInput(PUBLICATION_COMPILER_IDENTITY),
+          contractDigest: PUBLICATION_COMPILER_DIGEST,
+          validationResult: "PASSED",
+          diagnostics: [],
+          routeExpectations: jsonInput(compiled.affectedRoutes),
           sourceKind,
-          targetBundleHash: revision.bundleHash,
-          baseBundleHash: checkout.draft.baseBundleHash,
-          restorationParentId: checkout.draft.restorationParentId,
-          events: {
-            create: {
-              sequence: 1,
-              kind: "REQUESTED",
-              payload: {
-                sourceKind,
-                targetBundleHash: revision.bundleHash,
-                leadershipCapabilityDigest:
-                  runtimeCapabilities.capabilityDigest,
-                leadershipRuntimeCommit: runtimeCapabilities.deployment.commit,
-              },
-            },
+          manifestHash: compiled.candidate.manifestHash,
+          manifestBody: compiled.candidate.manifestBody,
+          artifactCount: compiled.candidate.artifacts.length,
+          edgeCount: compiled.candidate.manifest.edges.length,
+          totalByteLength,
+          compiledProjection: jsonInput(compiled.typedProjection),
+          artifacts: {
+            create: compiled.candidate.artifacts.map((artifact, position) => ({
+              logicalId: artifact.logicalId,
+              position,
+              artifactType: artifact.type,
+              path: artifact.path,
+              contentHash: artifact.contentHash,
+              byteLength: artifact.bytes.byteLength,
+              encoding: artifact.encoding,
+              mediaType: artifact.mediaType,
+              bytes: Uint8Array.from(artifact.bytes),
+            })),
           },
         },
+      });
+      const sealed = await transaction.publicationPreflightReceipt.update({
+        where: { id: created.id },
+        data: { sealedAt: new Date() },
       });
       await transaction.auditEvent.create({
         data: {
           actorId: input.actorId,
-          action: "PUBLICATION_REQUESTED",
-          subjectType: "PUBLICATION_JOB",
-          subjectId: job.id,
+          action: "PUBLICATION_PREFLIGHT_PASSED",
+          subjectType: "PUBLICATION_PREFLIGHT_RECEIPT",
+          subjectId: created.id,
           payload: {
-            situationId: checkout.situationId,
-            sourceKind,
-            targetBundleHash: revision.bundleHash,
+            revisionId: revision.id,
+            bundleHash: revision.bundleHash,
+            candidateHash: compiled.candidate.completeCandidateHash,
+            baseReleaseId: base.identity.releaseId,
+            baseManifestHash: base.identity.manifestHash,
+            expectedPointerGeneration: base.identity.generation,
+            contractDigest: PUBLICATION_COMPILER_DIGEST,
             leadershipCapabilityDigest: runtimeCapabilities.capabilityDigest,
-            leadershipRuntimeCommit: runtimeCapabilities.deployment.commit,
           },
         },
       });
-      return job;
+      return sealed;
     },
     { isolationLevel: "Serializable" },
   );
+  return {
+    ...receipt,
+    affectedRoutes: compiled.affectedRoutes,
+    situationArtifactHash: compiled.candidate.situationArtifactHash,
+    candidatePreview: compiled.typedProjection,
+  };
+}
+
+export async function requestPublication(input: {
+  actorId: string;
+  checkoutId: string;
+  fence: bigint;
+  revisionId: string;
+  bundleHash: string;
+  preflightReceiptId: string;
+  candidateHash: string;
+}) {
+  await assertNoPublicationRecovery(database());
+  const existingReceipt =
+    await database().publicationPreflightReceipt.findUnique({
+      where: { id: input.preflightReceiptId },
+      include: {
+        job: true,
+        checkout: { select: { holderId: true } },
+        revision: { select: { revision: true } },
+      },
+    });
+  if (!existingReceipt)
+    throw new WorkflowError(
+      "The publication preflight receipt was not found.",
+      404,
+      "PREFLIGHT_REQUIRED",
+    );
+  if (
+    existingReceipt.checkoutId !== input.checkoutId ||
+    existingReceipt.checkoutFence !== input.fence ||
+    existingReceipt.checkout.holderId !== input.actorId ||
+    existingReceipt.revisionId !== input.revisionId ||
+    existingReceipt.revisionBundleHash !== input.bundleHash ||
+    existingReceipt.candidateHash !== input.candidateHash ||
+    existingReceipt.sealedAt === null
+  )
+    throw new WorkflowError(
+      "The preflight receipt does not match the current editor revision and candidate.",
+      409,
+      "STALE_PREFLIGHT_RECEIPT",
+    );
+  // A byte-for-byte replay of an accepted command is idempotent even after
+  // the publisher has advanced the Leadership pointer or runtime availability
+  // has changed. Mismatched replays are rejected above.
+  if (existingReceipt.job) return existingReceipt.job;
+  const runtimeCapabilities = await compatibleLeadershipRuntimeForWorkflow();
+  const leadershipUrl = environment().LEADERSHIP_STUDIO_READER_DATABASE_URL;
+  if (!leadershipUrl)
+    throw new WorkflowError(
+      "Leadership publication is unavailable.",
+      503,
+      "PREFLIGHT_UNAVAILABLE",
+    );
+  const base = await readOfficialLeadershipCompilationBase(leadershipUrl);
+  if (!leadershipBaseMatchesReceipt(existingReceipt, base))
+    throw new WorkflowError(
+      "Leadership changed after validation. Run a new preflight; the previous candidate remains immutable.",
+      409,
+      "PREFLIGHT_BASE_CHANGED",
+    );
+  try {
+    return await database().$transaction(
+      async (transaction) => {
+        const receipt =
+          await transaction.publicationPreflightReceipt.findUnique({
+            where: { id: input.preflightReceiptId },
+            include: { job: true },
+          });
+        if (!receipt || receipt.sealedAt === null)
+          throw new WorkflowError("The preflight receipt is unavailable.", 404);
+        if (receipt.job) return receipt.job;
+        const checkout = await transaction.situationCheckout.findFirst({
+          where: {
+            id: input.checkoutId,
+            holderId: input.actorId,
+            fence: input.fence,
+            releasedAt: null,
+            draft: {
+              currentRevisionNumber: existingReceipt.revision.revision,
+              currentBundleHash: input.bundleHash,
+              revisions: {
+                some: { id: input.revisionId, bundleHash: input.bundleHash },
+              },
+            },
+          },
+          include: { situation: true, draft: true },
+        });
+        if (!checkout || receipt.checkoutId !== checkout.id)
+          throw new WorkflowError(
+            "The checkout or exact revision changed after validation.",
+            409,
+            "STALE_PREFLIGHT_RECEIPT",
+          );
+        await assertNoActivePublication(transaction, checkout.situationId);
+        await assertNoActiveReview(transaction, checkout.situationId);
+        const backupStatus =
+          await publicationBackupStatusForTransaction(transaction);
+        if (!backupStatus.ready)
+          throw new WorkflowError(
+            backupStatus.message,
+            503,
+            PUBLICATION_BACKUP_NOT_READY_CODE,
+          );
+        const confirmedBase =
+          await readOfficialLeadershipCompilationBase(leadershipUrl);
+        if (!leadershipBaseMatchesReceipt(receipt, confirmedBase))
+          throw new WorkflowError(
+            "Leadership changed before publication was queued. Run a new preflight.",
+            409,
+            "PREFLIGHT_BASE_CHANGED",
+          );
+        const job = await transaction.publicationJob.create({
+          data: {
+            publicationId: receipt.publicationId,
+            situationId: checkout.situationId,
+            targetRevisionId: input.revisionId,
+            checkoutId: checkout.id,
+            checkoutFence: checkout.fence,
+            sourceKind: receipt.sourceKind,
+            targetBundleHash: input.bundleHash,
+            preflightReceiptId: receipt.id,
+            candidateHash: receipt.candidateHash,
+            baseBundleHash: checkout.draft.baseBundleHash,
+            expectedPointerGeneration: receipt.expectedPointerGeneration,
+            observedReleaseId: receipt.baseReleaseId,
+            previousReleaseId: receipt.baseReleaseId,
+            restorationParentId: checkout.draft.restorationParentId,
+            events: {
+              create: {
+                sequence: 1,
+                kind: "REQUESTED",
+                payload: {
+                  sourceKind: receipt.sourceKind,
+                  targetRevisionId: input.revisionId,
+                  targetBundleHash: input.bundleHash,
+                  preflightReceiptId: receipt.id,
+                  candidateHash: receipt.candidateHash,
+                  baseReleaseId: receipt.baseReleaseId,
+                  baseManifestHash: receipt.baseManifestHash,
+                  expectedPointerGeneration:
+                    receipt.expectedPointerGeneration.toString(),
+                  contractDigest: receipt.contractDigest,
+                  leadershipCapabilityDigest:
+                    runtimeCapabilities.capabilityDigest,
+                },
+              },
+            },
+          },
+        });
+        await transaction.auditEvent.create({
+          data: {
+            actorId: input.actorId,
+            action: "PUBLICATION_REQUESTED",
+            subjectType: "PUBLICATION_JOB",
+            subjectId: job.id,
+            payload: {
+              situationId: checkout.situationId,
+              revisionId: input.revisionId,
+              bundleHash: input.bundleHash,
+              preflightReceiptId: receipt.id,
+              candidateHash: receipt.candidateHash,
+              leadershipCapabilityDigest: runtimeCapabilities.capabilityDigest,
+            },
+          },
+        });
+        return job;
+      },
+      {
+        isolationLevel: "Serializable",
+        maxWait: 5_000,
+        timeout: 30_000,
+      },
+    );
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (error.code === "P2002" || error.code === "P2034")
+    ) {
+      const accepted = await database().publicationJob.findUnique({
+        where: { preflightReceiptId: input.preflightReceiptId },
+      });
+      if (accepted) return accepted;
+    }
+    throw error;
+  }
 }
 
 export async function startRestorationDraft(input: {
@@ -1326,6 +2234,7 @@ export async function startRestorationDraft(input: {
             );
           const variant = createScopedVariant({
             situationId: checkout.situationId,
+            ownerSituationSlug: selectedBundle.metadata.slug,
             kind: relationship.kind as
               | "GUIDE"
               | "PRACTICE"
@@ -1435,9 +2344,15 @@ export async function createRetirementDraft(input: {
       )?.content.textBody;
       if (!revision || !body)
         throw new WorkflowError("The current draft is unavailable.");
+      const currentBundle = situationBundleSchema.parse(
+        revision.bundleManifest,
+      );
       const nextBundle = situationBundleSchema.parse({
-        ...situationBundleSchema.parse(revision.bundleManifest),
+        ...currentBundle,
         visibility: "RETIRED",
+        ...(currentBundle.schemaVersion === "situation-bundle-v2"
+          ? { promotion: null }
+          : {}),
       });
       const created = await createRevision(transaction, {
         draftId: checkout.draftId,
@@ -1549,18 +2464,13 @@ export async function createScopedArtifactEdit(input: {
         currentVariant?.forkedFromContentHash ?? relationship.contentHash;
       const variant = createScopedVariant({
         situationId: checkout.situationId,
+        ownerSituationSlug: currentBundle.metadata.slug,
         kind: input.kind,
         originalLogicalId: forkedFromLogicalId,
         originalContentHash: forkedFromContentHash,
         changedBody: input.changedBody,
       });
-      await putTextBlob(
-        transaction,
-        variant.body,
-        input.kind === "PRACTICE" || input.kind === "SOURCE"
-          ? "application/json; charset=utf-8"
-          : "text/markdown; charset=utf-8",
-      );
+      await putTextBlob(transaction, variant.body, variant.artifact.mediaType);
       const retainedVariant =
         await transaction.scopedArtifactVariant.findUnique({
           where: { logicalId: variant.artifact.logicalId },
@@ -1635,6 +2545,8 @@ export async function decideProposalChange(input: {
   fence: bigint;
   changeId: string;
   decision: "ACCEPT" | "REJECT";
+  revisionId: string;
+  bundleHash: string;
 }) {
   return database().$transaction(
     async (transaction) => {
@@ -1647,6 +2559,7 @@ export async function decideProposalChange(input: {
         include: { proposal: true },
       });
       if (!change) throw new WorkflowError("Proposal change not found.", 404);
+      assertCurrentProposalRevision(change.proposal, input);
       if (change.state !== "PENDING")
         throw new WorkflowError("That proposal change is already decided.");
       if (input.decision === "REJECT") {
@@ -1671,7 +2584,12 @@ export async function decideProposalChange(input: {
             },
           },
         });
-        return { state: "REJECTED" as const, revisionId: null };
+        return {
+          state: "REJECTED" as const,
+          authoritativeRevision: authoritativeRevisionPayload(
+            checkout.draft.revisions[0]!,
+          ),
+        };
       }
       if (!isProposalChangeApplicable(change))
         throw new WorkflowError(
@@ -1684,6 +2602,7 @@ export async function decideProposalChange(input: {
         checkout,
         changes: [change],
         namedCheckpoint: `Accepted agent suggestion: ${change.targetKey}`,
+        proposalId: change.proposalId,
       });
       const now = new Date();
       await transaction.proposalChange.update({
@@ -1693,6 +2612,13 @@ export async function decideProposalChange(input: {
           decidedAt: now,
           decidedById: input.actorId,
           appliedRevisionId: created.id,
+        },
+      });
+      await transaction.reviewProposal.update({
+        where: { id: change.proposalId },
+        data: {
+          currentRevisionId: created.id,
+          currentBundleHash: created.bundleHash,
         },
       });
       await transaction.auditEvent.create({
@@ -1711,7 +2637,10 @@ export async function decideProposalChange(input: {
           },
         },
       });
-      return { state: "ACCEPTED" as const, revisionId: created.id };
+      return {
+        state: "ACCEPTED" as const,
+        authoritativeRevision: authoritativeRevisionPayload(created),
+      };
     },
     { isolationLevel: "Serializable" },
   );
@@ -1721,7 +2650,13 @@ type ProposalCheckout = Awaited<ReturnType<typeof proposalCheckout>>;
 
 async function proposalCheckout(
   transaction: Transaction,
-  input: { actorId: string; checkoutId: string; fence: bigint },
+  input: {
+    actorId: string;
+    checkoutId: string;
+    fence: bigint;
+    revisionId: string;
+    bundleHash: string;
+  },
 ) {
   const checkout = await transaction.situationCheckout.findFirst({
     where: {
@@ -1749,7 +2684,43 @@ async function proposalCheckout(
       "STALE_CHECKOUT",
     );
   await assertDraftMutationAllowed(transaction, checkout.situationId);
+  const revision = checkout.draft.revisions[0];
+  if (
+    !revision ||
+    revision.id !== input.revisionId ||
+    revision.bundleHash !== input.bundleHash
+  )
+    throw new WorkflowError(
+      "The draft changed after this command was prepared. Reload the authoritative revision.",
+      409,
+      "STALE_REVISION",
+    );
   return checkout;
+}
+
+function assertCurrentProposalRevision(
+  proposal: {
+    currentRevisionId: string;
+    currentBundleHash: string;
+    supersededAt: Date | null;
+  },
+  expected: { revisionId: string; bundleHash: string },
+) {
+  if (proposal.supersededAt)
+    throw new WorkflowError(
+      "This proposal was superseded by a newer draft revision. Run review again.",
+      409,
+      "SUPERSEDED_PROPOSAL",
+    );
+  if (
+    proposal.currentRevisionId !== expected.revisionId ||
+    proposal.currentBundleHash !== expected.bundleHash
+  )
+    throw new WorkflowError(
+      "This proposal targets a different revision. Reload before deciding it.",
+      409,
+      "STALE_PROPOSAL",
+    );
 }
 
 type ApplicableProposalChange = {
@@ -1775,47 +2746,25 @@ function isProposalChangeApplicable(
   >,
 ) {
   return (
-    change.applicationMode === "AUTOMATIC" ||
-    (change.targetKind === "SECTION" && change.beforeHash !== null)
+    change.applicationMode === "AUTOMATIC" &&
+    (change.targetKind === "SECTION" ||
+      change.targetKind === "METADATA" ||
+      change.targetKind === "SCOPED_VARIANT")
   );
 }
-
-function normalizeSectionReplacement(targetKey: string, replacement: string) {
-  const normalized = canonicalText(replacement);
-  const lines = normalized.split("\n");
-  const firstLine = lines[0]?.trim() ?? "";
-  const heading = firstLine.match(/^#{1,6}\s+(.+)$/u)?.[1]?.trim();
-  if (heading !== targetKey) return normalized;
-  return canonicalText(lines.slice(1).join("\n").trimStart());
-}
-
-const managedMdxComponentPattern =
-  /<(?:PracticeEmbed|PreparedAction)\b[^>]*>/gu;
 
 export function proposalPreservesManagedMdxComponents(
   before: string,
   after: string,
 ) {
-  const componentTags = (value: string) =>
-    canonicalText(value).match(managedMdxComponentPattern) ?? [];
-  return (
-    canonicalJson(componentTags(before)) === canonicalJson(componentTags(after))
-  );
+  return sharedProposalPreservesManagedMdxComponents(before, after);
 }
 
 function proposedBody(change: ApplicableProposalChange) {
   const replacement = change.editorBody ?? change.afterBody;
   return change.targetKind === "SECTION"
-    ? normalizeSectionReplacement(change.targetKey, replacement)
+    ? normalizeSituationSectionReplacement(change.targetKey, replacement)
     : replacement;
-}
-
-function staleSuggestion(target: string): never {
-  throw new WorkflowError(
-    `${target} changed after this review. Run a new review or resolve it manually.`,
-    409,
-    "STALE_SUGGESTION",
-  );
 }
 
 async function applyProposalChanges(
@@ -1825,6 +2774,7 @@ async function applyProposalChanges(
     checkout: ProposalCheckout;
     changes: ApplicableProposalChange[];
     namedCheckpoint: string;
+    proposalId: string;
   },
 ) {
   const revision = input.checkout.draft.revisions[0];
@@ -1843,188 +2793,43 @@ async function applyProposalChanges(
         "MANUAL_SUGGESTION",
       );
     const afterBody = proposedBody(change);
-    if (change.targetKind === "SECTION") {
-      const sections = parseSituationSections(body);
-      let before: string;
-      try {
-        before = situationSectionTargetBefore(sections, change.targetKey);
-      } catch {
-        staleSuggestion(change.targetKey);
-      }
-      if (sha256(canonicalText(before)) !== change.beforeHash)
-        staleSuggestion(change.targetKey);
-      if (!proposalPreservesManagedMdxComponents(before, afterBody))
-        throw new WorkflowError(
-          `Agent suggestions cannot add, remove, or change managed PracticeEmbed or PreparedAction tags in ${change.targetKey}. Make that component edit explicitly in the raw MDX editor.`,
-          422,
-          "INVALID_SUGGESTION",
-        );
-      try {
-        body = serializeSituationSections(
-          applySituationSectionTarget(sections, change.targetKey, afterBody),
-        );
-      } catch {
-        throw new WorkflowError(
-          `Edited section suggestion ${change.targetKey} is structurally invalid.`,
-          422,
-          "INVALID_SUGGESTION",
-        );
-      }
-      continue;
-    }
-    if (change.targetKind === "METADATA") {
-      if (!(change.targetKey in bundle.metadata))
-        staleSuggestion(change.targetKey);
-      const current =
-        bundle.metadata[change.targetKey as keyof typeof bundle.metadata];
-      if (sha256(canonicalJson(current)) !== change.beforeHash)
-        staleSuggestion(change.targetKey);
-      let after: unknown;
-      try {
-        after = JSON.parse(afterBody);
-      } catch {
-        throw new WorkflowError(
-          `Edited metadata suggestion ${change.targetKey} is not valid JSON.`,
-          422,
-          "INVALID_SUGGESTION",
-        );
-      }
-      const metadata = situationMetadataSchema.parse({
-        ...bundle.metadata,
-        [change.targetKey]: after,
-      });
-      bundle = situationBundleSchema.parse({ ...bundle, metadata });
-      continue;
-    }
-    if (change.targetKind === "RELATIONSHIP") {
-      const current =
-        bundle.relationships.find(
-          (relationship) => relationship.logicalId === change.targetKey,
-        ) ?? null;
-      const currentHash = current ? sha256(canonicalJson(current)) : null;
-      if (currentHash !== change.beforeHash) staleSuggestion(change.targetKey);
-      let after: unknown;
-      try {
-        after = JSON.parse(afterBody);
-      } catch {
-        throw new WorkflowError(
-          `Edited relationship suggestion ${change.targetKey} is not valid JSON.`,
-          422,
-          "INVALID_SUGGESTION",
-        );
-      }
-      const relationship =
-        after === null ? null : relationshipSchema.parse(after);
-      if (relationship && relationship.logicalId !== change.targetKey)
-        throw new WorkflowError(
-          "A relationship replacement must retain its target logical ID.",
-          422,
-          "INVALID_SUGGESTION",
-        );
+    let applied: ReturnType<typeof applyDeterministicSituationChange>;
+    try {
       if (
-        relationship &&
-        !(await transaction.contentBlob.findUnique({
-          where: { hash: relationship.contentHash },
-          select: { hash: true },
-        }))
+        change.targetKind !== "SECTION" &&
+        change.targetKind !== "METADATA" &&
+        change.targetKind !== "SCOPED_VARIANT"
       )
-        throw new WorkflowError(
-          "The suggested relationship content is not available.",
-          422,
-          "MISSING_RELATIONSHIP_CONTENT",
+        throw new DeterministicChangeApplicationError(
+          `Suggestion type ${change.targetKind} is not safely auto-applicable.`,
+          "UNSUPPORTED_SUGGESTION",
         );
-      const index = bundle.relationships.findIndex(
-        (candidate) => candidate.logicalId === change.targetKey,
-      );
-      const relationships = [...bundle.relationships];
-      if (index >= 0 && relationship) relationships[index] = relationship;
-      else if (index >= 0) relationships.splice(index, 1);
-      else if (relationship) relationships.push(relationship);
-      bundle = situationBundleSchema.parse({
-        ...bundle,
-        relationships,
-        contextHashes: relationships.map((candidate) => candidate.contentHash),
+      applied = applyDeterministicSituationChange({
+        bundle,
+        body,
+        change: {
+          targetKind: change.targetKind,
+          targetKey: change.targetKey,
+          beforeHash: change.beforeHash,
+          afterBody,
+        },
       });
-      continue;
+    } catch (error) {
+      if (error instanceof DeterministicChangeApplicationError)
+        throw new WorkflowError(
+          error.message,
+          error.code === "STALE_SUGGESTION" ? 409 : 422,
+          error.code,
+        );
+      throw new WorkflowError(
+        error instanceof Error ? error.message : String(error),
+        422,
+        "INVALID_SUGGESTION",
+      );
     }
-    if (change.targetKind === "SCOPED_VARIANT") {
-      const target = parseScopedVariantTargetKey(change.targetKey);
-      if (!target)
-        throw new WorkflowError(
-          `Scoped suggestion ${change.targetKey} has an invalid target.`,
-          422,
-          "INVALID_SUGGESTION",
-        );
-      const relationship = bundle.relationships.find(
-        (candidate) => candidate.logicalId === target.logicalId,
-      );
-      if (!relationship || relationship.contentHash !== change.beforeHash)
-        staleSuggestion(change.targetKey);
-      if (
-        ![
-          "GUIDE",
-          "PRACTICE",
-          "SOURCE",
-          "LESSON_PLAN",
-          "PREPARATION_PROMPT",
-        ].includes(relationship.kind)
-      )
-        throw new WorkflowError(
-          "The suggested shared target cannot be safely scoped.",
-          422,
-          "INVALID_SUGGESTION",
-        );
-      if (target.variantId) {
-        let replacement: unknown;
-        try {
-          replacement = JSON.parse(afterBody);
-        } catch {
-          throw new WorkflowError(
-            `Edited scoped suggestion ${change.targetKey} is not valid JSON.`,
-            422,
-            "INVALID_SUGGESTION",
-          );
-        }
-        if (
-          !replacement ||
-          typeof replacement !== "object" ||
-          (replacement as { id?: unknown }).id !== target.variantId
-        )
-          throw new WorkflowError(
-            `Edited scoped suggestion ${change.targetKey} must retain its artifact ID.`,
-            422,
-            "INVALID_SUGGESTION",
-          );
-      }
-      const scopedValidation = validateScopedArtifactBody(
-        relationship.kind,
-        afterBody,
-      );
-      if (!scopedValidation.valid)
-        throw new WorkflowError(
-          `Scoped suggestion ${change.targetKey} is invalid: ${scopedValidation.errors.join(" ")}`,
-          422,
-          "INVALID_SUGGESTION",
-        );
-      const variant = createScopedVariant({
-        situationId: input.checkout.situationId,
-        kind: relationship.kind as
-          | "GUIDE"
-          | "PRACTICE"
-          | "SOURCE"
-          | "LESSON_PLAN"
-          | "PREPARATION_PROMPT",
-        originalLogicalId: relationship.logicalId,
-        originalContentHash: relationship.contentHash,
-        changedBody: afterBody,
-      });
-      await putTextBlob(
-        transaction,
-        variant.body,
-        relationship.kind === "PRACTICE" || relationship.kind === "SOURCE"
-          ? "application/json; charset=utf-8"
-          : "text/markdown; charset=utf-8",
-      );
+    if (applied.scopedVariant) {
+      const variant = applied.scopedVariant;
+      await putTextBlob(transaction, variant.body, variant.artifact.mediaType);
       const existingVariant =
         await transaction.scopedArtifactVariant.findUnique({
           where: { logicalId: variant.artifact.logicalId },
@@ -2036,15 +2841,19 @@ async function applyProposalChanges(
             logicalId: variant.artifact.logicalId,
             kind: variant.artifact.kind,
             visibility: variant.artifact.visibility,
-            forkedFromLogicalId: relationship.logicalId,
-            forkedFromContentHash: relationship.contentHash,
+            forkedFromLogicalId: variant.artifact.forkedFromLogicalId!,
+            forkedFromContentHash: variant.artifact.forkedFromContentHash!,
             contentHash: variant.artifact.contentHash,
           },
         });
       else if (
         existingVariant.ownerSituationId !== input.checkout.situationId ||
-        existingVariant.forkedFromLogicalId !== relationship.logicalId ||
-        existingVariant.forkedFromContentHash !== relationship.contentHash ||
+        existingVariant.kind !== variant.artifact.kind ||
+        existingVariant.visibility !== variant.artifact.visibility ||
+        existingVariant.forkedFromLogicalId !==
+          variant.artifact.forkedFromLogicalId ||
+        existingVariant.forkedFromContentHash !==
+          variant.artifact.forkedFromContentHash ||
         existingVariant.contentHash !== variant.artifact.contentHash
       )
         throw new WorkflowError(
@@ -2052,33 +2861,9 @@ async function applyProposalChanges(
           409,
           "SCOPED_VARIANT_CONFLICT",
         );
-      const relationships = bundle.relationships.map((candidate) =>
-        candidate.logicalId === relationship.logicalId
-          ? {
-              ...candidate,
-              logicalId: variant.artifact.logicalId,
-              contentHash: variant.artifact.contentHash,
-              visibility: variant.artifact.visibility,
-            }
-          : candidate,
-      );
-      bundle = situationBundleSchema.parse({
-        ...bundle,
-        artifacts: bundle.artifacts.some(
-          (artifact) => artifact.logicalId === variant.artifact.logicalId,
-        )
-          ? bundle.artifacts
-          : [...bundle.artifacts, variant.artifact],
-        relationships,
-        contextHashes: relationships.map((candidate) => candidate.contentHash),
-      });
-      continue;
     }
-    throw new WorkflowError(
-      `Suggestion type ${change.targetKind} is not safely auto-applicable.`,
-      422,
-      "UNSUPPORTED_SUGGESTION",
-    );
+    bundle = applied.bundle;
+    body = applied.body;
   }
   bundle = situationBundleSchema.parse({
     ...bundle,
@@ -2097,6 +2882,9 @@ async function applyProposalChanges(
     bundle,
     body,
     namedCheckpoint: input.namedCheckpoint,
+    expectedParentRevisionId: revision.id,
+    expectedParentBundleHash: revision.bundleHash,
+    preserveProposalId: input.proposalId,
   });
 }
 
@@ -2106,6 +2894,8 @@ export async function editProposalChange(input: {
   fence: bigint;
   changeId: string;
   editedBody: string;
+  revisionId: string;
+  bundleHash: string;
 }) {
   if (
     !input.editedBody.length ||
@@ -2124,8 +2914,10 @@ export async function editProposalChange(input: {
           id: input.changeId,
           proposal: { job: { situationId: checkout.situationId } },
         },
+        include: { proposal: true },
       });
       if (!change) throw new WorkflowError("Proposal change not found.", 404);
+      assertCurrentProposalRevision(change.proposal, input);
       if (change.state !== "PENDING")
         throw new WorkflowError("That proposal change is already decided.");
       if (!isProposalChangeApplicable(change))
@@ -2190,6 +2982,8 @@ export async function acceptAllProposalChanges(input: {
   checkoutId: string;
   fence: bigint;
   proposalId: string;
+  revisionId: string;
+  bundleHash: string;
 }) {
   return database().$transaction(
     async (transaction) => {
@@ -2202,6 +2996,7 @@ export async function acceptAllProposalChanges(input: {
         include: { changes: { orderBy: { position: "asc" } } },
       });
       if (!proposal) throw new WorkflowError("Review proposal not found.", 404);
+      assertCurrentProposalRevision(proposal, input);
       const pending = proposal.changes.filter(
         (change) => change.state === "PENDING",
       );
@@ -2222,6 +3017,7 @@ export async function acceptAllProposalChanges(input: {
         checkout,
         changes: actionable,
         namedCheckpoint: `Accepted all ${actionable.length} agent suggestions`,
+        proposalId: proposal.id,
       });
       const now = new Date();
       const accepted = await transaction.proposalChange.updateMany({
@@ -2242,6 +3038,13 @@ export async function acceptAllProposalChanges(input: {
           409,
           "STALE_SUGGESTION_SET",
         );
+      await transaction.reviewProposal.update({
+        where: { id: proposal.id },
+        data: {
+          currentRevisionId: created.id,
+          currentBundleHash: created.bundleHash,
+        },
+      });
       await transaction.auditEvent.create({
         data: {
           actorId: input.actorId,
@@ -2259,7 +3062,7 @@ export async function acceptAllProposalChanges(input: {
       });
       return {
         state: "ACCEPTED" as const,
-        revisionId: created.id,
+        authoritativeRevision: authoritativeRevisionPayload(created),
         appliedCount: actionable.length,
         manualRemainingCount: manual.length,
       };
@@ -2273,6 +3076,8 @@ export async function rejectAllProposalChanges(input: {
   checkoutId: string;
   fence: bigint;
   proposalId: string;
+  revisionId: string;
+  bundleHash: string;
 }) {
   return database().$transaction(
     async (transaction) => {
@@ -2285,6 +3090,7 @@ export async function rejectAllProposalChanges(input: {
         include: { changes: { orderBy: { position: "asc" } } },
       });
       if (!proposal) throw new WorkflowError("Review proposal not found.", 404);
+      assertCurrentProposalRevision(proposal, input);
       const pending = proposal.changes.filter(
         (change) => change.state === "PENDING",
       );
@@ -2327,6 +3133,9 @@ export async function rejectAllProposalChanges(input: {
       return {
         state: "REJECTED" as const,
         rejectedCount: pending.length,
+        authoritativeRevision: authoritativeRevisionPayload(
+          checkout.draft.revisions[0]!,
+        ),
       };
     },
     { isolationLevel: "Serializable" },

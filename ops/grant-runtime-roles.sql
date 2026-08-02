@@ -63,6 +63,10 @@ GRANT SELECT, INSERT, UPDATE ON leadership_sync_cursors
   TO situation_studio_web;
 GRANT SELECT, INSERT ON publication_events
   TO situation_studio_web;
+GRANT SELECT, INSERT, UPDATE ON publication_preflight_receipts
+  TO situation_studio_web;
+GRANT SELECT, INSERT ON publication_candidate_artifacts
+  TO situation_studio_web;
 GRANT SELECT ON
   agent_runs, publication_attempts,
   verification_receipts, backup_receipts, publication_candidate_snapshots,
@@ -97,6 +101,9 @@ GRANT SELECT, INSERT ON publication_events,
   backup_receipts, audit_events
   TO situation_studio_publisher;
 GRANT SELECT, INSERT, UPDATE, DELETE ON publication_candidate_snapshots
+  TO situation_studio_publisher;
+GRANT SELECT ON publication_preflight_receipts,
+  publication_candidate_artifacts
   TO situation_studio_publisher;
 GRANT SELECT ON draft_revisions, draft_revision_artifacts, content_blobs,
   scoped_artifact_variants, review_jobs, review_steps, review_proposals,

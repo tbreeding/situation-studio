@@ -12,6 +12,7 @@ import {
   type DatabaseClient,
 } from "@situation-studio/db";
 import {
+  bundleHash,
   canonicalJson,
   canonicalText,
   parseSituationSections,
@@ -25,11 +26,14 @@ import {
   leadershipTypedParityPredicate,
   requiredContentContractIdentity,
   requiredLeadershipFeatures,
+  requiredPublicationCompilerIdentity,
   requiredSituationContractIdentity,
 } from "@situation-studio/leadership-bridge";
 import {
   AdapterFailure,
   bundleWriterOutputSchema,
+  candidateAuditOutputSchema,
+  candidateBuilderOutputSchema,
   normalizedOutputSchema,
   runDeterministic,
   type AdapterRequest,
@@ -40,6 +44,7 @@ import {
   claimNextReview,
   processClaimedReview,
   REVIEW_PROVIDER_TIMEOUT_MS,
+  REVIEW_TOTAL_DEADLINE_MS,
   type ReviewApplicationFailureEvent,
   type ReviewStageTimingEvent,
 } from "../src/review";
@@ -63,6 +68,7 @@ function compatibleCapabilitiesUrl() {
     },
     contracts: {
       content: requiredContentContractIdentity,
+      publicationCompiler: requiredPublicationCompilerIdentity,
       situation: requiredSituationContractIdentity,
     },
     database: { predicate: leadershipTypedParityPredicate },
@@ -151,6 +157,30 @@ describe("checkout fencing and the complete durable review DAG", () => {
   let editorTwoId: string;
   let adminId: string;
 
+  async function queueReview(input: {
+    actorId: string;
+    checkoutId: string;
+    fence: bigint;
+  }) {
+    const checkout = await database.situationCheckout.findUniqueOrThrow({
+      where: { id: input.checkoutId },
+      include: {
+        draft: {
+          include: {
+            revisions: { orderBy: { revision: "desc" }, take: 1 },
+          },
+        },
+      },
+    });
+    const revision = checkout.draft.revisions[0];
+    if (!revision) throw new Error("Review fixture has no current revision.");
+    return workflows.queueReview({
+      ...input,
+      revisionId: revision.id,
+      bundleHash: revision.bundleHash,
+    });
+  }
+
   async function completeCandidateReview(
     jobId: string,
     input: {
@@ -187,30 +217,38 @@ describe("checkout fencing and the complete durable review DAG", () => {
       {
         runStage: async (request, _configuration, runtimeOptions) => {
           expect(request.system).toContain(REVIEW_POLICY_VERSION);
-          if (request.role === "issue-register")
-            expect(request.system).toContain("ISSUE: I-<number>");
-          if (request.role === "audit-page-language")
+          if (request.role === "critical-review")
+            expect(request.system).toContain("Nonviolent Communication");
+          if (request.role === "candidate-audit")
             expect(request.system).toContain("FIRST_ACTION_IN_30_SECONDS");
           expect(runtimeOptions?.providerTimeoutMs).toBe(
             REVIEW_PROVIDER_TIMEOUT_MS,
           );
           const base = await successfulStage(request);
           const output =
-            request.role === "critic-nvc"
+            request.role === "critical-review"
               ? normalizedOutputSchema.parse({
                   role: request.role,
                   summary: "Structured candidate findings.",
                   findings: input.findings,
                   provenance: "candidate-integration",
                 })
-              : request.role === "bundle-writer"
-                ? bundleWriterOutputSchema.parse({
+              : request.role === "candidate-builder"
+                ? candidateBuilderOutputSchema.parse({
                     role: request.role,
                     summary:
                       "A concise candidate revision grounded in retained findings.",
                     findings: [],
                     provenance: "candidate-integration",
-                    candidateEdits: input.candidateEdits,
+                    changeIntents: input.candidateEdits.map(
+                      ({
+                        id: _id,
+                        applicationMode: _applicationMode,
+                        beforeHash: _beforeHash,
+                        writtenByRoleCode: _writtenByRoleCode,
+                        ...intent
+                      }) => intent,
+                    ),
                   })
                 : base.output;
           return {
@@ -227,7 +265,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       expect.arrayContaining([
         expect.objectContaining({
           event: "review_stage_provider_timing",
-          stageRole: "surface-mapper",
+          stageRole: "context-mapper",
           stageOutcome: "SUCCEEDED",
           providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
           providerAttempts: [
@@ -240,7 +278,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
         }),
         expect.objectContaining({
           event: "review_stage_provider_timing",
-          stageRole: "audit-teaching-alignment",
+          stageRole: "candidate-audit",
           stageOutcome: "SUCCEEDED",
           providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
         }),
@@ -297,6 +335,74 @@ describe("checkout fencing and the complete durable review DAG", () => {
     editorTwoId = editorTwo.id;
     adminId = admin.id;
     workflows = await import("@/server/workflows/situations");
+    const observation = await database.leadershipReleaseObservation.create({
+      data: {
+        releaseId: randomUUID(),
+        manifestHash: "d".repeat(64),
+        pointerGeneration: 1n,
+        state: "CURRENT",
+        sourceKind: "BOOTSTRAP_IMPORT",
+        manifest: {},
+        publishedAt: new Date("2026-08-01T00:00:00.000Z"),
+      },
+    });
+    const defaultPractice = {
+      kind: "PRACTICE" as const,
+      logicalId: "practice:listen-first",
+      position: 0,
+      contentHash: "a".repeat(64),
+      visibility: "GLOBAL" as const,
+    };
+    const defaultSource = {
+      kind: "SOURCE" as const,
+      logicalId: "source:fixture-source",
+      position: 0,
+      contentHash: "b".repeat(64),
+      visibility: "GLOBAL" as const,
+    };
+    for (const [slug, title] of [
+      ["review-context-alpha", "Review context alpha situation"],
+      ["review-context-beta", "Review context beta situation"],
+    ] as const) {
+      const situation = await database.situation.create({
+        data: { slug, title, visibility: "PUBLIC" },
+      });
+      const template = workflows.newSituationTemplate({
+        situationId: situation.id,
+        slug,
+        title,
+        today: "2026-08-01",
+        defaultPractice,
+        defaultSource,
+        defaultSourceReference: "fixture-source",
+        defaultRelatedSituationIds: [
+          "related-context-one",
+          "related-context-two",
+        ],
+      });
+      const hash = bundleHash(template.bundle);
+      await database.situation.update({
+        where: { id: situation.id },
+        data: {
+          productionBundleHash: hash,
+          productionReleaseId: observation.releaseId,
+          productionAt: new Date("2026-08-01T00:00:00.000Z"),
+        },
+      });
+      await database.productionSituationVersion.create({
+        data: {
+          situationId: situation.id,
+          observationId: observation.id,
+          bundleHash: hash,
+          bundleManifest: template.bundle,
+          contractVersion: template.bundle.contractVersion,
+          validationPolicy: template.bundle.validationPolicyVersion,
+          sourceKind: "CREATE",
+          productionAt: new Date("2026-08-01T00:00:00.000Z"),
+          changeSummary: "Review integration context fixture",
+        },
+      });
+    }
   });
 
   afterAll(async () => {
@@ -365,17 +471,56 @@ describe("checkout fencing and the complete durable review DAG", () => {
         "Name the exact observable pattern you are seeing",
       ),
     );
-    const saved = await workflows.saveDraft({
-      actorId: checkout.holderId,
-      checkoutId: checkout.id,
-      fence: checkout.fence,
-      body: changedBody,
-      bundle: {
-        ...situationBundleSchema.parse(revision.bundleManifest),
-        bodyHash: sha256(changedBody),
-      },
-      namedCheckpoint: "Integration exact draft",
+    const competingBody = canonicalText(
+      body.replace(
+        "Name what you are seeing",
+        "Name a competing exact observation before responding",
+      ),
+    );
+    const overlappingSaves = await Promise.allSettled([
+      workflows.saveDraft({
+        actorId: checkout.holderId,
+        checkoutId: checkout.id,
+        fence: checkout.fence,
+        expectedParentRevisionId: revision.id,
+        expectedParentBundleHash: revision.bundleHash,
+        body: changedBody,
+        bundle: {
+          ...situationBundleSchema.parse(revision.bundleManifest),
+          bodyHash: sha256(changedBody),
+        },
+        namedCheckpoint: "Integration exact draft",
+      }),
+      workflows.saveDraft({
+        actorId: checkout.holderId,
+        checkoutId: checkout.id,
+        fence: checkout.fence,
+        expectedParentRevisionId: revision.id,
+        expectedParentBundleHash: revision.bundleHash,
+        body: competingBody,
+        bundle: {
+          ...situationBundleSchema.parse(revision.bundleManifest),
+          bodyHash: sha256(competingBody),
+        },
+        namedCheckpoint: "Competing integration draft",
+      }),
+    ]);
+    const successfulSaves = overlappingSaves.filter(
+      (
+        result,
+      ): result is PromiseFulfilledResult<
+        Awaited<ReturnType<typeof workflows.saveDraft>>
+      > => result.status === "fulfilled",
+    );
+    const rejectedSaves = overlappingSaves.filter(
+      (result) => result.status === "rejected",
+    );
+    expect(successfulSaves).toHaveLength(1);
+    expect(rejectedSaves).toHaveLength(1);
+    expect(rejectedSaves[0]).toMatchObject({
+      reason: expect.objectContaining({ code: "STALE_REVISION" }),
     });
+    const saved = successfulSaves[0]!.value;
     const checkedIn = await workflows.checkInSituation({
       actorId: checkout.holderId,
       checkoutId: checkout.id,
@@ -388,7 +533,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       actorId: checkout.holderId === editorOneId ? editorTwoId : editorOneId,
     });
     expect(resumed.draftId).toBe(checkout.draftId);
-    const queued = await workflows.queueReview({
+    const queued = await queueReview({
       actorId: resumed.holderId,
       checkoutId: resumed.id,
       fence: resumed.fence,
@@ -408,6 +553,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
         actorId: resumed.holderId,
         checkoutId: resumed.id,
         fence: resumed.fence,
+        expectedParentRevisionId: saved.id,
+        expectedParentBundleHash: saved.bundleHash,
         body: changedBody,
         bundle: revision.bundleManifest,
       }),
@@ -423,13 +570,92 @@ describe("checkout fencing and the complete durable review DAG", () => {
     ).toBe(1);
   });
 
+  it("migrates a retained v2 UNPUBLISHED draft through an explicit fenced forward revision", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-public-intent-forward",
+      title: "An explicit publication intent migration",
+    });
+    const workspace = await workflows.workspaceForSlug(created.situation.slug);
+    const current = workspace?.drafts[0]?.revisions[0];
+    const body = current?.artifacts.find(
+      (artifact) => artifact.kind === "SITUATION",
+    )?.content.textBody;
+    if (!current || !body)
+      throw new Error("Publication-intent fixture is unavailable.");
+    const currentBundle = situationBundleSchema.parse(current.bundleManifest);
+    if (currentBundle.schemaVersion !== "situation-bundle-v2")
+      throw new Error("Publication-intent fixture is not v2.");
+    const retainedBundle = situationBundleSchema.parse({
+      ...currentBundle,
+      visibility: "UNPUBLISHED",
+    });
+    const retainedHash = bundleHash(retainedBundle);
+
+    // Reproduce an immutable row written by the prior v2 release. The local
+    // replication role suppresses user triggers only inside this fixture
+    // transaction; the workflow must migrate it by appending, never rewriting.
+    await database.$transaction(async (transaction) => {
+      await transaction.$executeRawUnsafe(
+        "SET LOCAL session_replication_role = replica",
+      );
+      await transaction.$executeRaw`
+        UPDATE draft_revisions
+           SET bundle_manifest = ${JSON.stringify(retainedBundle)}::jsonb,
+               bundle_hash = ${retainedHash}
+         WHERE id = ${current.id}::uuid
+      `;
+      await transaction.$executeRaw`
+        UPDATE drafts
+           SET current_bundle_hash = ${retainedHash}
+         WHERE id = ${created.draft.id}::uuid
+      `;
+    });
+
+    const advanced = await workflows.saveDraft({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+      expectedParentRevisionId: current.id,
+      expectedParentBundleHash: retainedHash,
+      body,
+      bundle: {
+        ...retainedBundle,
+        visibility: "PUBLIC",
+      },
+      namedCheckpoint: "Set explicit public intent",
+    });
+    expect(advanced.id).not.toBe(current.id);
+    expect(advanced.parentId).toBe(current.id);
+    expect(
+      situationBundleSchema.parse(advanced.bundleManifest).visibility,
+    ).toBe("PUBLIC");
+    await expect(
+      database.auditEvent.count({
+        where: {
+          action: "PUBLICATION_INTENT_SET",
+          actorId: editorOneId,
+          subjectId: advanced.id,
+        },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      database.draftRevision.findUniqueOrThrow({
+        where: { id: current.id },
+        select: { bundleManifest: true },
+      }),
+    ).resolves.toMatchObject({
+      bundleManifest: expect.objectContaining({ visibility: "UNPUBLISHED" }),
+    });
+  });
+
   it("runs every policy stage once, globally serializes jobs, and fences cancellation", async () => {
     const first = await workflows.createSituation({
       actorId: editorOneId,
       slug: "integration-review-one",
       title: "A first complete deterministic review",
     });
-    const firstJob = await workflows.queueReview({
+    const firstJob = await queueReview({
       actorId: editorOneId,
       checkoutId: first.checkout.id,
       fence: first.checkout.fence,
@@ -444,15 +670,47 @@ describe("checkout fencing and the complete durable review DAG", () => {
     const pinnedRevisionCount = await database.draftRevision.count({
       where: { draftId: first.draft.id },
     });
+    const pinnedRevision = await database.draftRevision.findFirstOrThrow({
+      where: { draftId: first.draft.id },
+      orderBy: { revision: "desc" },
+      include: {
+        artifacts: {
+          where: { kind: "SITUATION" },
+          include: { content: true },
+        },
+      },
+    });
+    const pinnedBody = pinnedRevision.artifacts[0]?.content.textBody;
+    if (!pinnedBody) throw new Error("Pinned review body is missing.");
+    const laterBody = canonicalText(
+      pinnedBody.replace(
+        "Name what you are seeing",
+        "Name the specific pattern you are seeing",
+      ),
+    );
+    const laterRevision = await workflows.saveDraft({
+      actorId: editorOneId,
+      checkoutId: first.checkout.id,
+      fence: first.checkout.fence,
+      expectedParentRevisionId: pinnedRevision.id,
+      expectedParentBundleHash: pinnedRevision.bundleHash,
+      body: laterBody,
+      bundle: {
+        ...situationBundleSchema.parse(pinnedRevision.bundleManifest),
+        bodyHash: sha256(laterBody),
+      },
+    });
+    expect(laterRevision.id).not.toBe(firstJob.inputRevisionId);
+    expect(firstJob.inputRevisionId).toBe(pinnedRevision.id);
     await expect(
-      workflows.saveDraft({
+      workflows.queueReview({
         actorId: editorOneId,
         checkoutId: first.checkout.id,
         fence: first.checkout.fence,
-        body: "blocked while queued",
-        bundle: {},
+        revisionId: pinnedRevision.id,
+        bundleHash: pinnedRevision.bundleHash,
       }),
-    ).rejects.toThrow(/read-only/iu);
+    ).rejects.toMatchObject({ code: "STALE_REVISION" });
 
     const claimedFirst = await claimNextReview(database);
     expect(claimedFirst?.id).toBe(firstJob.id);
@@ -461,7 +719,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-two",
       title: "A second serialized deterministic review",
     });
-    const secondJob = await workflows.queueReview({
+    const secondJob = await queueReview({
       actorId: editorTwoId,
       checkoutId: second.checkout.id,
       fence: second.checkout.fence,
@@ -504,6 +762,12 @@ describe("checkout fencing and the complete durable review DAG", () => {
       expect(run.structuredOutput).toBeTruthy();
     }
     expect(completed.proposal?.inputRevisionId).toBe(firstJob.inputRevisionId);
+    expect(completed.proposal).toMatchObject({
+      currentRevisionId: firstJob.inputRevisionId,
+      currentBundleHash: firstJob.inputBundleHash,
+      supersededByRevisionId: laterRevision.id,
+    });
+    expect(completed.proposal?.supersededAt).not.toBeNull();
     expect(completed.proposal?.candidate?.inputRevisionId).toBe(
       firstJob.inputRevisionId,
     );
@@ -514,7 +778,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       await database.draftRevision.count({
         where: { draftId: first.draft.id },
       }),
-    ).toBe(pinnedRevisionCount);
+    ).toBe(pinnedRevisionCount + 1);
     await processClaimedReview(database, firstJob.id, {
       mode: "deterministic",
     });
@@ -541,7 +805,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-cancel",
       title: "A cancellable deterministic review",
     });
-    const thirdJob = await workflows.queueReview({
+    const thirdJob = await queueReview({
       actorId: editorOneId,
       checkoutId: third.checkout.id,
       fence: third.checkout.fence,
@@ -550,6 +814,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
     await workflows.cancelReview({
       actorId: editorOneId,
       jobId: thirdJob.id,
+      revisionId: thirdJob.inputRevisionId,
+      bundleHash: thirdJob.inputBundleHash,
       reason: "Integration cancellation",
     });
     await processClaimedReview(database, thirdJob.id, {
@@ -589,7 +855,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
     const revisionCount = await database.draftRevision.count({
       where: { draftId: created.draft.id },
     });
-    const job = await workflows.queueReview({
+    const job = await queueReview({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
@@ -620,7 +886,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           explanation: "Makes the opening observable and specific.",
           rationale:
             "The replacement responds to the retained NVC finding while preserving the existing action sequence.",
-          upstreamFindingIds: ["critic-nvc:observable-opening"],
+          upstreamFindingIds: ["critical-review:observable-opening"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-nvc", "critic-manager-tools"],
         },
@@ -635,7 +901,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           explanation: "Leaves a visible manual suggestion.",
           rationale:
             "No safe generic embed can be generated from the pinned evidence.",
-          upstreamFindingIds: ["critic-nvc:observable-opening"],
+          upstreamFindingIds: ["critical-review:observable-opening"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-nvc"],
         },
@@ -668,20 +934,29 @@ describe("checkout fencing and the complete durable review DAG", () => {
       inputRevision.bundleHash,
     );
     expect(completed.proposal?.findings[0]).toMatchObject({
-      findingKey: "critic-nvc:observable-opening",
-      sourceRoleCode: "critic-nvc",
+      findingKey: "critical-review:observable-opening",
+      sourceRoleCode: "critical-review",
       evidenceRoleCodes: ["critic-manager-tools"],
     });
-    expect(completed.proposal?.changes[0]).toMatchObject({
-      id: automaticId,
+    const automaticChange = completed.proposal?.changes.find(
+      (change) => change.targetKind === "SECTION",
+    );
+    const manualChange = completed.proposal?.changes.find(
+      (change) => change.targetKind === "EMBED",
+    );
+    if (!automaticChange || !manualChange || !completed.proposal)
+      throw new Error("Server-materialized proposal changes are missing.");
+    expect(automaticChange).toMatchObject({
       beforeBody: inputSections["The short answer"],
-      writtenByRoleCode: "bundle-writer",
-      identifiedByRoleCodes: ["critic-nvc"],
+      writtenByRoleCode: "candidate-builder",
+      identifiedByRoleCodes: ["critical-review"],
       applicationMode: "AUTOMATIC",
     });
-    expect(
-      completed.proposal?.changes[0]?.findingLinks[0]?.finding.findingKey,
-    ).toBe("critic-nvc:observable-opening");
+    expect(automaticChange.id).not.toBe(automaticId);
+    expect(manualChange.id).not.toBe(manualId);
+    expect(automaticChange.findingLinks[0]?.finding.findingKey).toBe(
+      "critical-review:observable-opening",
+    );
     expect(
       await database.draftRevision.count({
         where: { draftId: created.draft.id },
@@ -694,25 +969,31 @@ describe("checkout fencing and the complete durable review DAG", () => {
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
-      changeId: automaticId,
+      changeId: automaticChange.id,
       editedBody: editorReplacement,
+      revisionId: completed.proposal.currentRevisionId,
+      bundleHash: completed.proposal.currentBundleHash,
     });
     await workflows.decideProposalChange({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
-      changeId: manualId,
+      changeId: manualChange.id,
       decision: "REJECT",
+      revisionId: completed.proposal.currentRevisionId,
+      bundleHash: completed.proposal.currentBundleHash,
     });
     const accepted = await workflows.decideProposalChange({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
-      changeId: automaticId,
+      changeId: automaticChange.id,
       decision: "ACCEPT",
+      revisionId: completed.proposal.currentRevisionId,
+      bundleHash: completed.proposal.currentBundleHash,
     });
     const applied = await database.draftRevision.findUniqueOrThrow({
-      where: { id: accepted.revisionId! },
+      where: { id: accepted.authoritativeRevision.revisionId },
       include: { artifacts: { include: { content: true } } },
     });
     expect(
@@ -721,17 +1002,17 @@ describe("checkout fencing and the complete durable review DAG", () => {
     ).toContain(editorReplacement);
     expect(
       await database.proposalChange.findUniqueOrThrow({
-        where: { id: automaticId },
+        where: { id: automaticChange.id },
       }),
     ).toMatchObject({
       state: "ACCEPTED",
       editorBody: editorReplacement,
-      appliedRevisionId: accepted.revisionId,
+      appliedRevisionId: accepted.authoritativeRevision.revisionId,
     });
     expect(
       await database.auditEvent.findMany({
         where: {
-          subjectId: { in: [automaticId, manualId] },
+          subjectId: { in: [automaticChange.id, manualChange.id] },
           action: {
             in: [
               "PROPOSAL_CHANGE_EDITED",
@@ -783,6 +1064,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
+      expectedParentRevisionId: inputRevision.id,
+      expectedParentBundleHash: inputRevision.bundleHash,
       bundle: {
         ...situationBundleSchema.parse(inputRevision.bundleManifest),
         bodyHash: sha256(canonicalText(nestedBody)),
@@ -790,7 +1073,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       body: nestedBody,
       namedCheckpoint: "Nested candidate target fixture",
     });
-    const job = await workflows.queueReview({
+    const job = await queueReview({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
@@ -820,7 +1103,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           problem: "The support boundary needs a more explicit action.",
           explanation: "Repairs only the named support block.",
           rationale: "The surrounding fit guidance remains unchanged.",
-          upstreamFindingIds: ["critic-nvc:granular-targets"],
+          upstreamFindingIds: ["critical-review:granular-targets"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-nvc"],
         },
@@ -836,7 +1119,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           problem: "The reply should clarify choice.",
           explanation: "Repairs only the selected response.",
           rationale: "Other response paths remain unchanged.",
-          upstreamFindingIds: ["critic-nvc:granular-targets"],
+          upstreamFindingIds: ["critical-review:granular-targets"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-nvc"],
         },
@@ -851,7 +1134,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           problem: "The reply should name practical alternatives.",
           explanation: "Repairs only the selected response.",
           rationale: "The rest of the response section remains unchanged.",
-          upstreamFindingIds: ["critic-nvc:granular-targets"],
+          upstreamFindingIds: ["critical-review:granular-targets"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-nvc"],
         },
@@ -890,9 +1173,11 @@ describe("checkout fencing and the complete durable review DAG", () => {
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
       proposalId: completed.proposal!.id,
+      revisionId: completed.proposal!.currentRevisionId,
+      bundleHash: completed.proposal!.currentBundleHash,
     });
     const applied = await database.draftRevision.findUniqueOrThrow({
-      where: { id: accepted.revisionId },
+      where: { id: accepted.authoritativeRevision.revisionId },
       include: { artifacts: { include: { content: true } } },
     });
     const appliedBody = applied.artifacts.find(
@@ -908,7 +1193,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-uppercase-finding-link",
       title: "A case-normalized finding lineage scenario",
     });
-    const job = await workflows.queueReview({
+    const job = await queueReview({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
@@ -936,7 +1221,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           problem: "The first action needs to be concrete.",
           explanation: "Makes the first conversation move explicit.",
           rationale: "A case-only role prefix must not break valid lineage.",
-          upstreamFindingIds: ["CRITIC-NVC:case-only-lineage"],
+          upstreamFindingIds: ["CRITICAL-REVIEW:case-only-lineage"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-nvc"],
         },
@@ -956,13 +1241,13 @@ describe("checkout fencing and the complete durable review DAG", () => {
     expect(completed.proposal?.changes[0]?.findingLinks).toHaveLength(1);
   });
 
-  it("logs the safe proposal-materialization error instead of discarding it", async () => {
+  it("isolates a suggestion with broken finding lineage as non-actionable", async () => {
     const created = await workflows.createSituation({
       actorId: editorOneId,
       slug: "integration-materialization-error-log",
       title: "A logged proposal materialization failure",
     });
-    const job = await workflows.queueReview({
+    const job = await queueReview({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
@@ -980,26 +1265,22 @@ describe("checkout fencing and the complete durable review DAG", () => {
         onApplicationFailure: (event) => events.push(event),
         runStage: async (request) => {
           const base = await successfulStage(request);
-          if (request.role !== "bundle-writer") return base;
-          const output = bundleWriterOutputSchema.parse({
+          if (request.role !== "candidate-builder") return base;
+          const output = candidateBuilderOutputSchema.parse({
             role: request.role,
             summary: "A candidate with intentionally broken lineage.",
             findings: [],
             provenance: "materialization-error-log-test",
-            candidateEdits: [
+            changeIntents: [
               {
-                id: "201eb1cb-c6d6-476d-9462-aa560519596e",
                 targetKind: "SECTION",
                 targetKey: "The short answer",
-                applicationMode: "AUTOMATIC",
-                beforeHash: null,
                 afterBody: "Name the observed pattern and ask for their view.",
                 problem: "The opening needs a bounded repair.",
                 explanation: "Proposes a concise replacement.",
                 rationale: "The missing lineage is intentional in this test.",
-                upstreamFindingIds: ["adjudicator:missing-finding"],
-                writtenByRoleCode: "bundle-writer",
-                evidenceRoleCodes: ["adjudicator"],
+                upstreamFindingIds: ["critical-review:missing-finding"],
+                evidenceRoleCodes: ["critical-review"],
               },
             ],
           });
@@ -1011,53 +1292,20 @@ describe("checkout fencing and the complete durable review DAG", () => {
         },
       },
     );
-    expect(
-      await database.reviewJob.findUniqueOrThrow({ where: { id: job.id } }),
-    ).toMatchObject({
-      state: "FAILED",
-      laneOwner: true,
-      failureCode: "APPLICATION",
-      failureReasonCode: "CANDIDATE_FINDING_REFERENCE_INVALID",
-      failurePhase: "MATERIALIZE_PROPOSAL",
-      failureStageOrdinal: 19,
-      failureStageRole: "bundle-writer",
+    const completed = await database.reviewJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: { proposal: { include: { changes: true, findings: true } } },
     });
-    expect(events).toContainEqual(
+    expect(completed).toMatchObject({ state: "SUCCEEDED", laneOwner: false });
+    expect(completed.proposal?.changes).toHaveLength(0);
+    expect(completed.proposal?.findings).toEqual([
       expect.objectContaining({
-        event: "review_application_failure",
-        jobId: job.id,
-        stageOrdinal: 19,
-        stageRole: "bundle-writer",
-        phase: "MATERIALIZE_PROPOSAL",
-        failureClass: "APPLICATION",
-        errorMessage: expect.stringContaining(
-          "references missing finding adjudicator:missing-finding",
-        ),
+        findingKey: "candidate-builder:discarded-intent-1",
+        severity: "IMPORTANT",
+        summary: "A candidate suggestion was kept non-actionable.",
       }),
-    );
-    expect(
-      await database.reviewStep.count({
-        where: { jobId: job.id, ordinal: { gt: 19 }, state: "PENDING" },
-      }),
-    ).toBe(5);
-    expect(
-      await database.auditEvent.findFirst({
-        where: {
-          action: "REVIEW_STAGE_FAILED",
-          subjectId: job.id,
-        },
-      }),
-    ).toMatchObject({
-      payload: expect.objectContaining({
-        reasonCode: "CANDIDATE_FINDING_REFERENCE_INVALID",
-        stageOrdinal: 19,
-      }),
-    });
-    await workflows.cancelReview({
-      actorId: editorOneId,
-      jobId: job.id,
-      reason: "Integration cleanup after materialization failure",
-    });
+    ]);
+    expect(events).toHaveLength(0);
   });
 
   it("atomically rejects all pending suggestions without changing the draft", async () => {
@@ -1078,7 +1326,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
     });
     const automaticId = randomUUID();
     const manualId = randomUUID();
-    const job = await workflows.queueReview({
+    const job = await queueReview({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
@@ -1106,7 +1354,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           problem: "The opening needs a clearer sequence.",
           explanation: "Separates observation from inquiry.",
           rationale: "The sequence keeps the conversation specific.",
-          upstreamFindingIds: ["critic-nvc:rejectable-change-set"],
+          upstreamFindingIds: ["critical-review:rejectable-change-set"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-nvc"],
         },
@@ -1120,7 +1368,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           problem: "A truthful example needs editor context.",
           explanation: "Keeps the contextual choice explicit.",
           rationale: "The evidence does not support inventing an example.",
-          upstreamFindingIds: ["critic-nvc:rejectable-change-set"],
+          upstreamFindingIds: ["critical-review:rejectable-change-set"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-nvc"],
         },
@@ -1134,8 +1382,10 @@ describe("checkout fencing and the complete durable review DAG", () => {
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
       proposalId: proposal.id,
+      revisionId: proposal.currentRevisionId,
+      bundleHash: proposal.currentBundleHash,
     });
-    expect(rejected).toEqual({ state: "REJECTED", rejectedCount: 2 });
+    expect(rejected).toMatchObject({ state: "REJECTED", rejectedCount: 2 });
     expect(
       await database.proposalChange.count({
         where: { proposalId: proposal.id, state: "REJECTED" },
@@ -1169,130 +1419,18 @@ describe("checkout fencing and the complete durable review DAG", () => {
     )?.content.textBody;
     if (!initialRevision || !initialBody)
       throw new Error("Atomic fixture input is unavailable.");
-    const oldContextBody = canonicalText('{"steps":["Listen first."]}');
-    const newContextBody = canonicalText(
-      '{"steps":["Name the pattern, then listen."]}',
-    );
-    const oldContextHash = sha256(oldContextBody);
-    const newContextHash = sha256(newContextBody);
-    await database.contentBlob.createMany({
-      data: [
-        {
-          hash: oldContextHash,
-          encoding: "UTF8",
-          mediaType: "application/json; charset=utf-8",
-          byteLength: new TextEncoder().encode(oldContextBody).byteLength,
-          textBody: oldContextBody,
-        },
-        {
-          hash: newContextHash,
-          encoding: "UTF8",
-          mediaType: "application/json; charset=utf-8",
-          byteLength: new TextEncoder().encode(newContextBody).byteLength,
-          textBody: newContextBody,
-        },
-      ],
-      skipDuplicates: true,
-    });
     const baseBundle = situationBundleSchema.parse(
       initialRevision.bundleManifest,
     );
-    const relationship = {
-      kind: "PRACTICE",
-      logicalId: "practice:atomic-listen",
-      position: 0,
-      contentHash: oldContextHash,
-      visibility: "GLOBAL" as const,
-    };
-    const saved = await workflows.saveDraft({
-      actorId: editorTwoId,
-      checkoutId: created.checkout.id,
-      fence: created.checkout.fence,
-      bundle: {
-        ...baseBundle,
-        relationships: [relationship],
-        contextHashes: [oldContextHash],
-      },
-      body: initialBody,
-      namedCheckpoint: "Atomic candidate base",
-    });
-    const savedWorkspace = await workflows.workspaceForSlug(
-      created.situation.slug,
-    );
-    const savedRevision = savedWorkspace?.drafts[0]?.revisions[0];
-    const savedBody = savedRevision?.artifacts.find(
-      (artifact) => artifact.kind === "SITUATION",
-    )?.content.textBody;
-    if (!savedRevision || !savedBody)
-      throw new Error("Atomic saved revision is unavailable.");
-    const sections = parseSituationSections(savedBody);
+    const sections = parseSituationSections(initialBody);
     const nextTitle = "An atomically accepted structured agent revision";
-    const replacementRelationship = {
-      ...relationship,
-      contentHash: newContextHash,
-    };
     const ids = {
       section: randomUUID(),
       metadata: randomUUID(),
       relationship: randomUUID(),
-      scoped: randomUUID(),
       manual: randomUUID(),
     };
-    const scopedPracticeBody = canonicalJson({
-      id: "situation-follow-up",
-      title: "Ask, reflect, and follow up",
-      description: "Practice a two-step response to a recurring concern.",
-      estimatedTime: "3 minutes",
-      rounds: [
-        {
-          id: "ask",
-          setup: "A direct report names a recurring obstacle.",
-          prompt: "What is your first response?",
-          choices: [
-            {
-              id: "learn",
-              label: "Ask what changed most recently.",
-              consequenceId: "specific-example",
-              consequence: "The conversation moves to observable detail.",
-              explanation: "A specific example slows premature diagnosis.",
-              signal: "toward",
-            },
-            {
-              id: "solve",
-              label: "Offer a solution immediately.",
-              consequenceId: "solution-first",
-              consequence: "The concern is narrowed before it is understood.",
-              explanation: "Learn the shape of the concern before solving it.",
-              signal: "away",
-            },
-          ],
-        },
-        {
-          id: "follow-up",
-          setup: "You understand the example and agree on one next step.",
-          prompt: "How do you close?",
-          choices: [
-            {
-              id: "date",
-              label: "Set a dated follow-up.",
-              consequenceId: "follow-through-visible",
-              consequence: "Both people know when the commitment is reviewed.",
-              explanation: "A dated follow-up makes support observable.",
-              signal: "toward",
-            },
-            {
-              id: "vague",
-              label: "Say you will keep an eye on it.",
-              consequenceId: "ownership-unclear",
-              consequence: "The next move and ownership stay ambiguous.",
-              explanation: "Close with a concrete owner and review point.",
-              signal: "away",
-            },
-          ],
-        },
-      ],
-    });
-    const job = await workflows.queueReview({
+    const job = await queueReview({
       actorId: editorTwoId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
@@ -1322,7 +1460,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           problem: "The conversation opener needs a concrete sequence.",
           explanation: "Adds an observable conversation sequence.",
           rationale: "The sequence keeps facts, impact, and inquiry distinct.",
-          upstreamFindingIds: ["critic-nvc:structured-bundle"],
+          upstreamFindingIds: ["critical-review:structured-bundle"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-nvc"],
         },
@@ -1336,37 +1474,29 @@ describe("checkout fencing and the complete durable review DAG", () => {
           problem: "The title does not describe the revised focus.",
           explanation: "Aligns the title with the revised guidance.",
           rationale: "The typed metadata value remains contract-valid.",
-          upstreamFindingIds: ["critic-nvc:structured-bundle"],
+          upstreamFindingIds: ["critical-review:structured-bundle"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-manager-tools"],
         },
         {
           id: ids.relationship,
           targetKind: "RELATIONSHIP",
-          targetKey: relationship.logicalId,
+          targetKey: "practice:unsupported-global",
           applicationMode: "AUTOMATIC",
-          beforeHash: sha256(canonicalJson(relationship)),
-          afterBody: canonicalJson(replacementRelationship),
+          beforeHash: null,
+          afterBody: canonicalJson({
+            kind: "PRACTICE",
+            logicalId: "practice:unsupported-global",
+            originalLogicalId: "practice:unsupported-global",
+            position: 0,
+            contentHash: "a".repeat(64),
+            visibility: "GLOBAL",
+          }),
           problem: "The linked practice does not match the revised sequence.",
-          explanation: "Points to the retained matching practice bytes.",
+          explanation: "Requests an unsupported global relationship change.",
           rationale:
-            "The replacement content hash already exists in immutable content storage.",
-          upstreamFindingIds: ["critic-nvc:structured-bundle"],
-          writtenByRoleCode: "bundle-writer",
-          evidenceRoleCodes: ["critic-manager-tools"],
-        },
-        {
-          id: ids.scoped,
-          targetKind: "SCOPED_VARIANT",
-          targetKey: `${relationship.logicalId}#situation-follow-up`,
-          applicationMode: "AUTOMATIC",
-          beforeHash: newContextHash,
-          afterBody: scopedPracticeBody,
-          problem: "The shared practice needs situation-specific wording.",
-          explanation: "Creates a provenance-retaining scoped variant.",
-          rationale:
-            "The original logical ID and content hash remain attached to the fork.",
-          upstreamFindingIds: ["critic-nvc:structured-bundle"],
+            "Relationship mutations require an editor to verify the linked content.",
+          upstreamFindingIds: ["critical-review:structured-bundle"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-manager-tools"],
         },
@@ -1381,7 +1511,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
           explanation: "Keeps the unresolved embed visible.",
           rationale:
             "The candidate does not invent unsupported embedded content.",
-          upstreamFindingIds: ["critic-nvc:structured-bundle"],
+          upstreamFindingIds: ["critical-review:structured-bundle"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-nvc"],
         },
@@ -1392,16 +1522,46 @@ describe("checkout fencing and the complete durable review DAG", () => {
     });
     const proposal = await database.reviewProposal.findUniqueOrThrow({
       where: { jobId: job.id },
+      include: { changes: true },
     });
+    const sectionChange = proposal.changes.find(
+      (change) => change.targetKind === "SECTION",
+    );
+    const metadataChange = proposal.changes.find(
+      (change) => change.targetKind === "METADATA",
+    );
+    const relationshipChange = proposal.changes.find(
+      (change) => change.targetKind === "RELATIONSHIP",
+    );
+    const manualChange = proposal.changes.find(
+      (change) => change.targetKind === "EMBED",
+    );
+    if (
+      !sectionChange ||
+      !metadataChange ||
+      !relationshipChange ||
+      !manualChange
+    )
+      throw new Error("Atomic proposal changes are incomplete.");
+    expect(sectionChange).toMatchObject({ applicationMode: "AUTOMATIC" });
+    expect(metadataChange).toMatchObject({ applicationMode: "AUTOMATIC" });
+    expect(relationshipChange).toMatchObject({ applicationMode: "MANUAL" });
+    expect(manualChange).toMatchObject({ applicationMode: "MANUAL" });
+    expect(sectionChange.id).not.toBe(ids.section);
+    expect(metadataChange.id).not.toBe(ids.metadata);
+    expect(relationshipChange.id).not.toBe(ids.relationship);
+    expect(manualChange.id).not.toBe(ids.manual);
     const accepted = await workflows.acceptAllProposalChanges({
       actorId: editorTwoId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
       proposalId: proposal.id,
+      revisionId: proposal.currentRevisionId,
+      bundleHash: proposal.currentBundleHash,
     });
     expect(accepted).toMatchObject({
-      appliedCount: 4,
-      manualRemainingCount: 1,
+      appliedCount: 2,
+      manualRemainingCount: 2,
     });
     expect(
       await database.draftRevision.count({
@@ -1409,15 +1569,17 @@ describe("checkout fencing and the complete durable review DAG", () => {
       }),
     ).toBe(beforeAtomicCount + 1);
     const applied = await database.draftRevision.findUniqueOrThrow({
-      where: { id: accepted.revisionId },
+      where: { id: accepted.authoritativeRevision.revisionId },
       include: { artifacts: { include: { content: true } } },
     });
     const appliedBundle = situationBundleSchema.parse(applied.bundleManifest);
     expect(appliedBundle.metadata.title).toBe(nextTitle);
-    expect(appliedBundle.relationships[0]).toMatchObject({
-      visibility: "SITUATION_SCOPED",
-      contentHash: sha256(canonicalText(scopedPracticeBody)),
-    });
+    expect(
+      appliedBundle.relationships.some(
+        (relationship) =>
+          relationship.logicalId === "practice:unsupported-global",
+      ),
+    ).toBe(false);
     expect(
       applied.artifacts.find((artifact) => artifact.kind === "SITUATION")
         ?.content.textBody,
@@ -1429,22 +1591,31 @@ describe("checkout fencing and the complete durable review DAG", () => {
     ).toHaveLength(1);
     expect(
       await database.proposalChange.findUniqueOrThrow({
-        where: { id: ids.manual },
+        where: { id: manualChange.id },
       }),
     ).toMatchObject({ state: "PENDING", applicationMode: "MANUAL" });
     expect(
       await database.proposalChange.count({
         where: {
           id: {
-            in: [ids.section, ids.metadata, ids.relationship, ids.scoped],
+            in: [sectionChange.id, metadataChange.id],
           },
           state: "ACCEPTED",
-          appliedRevisionId: accepted.revisionId,
+          appliedRevisionId: accepted.authoritativeRevision.revisionId,
         },
       }),
-    ).toBe(4);
+    ).toBe(2);
+    expect(
+      await database.proposalChange.count({
+        where: {
+          id: { in: [relationshipChange.id, manualChange.id] },
+          state: "PENDING",
+          applicationMode: "MANUAL",
+        },
+      }),
+    ).toBe(2);
 
-    const staleJob = await workflows.queueReview({
+    const staleJob = await queueReview({
       actorId: editorTwoId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
@@ -1459,7 +1630,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
     if (!currentRevision || !currentBody)
       throw new Error("Stale candidate input is unavailable.");
     const currentSections = parseSituationSections(currentBody);
-    const staleChangeId = randomUUID();
+    const modelStaleChangeId = randomUUID();
     await completeCandidateReview(staleJob.id, {
       findings: [
         {
@@ -1474,7 +1645,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       ],
       candidateEdits: [
         {
-          id: staleChangeId,
+          id: modelStaleChangeId,
           targetKind: "SECTION",
           targetKey: "The short answer",
           applicationMode: "AUTOMATIC",
@@ -1485,21 +1656,32 @@ describe("checkout fencing and the complete durable review DAG", () => {
           problem: "The reviewed opening was broad.",
           explanation: "Proposes a more specific opening.",
           rationale: "This must not apply after the target changes.",
-          upstreamFindingIds: ["critic-nvc:stale-target"],
+          upstreamFindingIds: ["critical-review:stale-target"],
           writtenByRoleCode: "bundle-writer",
           evidenceRoleCodes: ["critic-nvc"],
         },
       ],
     });
+    const staleProposal = await database.reviewProposal.findUniqueOrThrow({
+      where: { jobId: staleJob.id },
+      include: { changes: true },
+    });
+    const staleChange = staleProposal.changes.find(
+      (change) => change.targetKind === "SECTION",
+    );
+    if (!staleChange) throw new Error("Stale proposal change is missing.");
+    expect(staleChange.id).not.toBe(modelStaleChangeId);
     const manuallyChangedBody = serializeSituationSections({
       ...currentSections,
       "The short answer":
         "The editor changed this exact target after the review.",
     });
-    await workflows.saveDraft({
+    const saved = await workflows.saveDraft({
       actorId: editorTwoId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
+      expectedParentRevisionId: currentRevision.id,
+      expectedParentBundleHash: currentRevision.bundleHash,
       bundle: {
         ...situationBundleSchema.parse(currentRevision.bundleManifest),
         bodyHash: sha256(canonicalText(manuallyChangedBody)),
@@ -1512,16 +1694,282 @@ describe("checkout fencing and the complete durable review DAG", () => {
         actorId: editorTwoId,
         checkoutId: created.checkout.id,
         fence: created.checkout.fence,
-        changeId: staleChangeId,
+        changeId: staleChange.id,
         decision: "ACCEPT",
+        revisionId: saved.id,
+        bundleHash: saved.bundleHash,
       }),
-    ).rejects.toMatchObject({ code: "STALE_SUGGESTION" });
+    ).rejects.toMatchObject({ code: "SUPERSEDED_PROPOSAL" });
     expect(
       await database.proposalChange.findUniqueOrThrow({
-        where: { id: staleChangeId },
+        where: { id: staleChange.id },
       }),
     ).toMatchObject({ state: "PENDING", appliedRevisionId: null });
-    expect(saved.bundleHash).toBe(savedRevision.bundleHash);
+    expect(saved.bundleHash).not.toBe(currentRevision.bundleHash);
+  });
+
+  it("permits one bounded candidate repair before a passing audit", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-review-one-repair",
+      title: "A review that needs one bounded candidate repair",
+    });
+    const job = await queueReview({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    const claim = await claimNextReview(database);
+    expect(claim?.id).toBe(job.id);
+    if (!claim?.claimToken)
+      throw new Error("Repair review did not receive a claim.");
+    let auditAttempts = 0;
+    let builderAttempts = 0;
+    let repairEvidenceIncludedAudit = false;
+    await processClaimedReview(
+      database,
+      job.id,
+      subscriptionConfiguration,
+      claim.claimToken,
+      {
+        runStage: async (request) => {
+          const base = await successfulStage(request);
+          if (request.role === "candidate-builder") {
+            builderAttempts += 1;
+            if (builderAttempts === 2)
+              repairEvidenceIncludedAudit = request.evidence.includes(
+                '"role":"candidate-audit"',
+              );
+          }
+          if (request.role !== "candidate-audit") return base;
+          auditAttempts += 1;
+          const evidence = JSON.parse(request.evidence) as {
+            materializedCandidate?: { candidateHash?: unknown };
+          };
+          const candidateHash = evidence.materializedCandidate?.candidateHash;
+          if (typeof candidateHash !== "string")
+            throw new Error(
+              "Repair audit evidence omitted the candidate hash.",
+            );
+          const output = candidateAuditOutputSchema.parse(
+            auditAttempts === 1
+              ? {
+                  role: "candidate-audit",
+                  summary: "The first candidate retains one blocker.",
+                  findings: [
+                    {
+                      id: "repair-required",
+                      severity: "blocking",
+                      targetKind: "BUNDLE",
+                      targetKey: "candidate",
+                      summary: "The candidate needs one bounded repair.",
+                      rationale:
+                        "The repair pass must see and resolve this exact blocker.",
+                      evidenceRoleCodes: ["candidate-audit"],
+                    },
+                  ],
+                  provenance: "candidate-repair-integration",
+                  candidateHash,
+                  verdict: "REVISE",
+                  blockingFindingIds: ["candidate-audit:repair-required"],
+                }
+              : {
+                  role: "candidate-audit",
+                  summary: "The repaired candidate passes the exact audit.",
+                  findings: [],
+                  provenance: "candidate-repair-integration",
+                  candidateHash,
+                  verdict: "PASS",
+                  blockingFindingIds: [],
+                },
+          );
+          return {
+            ...base,
+            output,
+            outputHash: sha256(JSON.stringify(output)),
+          };
+        },
+      },
+    );
+
+    const completed = await database.reviewJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: {
+        proposal: true,
+        steps: {
+          include: { runs: { orderBy: { attempt: "asc" } } },
+          orderBy: { ordinal: "asc" },
+        },
+      },
+    });
+    expect(completed.state).toBe("SUCCEEDED");
+    expect(completed.proposal).not.toBeNull();
+    expect(builderAttempts).toBe(2);
+    expect(auditAttempts).toBe(2);
+    expect(repairEvidenceIncludedAudit).toBe(true);
+    expect(
+      completed.steps.find((step) => step.roleCode === "candidate-builder")
+        ?.runs,
+    ).toHaveLength(2);
+    expect(
+      completed.steps.find((step) => step.roleCode === "candidate-audit")?.runs,
+    ).toHaveLength(2);
+    expect(
+      await database.auditEvent.count({
+        where: {
+          action: "REVIEW_CANDIDATE_REPAIR_SCHEDULED",
+          subjectId: job.id,
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it("fails after a second blocking audit and releases the global lane", async () => {
+    const blocked = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-review-blocking-audit",
+      title: "A candidate that retains a blocking audit finding",
+    });
+    const blockedJob = await queueReview({
+      actorId: editorOneId,
+      checkoutId: blocked.checkout.id,
+      fence: blocked.checkout.fence,
+    });
+    const claim = await claimNextReview(database);
+    expect(claim?.id).toBe(blockedJob.id);
+    if (!claim?.claimToken)
+      throw new Error("Blocking review did not receive a claim.");
+    let auditAttempts = 0;
+    await processClaimedReview(
+      database,
+      blockedJob.id,
+      subscriptionConfiguration,
+      claim.claimToken,
+      {
+        runStage: async (request) => {
+          const base = await successfulStage(request);
+          if (request.role !== "candidate-audit") return base;
+          auditAttempts += 1;
+          const evidence = JSON.parse(request.evidence) as {
+            materializedCandidate?: { candidateHash?: unknown };
+          };
+          const candidateHash = evidence.materializedCandidate?.candidateHash;
+          if (typeof candidateHash !== "string")
+            throw new Error(
+              "Blocking audit evidence omitted the candidate hash.",
+            );
+          const output = candidateAuditOutputSchema.parse({
+            role: "candidate-audit",
+            summary: "The exact candidate retains a blocking finding.",
+            findings: [
+              {
+                id: "still-blocked",
+                severity: "blocking",
+                targetKind: "BUNDLE",
+                targetKey: "candidate",
+                summary: "The candidate remains unsafe after repair.",
+                rationale:
+                  "A second blocking verdict must prevent proposal creation.",
+                evidenceRoleCodes: ["candidate-audit"],
+              },
+            ],
+            provenance: "candidate-blocking-integration",
+            candidateHash,
+            verdict: "REVISE",
+            blockingFindingIds: ["candidate-audit:still-blocked"],
+          });
+          return {
+            ...base,
+            output,
+            outputHash: sha256(JSON.stringify(output)),
+          };
+        },
+      },
+    );
+
+    const failed = await database.reviewJob.findUniqueOrThrow({
+      where: { id: blockedJob.id },
+      include: { proposal: true },
+    });
+    expect(auditAttempts).toBe(2);
+    expect(failed).toMatchObject({
+      state: "FAILED",
+      failureReasonCode: "CANDIDATE_AUDIT_REVISE",
+      failurePhase: "VALIDATE_CANDIDATE",
+      failureStageRole: "candidate-audit",
+      laneOwner: false,
+      claimToken: null,
+    });
+    expect(failed.proposal).toBeNull();
+
+    const unrelated = await workflows.createSituation({
+      actorId: editorTwoId,
+      slug: "integration-review-after-blocking-audit",
+      title: "An unrelated review after a blocking audit",
+    });
+    const unrelatedJob = await queueReview({
+      actorId: editorTwoId,
+      checkoutId: unrelated.checkout.id,
+      fence: unrelated.checkout.fence,
+    });
+    expect((await claimNextReview(database))?.id).toBe(unrelatedJob.id);
+    await workflows.cancelReview({
+      actorId: editorTwoId,
+      jobId: unrelatedJob.id,
+      revisionId: unrelatedJob.inputRevisionId,
+      bundleHash: unrelatedJob.inputBundleHash,
+      reason: "Blocking audit lane release verified",
+    });
+  });
+
+  it("enforces the total job deadline before starting another model stage", async () => {
+    const created = await workflows.createSituation({
+      actorId: editorOneId,
+      slug: "integration-review-total-deadline",
+      title: "A review that exceeds its total bounded deadline",
+    });
+    const job = await queueReview({
+      actorId: editorOneId,
+      checkoutId: created.checkout.id,
+      fence: created.checkout.fence,
+    });
+    const claim = await claimNextReview(database);
+    expect(claim?.id).toBe(job.id);
+    if (!claim?.claimToken)
+      throw new Error("Deadline review did not receive a claim.");
+    await database.reviewJob.update({
+      where: { id: job.id },
+      data: {
+        startedAt: new Date(Date.now() - REVIEW_TOTAL_DEADLINE_MS - 1_000),
+      },
+    });
+    let stageCalls = 0;
+    await processClaimedReview(
+      database,
+      job.id,
+      subscriptionConfiguration,
+      claim.claimToken,
+      {
+        runStage: async (request) => {
+          stageCalls += 1;
+          return successfulStage(request);
+        },
+      },
+    );
+    const failed = await database.reviewJob.findUniqueOrThrow({
+      where: { id: job.id },
+      include: { proposal: true, steps: { include: { runs: true } } },
+    });
+    expect(stageCalls).toBe(0);
+    expect(failed).toMatchObject({
+      state: "FAILED",
+      failureReasonCode: "REVIEW_JOB_DEADLINE_EXCEEDED",
+      failurePhase: "RUN_STAGE",
+      laneOwner: false,
+      claimToken: null,
+    });
+    expect(failed.proposal).toBeNull();
+    expect(failed.steps.flatMap((step) => step.runs)).toHaveLength(0);
   });
 
   it("durably backs off after a timeout, survives restart, and preserves immutable successful-stage history", async () => {
@@ -1530,7 +1978,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-timeout-recovery",
       title: "A retryable timeout recovery scenario",
     });
-    const queued = await workflows.queueReview({
+    const queued = await queueReview({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
@@ -1545,7 +1993,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
     const runStage = async (
       request: Omit<AdapterRequest, "provider" | "model">,
     ) => {
-      if (request.role === "critic-nvc") {
+      if (request.role === "critical-review") {
         criticAttempts += 1;
         if (criticAttempts === 1) throw doubleTimeoutFailure();
       }
@@ -1615,7 +2063,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
     expect(timingEvents).toContainEqual(
       expect.objectContaining({
         event: "review_stage_provider_timing",
-        stageRole: "critic-nvc",
+        stageRole: "critical-review",
         stageAttempt: 1,
         stageOutcome: "FAILED",
         providerTimeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
@@ -1628,7 +2076,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-waits-for-retry",
       title: "A review waiting behind focused retry work",
     });
-    const waitingJob = await workflows.queueReview({
+    const waitingJob = await queueReview({
       actorId: editorTwoId,
       checkoutId: waiting.checkout.id,
       fence: waiting.checkout.fence,
@@ -1682,7 +2130,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       payload: {
         systemActor: "review-worker",
         stageOrdinal: 2,
-        stageRole: "critic-nvc",
+        stageRole: "critical-review",
         failureClass: "PROVIDER_TRANSIENT",
         attempt: 1,
         maximumAttempts: 3,
@@ -1694,6 +2142,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
     await workflows.cancelReview({
       actorId: editorTwoId,
       jobId: waitingJob.id,
+      revisionId: waitingJob.inputRevisionId,
+      bundleHash: waitingJob.inputBundleHash,
       reason: "Integration cleanup after focused retry proof",
     });
   });
@@ -1704,7 +2154,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-retry-exhaustion",
       title: "An exhausted automatic retry scenario",
     });
-    const queued = await workflows.queueReview({
+    const queued = await queueReview({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
@@ -1768,9 +2218,19 @@ describe("checkout fencing and the complete durable review DAG", () => {
       }),
     ).toBe(2);
 
+    await expect(
+      workflows.retryReview({
+        actorId: editorOneId,
+        jobId: queued.id,
+        revisionId: queued.inputRevisionId,
+        bundleHash: "0".repeat(64),
+      }),
+    ).rejects.toMatchObject({ code: "STALE_REVIEW", status: 409 });
     const manuallyRetried = await workflows.retryReview({
       actorId: editorOneId,
       jobId: queued.id,
+      revisionId: queued.inputRevisionId,
+      bundleHash: queued.inputBundleHash,
     });
     expect(manuallyRetried).toMatchObject({
       state: "QUEUED",
@@ -1779,6 +2239,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
     await workflows.cancelReview({
       actorId: editorOneId,
       jobId: queued.id,
+      revisionId: queued.inputRevisionId,
+      bundleHash: queued.inputBundleHash,
       reason: "Integration cleanup after manual retry proof",
     });
   });
@@ -1789,7 +2251,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-selected-retry-waiting",
       title: "Older work waiting behind a selected retry",
     });
-    const waitingJob = await workflows.queueReview({
+    const waitingJob = await queueReview({
       actorId: editorTwoId,
       checkoutId: waiting.checkout.id,
       fence: waiting.checkout.fence,
@@ -1799,7 +2261,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-selected-retry",
       title: "A historical failed review selected for retry",
     });
-    const selectedJob = await workflows.queueReview({
+    const selectedJob = await queueReview({
       actorId: editorOneId,
       checkoutId: selected.checkout.id,
       fence: selected.checkout.fence,
@@ -1808,12 +2270,6 @@ describe("checkout fencing and the complete durable review DAG", () => {
     if (!failedStep)
       throw new Error("Selected retry fixture has no first step.");
     const failedAt = new Date();
-    const waitingQueuedAt = new Date(failedAt.getTime() - 60_000);
-    const selectedQueuedAt = new Date(failedAt.getTime() - 30_000);
-    await database.reviewJob.update({
-      where: { id: waitingJob.id },
-      data: { queuedAt: waitingQueuedAt },
-    });
     const retainedRun = await database.agentRun.create({
       data: {
         stepId: failedStep.id,
@@ -1843,7 +2299,6 @@ describe("checkout fencing and the complete durable review DAG", () => {
         where: { id: selectedJob.id },
         data: {
           state: "FAILED",
-          queuedAt: selectedQueuedAt,
           finishedAt: failedAt,
           failureCode: "TRANSIENT",
           laneOwner: false,
@@ -1863,13 +2318,15 @@ describe("checkout fencing and the complete durable review DAG", () => {
     const retried = await workflows.retryReview({
       actorId: editorOneId,
       jobId: selectedJob.id,
+      revisionId: selectedJob.inputRevisionId,
+      bundleHash: selectedJob.inputBundleHash,
     });
 
     expect(retried).toMatchObject({
       id: selectedJob.id,
       state: "QUEUED",
       laneOwner: true,
-      queuedAt: selectedQueuedAt,
+      queuedAt: selectedJob.queuedAt,
       finishedAt: null,
       failureCode: null,
     });
@@ -1902,6 +2359,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
     await workflows.cancelReview({
       actorId: editorOneId,
       jobId: selectedJob.id,
+      revisionId: selectedJob.inputRevisionId,
+      bundleHash: selectedJob.inputBundleHash,
       reason: "Integration cleanup after selected retry proof",
     });
     const waitingClaim = await claimNextReview(database);
@@ -1909,6 +2368,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
     await workflows.cancelReview({
       actorId: editorTwoId,
       jobId: waitingJob.id,
+      revisionId: waitingJob.inputRevisionId,
+      bundleHash: waitingJob.inputBundleHash,
       reason: "Integration cleanup after waiting-order proof",
     });
   });
@@ -1919,7 +2380,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-retry-lane-owner",
       title: "A review already holding the focus lane",
     });
-    const focusedJob = await workflows.queueReview({
+    const focusedJob = await queueReview({
       actorId: editorTwoId,
       checkoutId: focused.checkout.id,
       fence: focused.checkout.fence,
@@ -1933,7 +2394,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-retry-lane-conflict",
       title: "A failed review selected during another focus",
     });
-    const selectedJob = await workflows.queueReview({
+    const selectedJob = await queueReview({
       actorId: editorOneId,
       checkoutId: selected.checkout.id,
       fence: selected.checkout.fence,
@@ -1976,6 +2437,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
       workflows.retryReview({
         actorId: editorOneId,
         jobId: selectedJob.id,
+        revisionId: selectedJob.inputRevisionId,
+        bundleHash: selectedJob.inputBundleHash,
       }),
     ).rejects.toMatchObject({
       status: 409,
@@ -2006,11 +2469,15 @@ describe("checkout fencing and the complete durable review DAG", () => {
     await workflows.cancelReview({
       actorId: editorOneId,
       jobId: selectedJob.id,
+      revisionId: selectedJob.inputRevisionId,
+      bundleHash: selectedJob.inputBundleHash,
       reason: "Integration cleanup after retry lane conflict",
     });
     await workflows.cancelReview({
       actorId: editorTwoId,
       jobId: focusedJob.id,
+      revisionId: focusedJob.inputRevisionId,
+      bundleHash: focusedJob.inputBundleHash,
       reason: "Integration cleanup after focused lane conflict",
     });
   });
@@ -2021,7 +2488,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-stale-request-behind-focus",
       title: "A stale request behind the unresolved focused review",
     });
-    const focusedJob = await workflows.queueReview({
+    const focusedJob = await queueReview({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
@@ -2104,6 +2571,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
     await workflows.cancelReview({
       actorId: editorOneId,
       jobId: focusedJob.id,
+      revisionId: focusedJob.inputRevisionId,
+      bundleHash: focusedJob.inputBundleHash,
       reason: "Integration cleanup after stale request proof",
     });
   });
@@ -2114,7 +2583,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-nonretryable",
       title: "A non-retryable authentication failure scenario",
     });
-    const queued = await workflows.queueReview({
+    const queued = await queueReview({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,
@@ -2126,7 +2595,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-waits-for-terminal-resolution",
       title: "A review waiting behind a terminal failure",
     });
-    const waitingJob = await workflows.queueReview({
+    const waitingJob = await queueReview({
       actorId: editorTwoId,
       checkoutId: waiting.checkout.id,
       fence: waiting.checkout.fence,
@@ -2165,7 +2634,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
     });
     expect(failed).toMatchObject({
       state: "FAILED",
-      laneOwner: true,
+      laneOwner: false,
       failureCode: "AUTHENTICATION",
       failureReasonCode: "PROVIDER_AUTHENTICATION",
       retryNotBefore: null,
@@ -2183,18 +2652,21 @@ describe("checkout fencing and the complete durable review DAG", () => {
         },
       }),
     ).toBe(0);
-    expect(await claimNextReview(database, timing)).toBeNull();
-    await workflows.cancelReview({
-      actorId: editorOneId,
-      jobId: queued.id,
-      reason: "Stop failed review and release focused lane",
-    });
     const waitingClaim = await claimNextReview(database, timing);
     expect(waitingClaim?.id).toBe(waitingJob.id);
     await workflows.cancelReview({
       actorId: editorTwoId,
       jobId: waitingJob.id,
+      revisionId: waitingJob.inputRevisionId,
+      bundleHash: waitingJob.inputBundleHash,
       reason: "Integration cleanup after terminal lane proof",
+    });
+    await workflows.cancelReview({
+      actorId: editorOneId,
+      jobId: queued.id,
+      revisionId: queued.inputRevisionId,
+      bundleHash: queued.inputBundleHash,
+      reason: "Integration cleanup after released terminal failure",
     });
   });
 
@@ -2210,7 +2682,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-backoff-cancel",
       title: "A cancelled retry backoff scenario",
     });
-    const cancelledJob = await workflows.queueReview({
+    const cancelledJob = await queueReview({
       actorId: editorOneId,
       checkoutId: cancelledFixture.checkout.id,
       fence: cancelledFixture.checkout.fence,
@@ -2228,6 +2700,8 @@ describe("checkout fencing and the complete durable review DAG", () => {
     await workflows.cancelReview({
       actorId: editorOneId,
       jobId: cancelledJob.id,
+      revisionId: cancelledJob.inputRevisionId,
+      bundleHash: cancelledJob.inputBundleHash,
       reason: "Cancel during durable backoff",
     });
     now = new Date(now.getTime() + 5_000);
@@ -2250,7 +2724,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-backoff-fence",
       title: "A fenced retry backoff scenario",
     });
-    const fencedJob = await workflows.queueReview({
+    const fencedJob = await queueReview({
       actorId: editorTwoId,
       checkoutId: fencedFixture.checkout.id,
       fence: fencedFixture.checkout.fence,
@@ -2290,7 +2764,7 @@ describe("checkout fencing and the complete durable review DAG", () => {
       slug: "integration-review-lease-reclaim",
       title: "A durable review lease reclamation scenario",
     });
-    const queued = await workflows.queueReview({
+    const queued = await queueReview({
       actorId: editorOneId,
       checkoutId: created.checkout.id,
       fence: created.checkout.fence,

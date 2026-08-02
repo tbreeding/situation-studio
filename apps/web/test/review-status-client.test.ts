@@ -11,6 +11,7 @@ import {
 import {
   reviewStatusSnapshotSchema,
   REVIEW_STAGE_TOTAL,
+  REVIEW_STATUS_SCHEMA_VERSION,
   type ReviewJobState,
   type ReviewStatusSnapshot,
 } from "../src/review-status-contract";
@@ -57,7 +58,7 @@ function snapshot(input: {
     };
   });
   return reviewStatusSnapshotSchema.parse({
-    schemaVersion: "review-status-v3",
+    schemaVersion: REVIEW_STATUS_SCHEMA_VERSION,
     reviewJobId: input.reviewJobId ?? firstJobId,
     state,
     completedStages,
@@ -74,7 +75,7 @@ function snapshot(input: {
             attempt: 1,
           },
     laneState:
-      state === "RUNNING" || state === "FAILED"
+      state === "RUNNING"
         ? "FOCUSED"
         : state === "QUEUED"
           ? "WAITING"

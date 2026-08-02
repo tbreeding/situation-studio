@@ -17,14 +17,29 @@ describe("review role prompt policy compatibility", () => {
   });
 
   it("adds the packaged policy to current reviews", () => {
-    const prompt = rolePrompt(
-      "audit-teaching-alignment",
-      REVIEW_POLICY_VERSION,
-    );
+    const prompt = rolePrompt("critical-review", REVIEW_POLICY_VERSION);
 
     expect(prompt).toContain("## Packaged review policy");
     expect(prompt).toContain(REVIEW_POLICY_VERSION);
-    expect(prompt).toContain("Post-draft teaching auditor");
+    expect(prompt).toContain("Nonviolent Communication");
+    expect(prompt).toContain("Manager Tools");
+    expect(prompt).toContain("Emit only typed findings");
+  });
+
+  it("keeps model output declarative and makes the final audit an exact gate", () => {
+    const builder = rolePrompt("candidate-builder", REVIEW_POLICY_VERSION);
+    expect(builder).toContain("changeIntents");
+    expect(builder).toContain(
+      "Never invent IDs, hashes, application modes, or patch operations",
+    );
+    expect(builder).toContain("role-code:finding-id");
+
+    const audit = rolePrompt("candidate-audit", REVIEW_POLICY_VERSION);
+    expect(audit).toContain("exact materializedCandidate");
+    expect(audit).toContain("candidateHash");
+    expect(audit).toContain("verdict PASS");
+    expect(audit).toContain("REVISE");
+    expect(audit).toContain("single bounded repair pass");
   });
 
   it("defines the candidate target grammar for legacy and current jobs", () => {

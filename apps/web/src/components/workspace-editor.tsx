@@ -51,6 +51,12 @@ import {
   type PublicPublicationFailureDetail,
   type PublicationStatusSnapshot,
 } from "@/publication-status-contract";
+import {
+  exactRevisionCommand,
+  reviewRequiresForcedCheckpoint,
+  serverRevisionAdoptionDecision,
+  type EditorRevisionIdentity,
+} from "@/editor-revision-state";
 
 type Metadata = {
   slug: string;
@@ -69,18 +75,34 @@ type Metadata = {
   lastReviewed: string;
   author: string;
   reviewer: string;
+  sourceReferences?: string[];
+  relatedSituationIds?: string[];
+  practiceId?: string;
+  practiceVariant?: string;
+  fieldNotePresent?: true;
+  safetyEscalationNotePresent?: true;
+  reviewStatus?: "human-approved";
   socialHook: string;
   campaignCluster: string;
 };
 
 type Bundle = {
-  schemaVersion: "situation-bundle-v1";
+  schemaVersion: string;
   contractVersion: string;
   validationPolicyVersion: string;
   situationId: string;
   visibility: "PUBLIC" | "RETIRED" | "UNPUBLISHED";
   metadata: Metadata;
   bodyHash: string;
+  managedComponents?: {
+    practiceEmbed: {
+      compact: true;
+      practiceId: string;
+      surface: "situation";
+      variant: string;
+    };
+    preparedAction: { scenario: string; skill: string };
+  };
   artifacts: unknown[];
   relationships: Array<{
     kind: string;
@@ -89,7 +111,7 @@ type Bundle = {
     contentHash: string;
     visibility: string;
   }>;
-  promotion: Record<string, unknown>;
+  promotion: Record<string, unknown> | null;
   contextHashes: string[];
 };
 
@@ -114,6 +136,58 @@ type Review = {
   inputBundleHash: string;
   inputBody: string;
   proposal: ReviewProposalView | null;
+};
+
+type AuthoritativeRevision = {
+  revisionId: string;
+  revision: number;
+  bundleHash: string;
+  bundle: Bundle;
+  body: string;
+  savedAt: string;
+};
+
+type PublicationPreflight = {
+  receiptId: string;
+  revisionId: string;
+  bundleHash: string;
+  candidateHash: string;
+  manifestHash: string;
+  situationArtifactHash: string;
+  baseReleaseId: string;
+  baseManifestHash: string;
+  expectedPointerGeneration: string;
+  contractDigest: string;
+  validationResult: "PASSED";
+  candidatePreview: {
+    schemaVersion: "publishable-situation-projection-v1";
+    visibility: "PUBLIC" | "RETIRED";
+    frontmatter: Metadata;
+    bodyMdx: string;
+    bodyMdxHash: string;
+    managedComponents: Bundle["managedComponents"];
+    relationships: Array<{
+      kind: string;
+      originalLogicalId: string;
+      resolvedLogicalId: string;
+      contentHash: string;
+      visibility: string;
+      position: number;
+    }>;
+    scopedArtifacts: Array<{
+      logicalId: string;
+      contentHash: string;
+      byteLength: number;
+      path: string;
+      visibility?: string;
+      ownerSituationSlug?: string;
+      forkedFromLogicalId?: string;
+      forkedFromContentHash?: string;
+    }>;
+    promotion: Record<string, unknown> | null;
+    [key: string]: unknown;
+  };
+  validatedAt: string;
 };
 
 type ContextItem = {
@@ -237,12 +311,30 @@ function PublicationFailureEvidence({
   );
 }
 
+function replaceManagedAttribute(
+  source: string,
+  component: "PracticeEmbed" | "PreparedAction",
+  attribute: string,
+  value: string,
+) {
+  const pattern = new RegExp(
+    `(<${component}\\b[^>]*\\b${attribute}\\s*=\\s*)(["'])(.*?)(\\2)`,
+    "u",
+  );
+  return source.replace(
+    pattern,
+    (_match, prefix: string, quote: string) =>
+      `${prefix}${quote}${value}${quote}`,
+  );
+}
+
 export function WorkspaceEditor({
   initialTab,
   situation,
   initialBundle,
   initialSections,
   initialBody,
+  initialRevision,
   productionBody,
   sectionNames,
   checkout,
@@ -266,6 +358,12 @@ export function WorkspaceEditor({
   initialBundle: Bundle;
   initialSections: Record<string, string>;
   initialBody: string;
+  initialRevision: {
+    id: string;
+    revision: number;
+    bundleHash: string;
+    savedAt: string;
+  };
   productionBody: string;
   sectionNames: string[];
   checkout: null | {
@@ -321,11 +419,11 @@ export function WorkspaceEditor({
       ? isPublicationWorkspaceLocked(publicationStatus.state)
       : false);
   const workspaceLocked = reviewLocked || publicationLocked;
-  const editable = Boolean(mine && !workspaceLocked);
   const [tab, setTab] = useState<WorkspaceTab>(initialTab);
   const [bundle, setBundle] = useState(initialBundle);
   const [sections, setSections] = useState(initialSections);
   const [rawBody, setRawBody] = useState(initialBody);
+  const [currentRevision, setCurrentRevision] = useState(initialRevision);
   const [rawMode, setRawMode] = useState(false);
   const [saveState, setSaveState] = useState<
     "saved" | "dirty" | "saving" | "error"
@@ -334,6 +432,17 @@ export function WorkspaceEditor({
   const [proposalPending, setProposalPending] = useState(false);
   const [pending, startTransition] = useTransition();
   const [confirmSubmit, setConfirmSubmit] = useState(false);
+  const [preflight, setPreflight] = useState<PublicationPreflight | null>(null);
+  const [preflightPending, setPreflightPending] = useState(false);
+  const [revisionConflict, setRevisionConflict] = useState(false);
+  const editable = Boolean(
+    mine &&
+    !workspaceLocked &&
+    !proposalPending &&
+    !preflightPending &&
+    !pending &&
+    !revisionConflict,
+  );
   const [scopedEdit, setScopedEdit] = useState<{
     item: ContextItem;
     body: string;
@@ -343,6 +452,13 @@ export function WorkspaceEditor({
   );
   const dirtyVersion = useRef(0);
   const savedVersion = useRef(0);
+  const revisionRef = useRef(initialRevision);
+  const saveQueue = useRef<Promise<EditorRevisionIdentity | false>>(
+    Promise.resolve({
+      id: initialRevision.id,
+      bundleHash: initialRevision.bundleHash,
+    }),
+  );
   const submitButton = useRef<HTMLButtonElement>(null);
   const submitDialog = useRef<HTMLDivElement>(null);
   const reviewConnectionGeneration = useRef(0);
@@ -366,6 +482,58 @@ export function WorkspaceEditor({
   });
   const [reviewAnnouncement, setReviewAnnouncement] = useState("");
   const [reviewClock, setReviewClock] = useState(() => Date.now());
+
+  const adoptAuthoritativeRevision = useCallback(
+    (authoritative: AuthoritativeRevision) => {
+      revisionRef.current = {
+        id: authoritative.revisionId,
+        revision: authoritative.revision,
+        bundleHash: authoritative.bundleHash,
+        savedAt: authoritative.savedAt,
+      };
+      setCurrentRevision(revisionRef.current);
+      setBundle(authoritative.bundle);
+      setRawBody(authoritative.body);
+      try {
+        setSections(parseSections(sectionNames, authoritative.body));
+        setRawMode(false);
+      } catch {
+        setRawMode(true);
+      }
+      dirtyVersion.current = 0;
+      savedVersion.current = 0;
+      setRevisionConflict(false);
+      setSaveState("saved");
+      setPreflight(null);
+    },
+    [sectionNames],
+  );
+
+  useEffect(() => {
+    const decision = serverRevisionAdoptionDecision(
+      revisionRef.current,
+      initialRevision,
+      dirtyVersion.current !== savedVersion.current,
+    );
+    if (decision === "UNCHANGED") return;
+    if (decision === "PRESERVE_LOCAL") {
+      setRevisionConflict(true);
+      setPreflight(null);
+      setSaveState("error");
+      setMessage(
+        "A newer authoritative revision arrived while you had unsaved edits. Your local text is preserved. Copy it before reloading to reconcile the revisions.",
+      );
+      return;
+    }
+    adoptAuthoritativeRevision({
+      revisionId: initialRevision.id,
+      revision: initialRevision.revision,
+      bundleHash: initialRevision.bundleHash,
+      bundle: initialBundle,
+      body: initialBody,
+      savedAt: initialRevision.savedAt,
+    });
+  }, [adoptAuthoritativeRevision, initialBody, initialBundle, initialRevision]);
 
   useEffect(() => {
     const generation = ++publicationConnectionGeneration.current;
@@ -524,45 +692,83 @@ export function WorkspaceEditor({
   function markDirty() {
     dirtyVersion.current += 1;
     setSaveState("dirty");
+    setPreflight(null);
+    setConfirmSubmit(false);
   }
 
   const save = useCallback(
-    async (namedCheckpoint = "Autosave") => {
-      if (
-        !checkout ||
-        !editable ||
-        savedVersion.current === dirtyVersion.current
-      )
-        return true;
+    async (namedCheckpoint = "Autosave", forceCheckpoint = false) => {
+      if (!checkout || !editable) return false;
+      if (!forceCheckpoint && savedVersion.current === dirtyVersion.current)
+        return revisionRef.current;
       const version = dirtyVersion.current;
-      setSaveState("saving");
-      const bodyHash = await sha256(body);
-      const nextBundle = { ...bundle, bodyHash };
-      const response = await fetch(`/api/checkouts/${checkout.id}/save`, {
-        method: "PUT",
-        headers: {
-          "content-type": "application/json",
-          "x-csrf-token": csrfToken,
-        },
-        body: JSON.stringify({
-          fence: checkout.fence,
-          bundle: nextBundle,
-          body,
-          namedCheckpoint,
-        }),
+      const capturedBody = body;
+      const capturedBundle = bundle;
+      const queued = saveQueue.current.then(async () => {
+        if (!forceCheckpoint && savedVersion.current >= version)
+          return revisionRef.current;
+        setSaveState("saving");
+        const bodyHash = await sha256(capturedBody);
+        const nextBundle = { ...capturedBundle, bodyHash };
+        const expected = revisionRef.current;
+        const response = await fetch(`/api/checkouts/${checkout.id}/save`, {
+          method: "PUT",
+          headers: {
+            "content-type": "application/json",
+            "x-csrf-token": csrfToken,
+          },
+          body: JSON.stringify({
+            fence: checkout.fence,
+            bundle: nextBundle,
+            body: capturedBody,
+            namedCheckpoint,
+            expectedParentRevisionId: expected.id,
+            expectedParentBundleHash: expected.bundleHash,
+          }),
+        });
+        const payload = (await response.json()) as Partial<
+          AuthoritativeRevision & { error: string }
+        >;
+        if (
+          !response.ok ||
+          !payload.revisionId ||
+          payload.revision === undefined ||
+          !payload.bundleHash ||
+          !payload.bundle ||
+          !payload.body ||
+          !payload.savedAt
+        ) {
+          setSaveState("error");
+          setMessage(payload.error ?? "The draft could not be saved.");
+          return false;
+        }
+        revisionRef.current = {
+          id: payload.revisionId,
+          revision: payload.revision,
+          bundleHash: payload.bundleHash,
+          savedAt: payload.savedAt,
+        };
+        setCurrentRevision(revisionRef.current);
+        savedVersion.current = Math.max(savedVersion.current, version);
+        if (version === dirtyVersion.current) {
+          setBundle(payload.bundle);
+          setRawBody(payload.body);
+          try {
+            setSections(parseSections(sectionNames, payload.body));
+          } catch {
+            setRawMode(true);
+          }
+        }
+        setSaveState(version === dirtyVersion.current ? "saved" : "dirty");
+        return {
+          id: payload.revisionId,
+          bundleHash: payload.bundleHash,
+        };
       });
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        setSaveState("error");
-        setMessage(payload.error ?? "The draft could not be saved.");
-        return false;
-      }
-      savedVersion.current = version;
-      setBundle(nextBundle);
-      setSaveState(version === dirtyVersion.current ? "saved" : "dirty");
-      return true;
+      saveQueue.current = queued.catch(() => false);
+      return queued;
     },
-    [body, bundle, checkout, csrfToken, editable],
+    [body, bundle, checkout, csrfToken, editable, sectionNames],
   );
 
   useEffect(() => {
@@ -624,10 +830,29 @@ export function WorkspaceEditor({
   async function mutate(
     url: string,
     payload: Record<string, unknown> = {},
-    options: { saveFirst?: boolean; redirectHome?: boolean } = {},
+    options: {
+      saveFirst?: boolean;
+      redirectHome?: boolean;
+      exactRevision?: boolean;
+      forceCheckpoint?: boolean;
+    } = {},
   ) {
     setMessage(null);
-    if (options.saveFirst && !(await save("Action checkpoint"))) return;
+    let checkpointRevision: EditorRevisionIdentity | null = null;
+    if (options.saveFirst) {
+      const saved = await save(
+        "Action checkpoint",
+        options.forceCheckpoint ?? false,
+      );
+      if (!saved) return;
+      checkpointRevision = saved;
+      if (dirtyVersion.current !== savedVersion.current) {
+        setMessage(
+          "The draft changed while the action checkpoint was being saved. Save the newer edits before continuing.",
+        );
+        return;
+      }
+    }
     startTransition(async () => {
       try {
         const response = await fetch(url, {
@@ -636,12 +861,21 @@ export function WorkspaceEditor({
             "content-type": "application/json",
             "x-csrf-token": csrfToken,
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            ...payload,
+            ...(options.exactRevision
+              ? exactRevisionCommand(checkpointRevision ?? revisionRef.current)
+              : {}),
+          }),
         });
         const result = (await response.json().catch(() => ({}))) as {
           error?: string;
         };
         if (!response.ok) {
+          if (result.error?.toLowerCase().includes("preflight")) {
+            setPreflight(null);
+            setConfirmSubmit(false);
+          }
           setMessage(result.error ?? "The action could not be completed.");
           return;
         }
@@ -655,6 +889,71 @@ export function WorkspaceEditor({
     });
   }
 
+  async function prepareProductionSubmission() {
+    if (!checkout || preflightPending) return;
+    setMessage(null);
+    setPreflightPending(true);
+    try {
+      if (!(await save("Publication preflight"))) return;
+      if (dirtyVersion.current !== savedVersion.current) {
+        setPreflight(null);
+        setMessage(
+          "The draft changed while it was being saved. Save the newer edits before validating for production.",
+        );
+        return;
+      }
+      const validationVersion = dirtyVersion.current;
+      const expected = revisionRef.current;
+      const response = await fetch(`/api/checkouts/${checkout.id}/preflight`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken,
+        },
+        body: JSON.stringify({
+          fence: checkout.fence,
+          revisionId: expected.id,
+          bundleHash: expected.bundleHash,
+        }),
+      });
+      const result = (await response.json().catch(() => ({}))) as Partial<
+        PublicationPreflight & { error: string }
+      >;
+      if (
+        !response.ok ||
+        !result.receiptId ||
+        result.revisionId !== revisionRef.current.id ||
+        result.bundleHash !== revisionRef.current.bundleHash ||
+        !result.candidateHash ||
+        !result.manifestHash ||
+        !result.situationArtifactHash ||
+        !result.baseReleaseId ||
+        !result.baseManifestHash ||
+        !result.expectedPointerGeneration ||
+        !result.contractDigest ||
+        !result.candidatePreview ||
+        result.validationResult !== "PASSED" ||
+        !result.validatedAt ||
+        dirtyVersion.current !== validationVersion ||
+        savedVersion.current !== validationVersion
+      ) {
+        setPreflight(null);
+        setMessage(result.error ?? "Publication validation did not pass.");
+        return;
+      }
+      const passed = result as PublicationPreflight;
+      setPreflight(passed);
+      setConfirmSubmit(true);
+    } catch {
+      setPreflight(null);
+      setMessage(
+        "Publication validation could not complete. Check the connection and try again.",
+      );
+    } finally {
+      setPreflightPending(false);
+    }
+  }
+
   function updateMetadata<K extends keyof Metadata>(
     key: K,
     value: Metadata[K],
@@ -662,7 +961,67 @@ export function WorkspaceEditor({
     setBundle((current) => ({
       ...current,
       metadata: { ...current.metadata, [key]: value },
+      ...(current.managedComponents && key === "primarySkill"
+        ? {
+            managedComponents: {
+              ...current.managedComponents,
+              preparedAction: {
+                ...current.managedComponents.preparedAction,
+                skill: String(value),
+              },
+            },
+          }
+        : {}),
     }));
+    if (key === "primarySkill")
+      updateManagedBodyAttribute("PreparedAction", "skill", String(value));
+    markDirty();
+  }
+
+  function updateManagedBodyAttribute(
+    component: "PracticeEmbed" | "PreparedAction",
+    attribute: string,
+    value: string,
+  ) {
+    if (rawMode) {
+      setRawBody((current) =>
+        replaceManagedAttribute(current, component, attribute, value),
+      );
+      return;
+    }
+    setSections((current) =>
+      Object.fromEntries(
+        Object.entries(current).map(([name, section]) => [
+          name,
+          replaceManagedAttribute(section, component, attribute, value),
+        ]),
+      ),
+    );
+  }
+
+  function updatePracticeMetadata(
+    key: "practiceId" | "practiceVariant",
+    value: string,
+  ) {
+    setBundle((current) => {
+      if (!current.managedComponents) return current;
+      return {
+        ...current,
+        metadata: { ...current.metadata, [key]: value },
+        managedComponents: {
+          ...current.managedComponents,
+          practiceEmbed: {
+            ...current.managedComponents.practiceEmbed,
+            [key === "practiceId" ? "practiceId" : "variant"]: value,
+          },
+        },
+      };
+    });
+    updateManagedBodyAttribute(
+      "PracticeEmbed",
+      key === "practiceId" ? "practiceId" : "variant",
+      value,
+    );
     markDirty();
   }
 
@@ -672,7 +1031,14 @@ export function WorkspaceEditor({
     payload: Record<string, unknown>,
   ) {
     if (!checkout) return false;
+    if (dirtyVersion.current !== savedVersion.current) {
+      setMessage(
+        "Save or discard your newer edits before deciding a pinned review suggestion.",
+      );
+      return false;
+    }
     setMessage(null);
+    const requestVersion = dirtyVersion.current;
     setProposalPending(true);
     try {
       const response = await fetch(url, {
@@ -681,13 +1047,29 @@ export function WorkspaceEditor({
           "content-type": "application/json",
           "x-csrf-token": csrfToken,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          ...payload,
+          revisionId: revisionRef.current.id,
+          bundleHash: revisionRef.current.bundleHash,
+        }),
       });
-      const result = (await response.json()) as { error?: string };
+      const result = (await response.json()) as {
+        error?: string;
+        authoritativeRevision?: AuthoritativeRevision;
+      };
       if (!response.ok) {
         setMessage(result.error ?? "The agent suggestion could not be saved.");
         return false;
       }
+      if (dirtyVersion.current !== requestVersion) {
+        setSaveState("error");
+        setMessage(
+          "A newer local edit arrived while the suggestion was being applied. Copy that unsaved edit, then reload the authoritative revision before continuing.",
+        );
+        return false;
+      }
+      if (result.authoritativeRevision)
+        adoptAuthoritativeRevision(result.authoritativeRevision);
       router.refresh();
       return true;
     } finally {
@@ -822,7 +1204,10 @@ export function WorkspaceEditor({
                   type="button"
                   disabled={pending}
                   onClick={() =>
-                    void mutate(`/api/reviews/${review.id}/cancel`)
+                    void mutate(`/api/reviews/${review.id}/cancel`, {
+                      revisionId: review.inputRevisionId,
+                      bundleHash: review.inputBundleHash,
+                    })
                   }
                 >
                   Cancel review
@@ -834,7 +1219,10 @@ export function WorkspaceEditor({
                     type="button"
                     disabled={pending || publicationLocked}
                     onClick={() =>
-                      void mutate(`/api/reviews/${review.id}/retry`)
+                      void mutate(`/api/reviews/${review.id}/retry`, {
+                        revisionId: review.inputRevisionId,
+                        bundleHash: review.inputBundleHash,
+                      })
                     }
                   >
                     Retry review
@@ -845,6 +1233,8 @@ export function WorkspaceEditor({
                     disabled={pending || publicationLocked}
                     onClick={() =>
                       void mutate(`/api/reviews/${review.id}/cancel`, {
+                        revisionId: review.inputRevisionId,
+                        bundleHash: review.inputBundleHash,
                         reason: "Editor stopped failed review",
                       })
                     }
@@ -861,7 +1251,13 @@ export function WorkspaceEditor({
                     void mutate(
                       `/api/checkouts/${checkout.id}/review`,
                       { fence: checkout.fence },
-                      { saveFirst: true },
+                      {
+                        saveFirst: true,
+                        exactRevision: true,
+                        forceCheckpoint: reviewRequiresForcedCheckpoint(
+                          bundle.schemaVersion,
+                        ),
+                      },
                     )
                   }
                 >
@@ -935,15 +1331,19 @@ export function WorkspaceEditor({
                 disabled={
                   pending ||
                   workspaceLocked ||
+                  reviewLocked ||
+                  preflightPending ||
                   saveState === "error" ||
                   !publicationBackup.ready
                 }
                 aria-describedby={
                   publicationBackup.ready ? undefined : "publicationBackupBlock"
                 }
-                onClick={() => setConfirmSubmit(true)}
+                onClick={() => void prepareProductionSubmission()}
               >
-                Submit to production
+                {preflightPending
+                  ? "Validating exact candidate…"
+                  : "Submit to production"}
               </button>
             </>
           ) : checkout ? (
@@ -1157,8 +1557,9 @@ export function WorkspaceEditor({
                   ? `Review retrying ${reviewStatus.currentStage?.displayName ?? "the current stage"}.`
                   : "Draft pinned for review."}
               </strong>{" "}
-              Editing returns when the job finishes or is cancelled. Review
-              continues safely on the server.
+              You can keep editing. Review remains pinned to revision{" "}
+              {review?.inputRevisionId.slice(0, 8)} and cannot absorb later
+              saves.
             </div>
           ) : null}
           <div className="editColumn">
@@ -1416,6 +1817,123 @@ export function WorkspaceEditor({
                     }
                   />
                 </label>
+                {bundle.schemaVersion === "situation-bundle-v2" ? (
+                  <>
+                    <label>
+                      <span>Intended runtime visibility</span>
+                      <input value={bundle.visibility} readOnly />
+                      <small>
+                        Studio keeps this revision as a draft until you submit
+                        it; this value is the exact Leadership publication
+                        intent included in its hash.
+                      </small>
+                      {bundle.visibility === "UNPUBLISHED" ? (
+                        <button
+                          className="secondaryButton"
+                          type="button"
+                          disabled={!editable}
+                          onClick={() => {
+                            setBundle((current) => ({
+                              ...current,
+                              visibility: "PUBLIC",
+                            }));
+                            markDirty();
+                          }}
+                        >
+                          Set public intent
+                        </button>
+                      ) : null}
+                    </label>
+                    <label>
+                      <span>Practice ID</span>
+                      <input
+                        value={bundle.metadata.practiceId ?? ""}
+                        readOnly
+                        aria-describedby="practice-id-help"
+                      />
+                      <small id="practice-id-help">
+                        Practice identity is bound to the exact context
+                        relationship. Changing that relationship is currently
+                        manual-only.
+                      </small>
+                    </label>
+                    <label>
+                      <span>Practice variant</span>
+                      <input
+                        value={bundle.metadata.practiceVariant ?? ""}
+                        disabled={!editable}
+                        onBlur={() => void save()}
+                        onChange={(event) =>
+                          updatePracticeMetadata(
+                            "practiceVariant",
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="fieldWide">
+                      <span>Source reference IDs (one per line)</span>
+                      <textarea
+                        rows={3}
+                        value={(bundle.metadata.sourceReferences ?? []).join(
+                          "\n",
+                        )}
+                        disabled={!editable}
+                        onBlur={() => void save()}
+                        onChange={(event) =>
+                          updateMetadata(
+                            "sourceReferences",
+                            event.target.value
+                              .split("\n")
+                              .map((value) => value.trim())
+                              .filter(Boolean),
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="fieldWide">
+                      <span>Related situation IDs (one per line)</span>
+                      <textarea
+                        rows={3}
+                        value={(bundle.metadata.relatedSituationIds ?? []).join(
+                          "\n",
+                        )}
+                        disabled={!editable}
+                        onBlur={() => void save()}
+                        onChange={(event) =>
+                          updateMetadata(
+                            "relatedSituationIds",
+                            event.target.value
+                              .split("\n")
+                              .map((value) => value.trim())
+                              .filter(Boolean),
+                          )
+                        }
+                      />
+                    </label>
+                    <div className="fieldWide contractIdentity" role="note">
+                      <span>Publication contract</span>
+                      <strong>
+                        Human approved · field note present · safety note
+                        present
+                      </strong>
+                      <small>
+                        These authoritative flags are validated with the MDX
+                        component properties on every save and preflight.
+                      </small>
+                    </div>
+                  </>
+                ) : (
+                  <div className="fieldWide contractIdentity" role="note">
+                    <span>Legacy draft</span>
+                    <strong>Synchronization required on next save</strong>
+                    <small>
+                      Studio will import the omitted authoritative fields from
+                      this draft&apos;s exact Leadership base before recording a
+                      v2 revision.
+                    </small>
+                  </div>
+                )}
                 <label className="fieldWide">
                   <span>Social hook</span>
                   <textarea
@@ -1739,7 +2257,8 @@ export function WorkspaceEditor({
               <AgentRevisionReview
                 proposal={review.proposal}
                 inputRevisionId={review.inputRevisionId}
-                currentRevisionId={review.currentRevisionId}
+                currentRevisionId={currentRevision.id}
+                currentBundleHash={currentRevision.bundleHash}
                 inputBundleHash={review.inputBundleHash}
                 checkoutAvailable={Boolean(checkout)}
                 pending={pending || proposalPending}
@@ -2096,7 +2615,7 @@ export function WorkspaceEditor({
         </div>
       ) : null}
 
-      {confirmSubmit && checkout ? (
+      {confirmSubmit && checkout && preflight ? (
         <div className="dialogBackdrop" role="presentation">
           <div
             ref={submitDialog}
@@ -2137,11 +2656,51 @@ export function WorkspaceEditor({
               </div>
               <div>
                 <dt>Validation</dt>
-                <dd className="validationPass">
-                  Ready for exact-hash validation
+                <dd className="validationPass">Validation passed</dd>
+              </div>
+              <div>
+                <dt>Exact publication intent</dt>
+                <dd>{preflight.candidatePreview.visibility}</dd>
+              </div>
+              <div>
+                <dt>Practice</dt>
+                <dd>
+                  {preflight.candidatePreview.managedComponents?.practiceEmbed
+                    .practiceId ?? "None"}
+                  {preflight.candidatePreview.managedComponents?.practiceEmbed
+                    .variant
+                    ? ` · ${preflight.candidatePreview.managedComponents.practiceEmbed.variant}`
+                    : ""}
+                </dd>
+              </div>
+              <div>
+                <dt>Candidate</dt>
+                <dd>
+                  <code>{shortHash(preflight.candidateHash)}</code>
+                </dd>
+              </div>
+              <div>
+                <dt>Leadership base</dt>
+                <dd>
+                  <code>{shortHash(preflight.baseManifestHash)}</code> · gen{" "}
+                  {preflight.expectedPointerGeneration}
                 </dd>
               </div>
             </dl>
+            <details className="candidatePreview">
+              <summary>Review the exact compiled candidate</summary>
+              <p>
+                Canonical MDX hash:{" "}
+                <code>{shortHash(preflight.candidatePreview.bodyMdxHash)}</code>
+                {" · "}
+                {preflight.candidatePreview.relationships.length} relationships
+                {" · "}
+                {preflight.candidatePreview.scopedArtifacts.length} scoped
+                artifacts
+              </p>
+              <h3>Complete compiled projection</h3>
+              <pre>{JSON.stringify(preflight.candidatePreview, null, 2)}</pre>
+            </details>
             <div className="dialogActions">
               <button
                 className="secondaryButton"
@@ -2160,8 +2719,10 @@ export function WorkspaceEditor({
                     `/api/checkouts/${checkout.id}/publish`,
                     {
                       fence: checkout.fence,
+                      preflightReceiptId: preflight.receiptId,
+                      candidateHash: preflight.candidateHash,
                     },
-                    { saveFirst: true },
+                    { exactRevision: true },
                   );
                 }}
               >

@@ -6,7 +6,13 @@ import {
   type PublicationEventKind,
 } from "@situation-studio/db";
 import {
+  PUBLICATION_COMPILER_DIGEST,
+  PUBLICATION_COMPILER_IDENTITY,
   physicalPracticeId,
+  publishableManagedComponentsSchema,
+  publishablePromotionSchema,
+  publishableSituationFrontmatterSchema,
+  publishableSituationRelationshipSchema,
   snapshotManifestSchema as leadershipSnapshotManifestSchema,
   validateCanonicalSnapshot,
   validationPolicyHash as leadershipValidationPolicyHash,
@@ -24,12 +30,15 @@ import {
   bundleHash,
   canonicalJson,
   canonicalText,
+  compilePublishableSituationSnapshot,
   publicationConflictDecision,
   publicationFailureDetailSchema,
+  publishableSituationBundleSchema,
   scopedPracticeSchema,
   scopedSourceSchema,
   sha256,
   situationBundleSchema,
+  toPublishableSituationSnapshot,
   validateSituationBundle,
   type PublicationFailureDetail,
   type SituationBundle,
@@ -69,6 +78,10 @@ type ChangedArtifact = ManifestArtifact & {
   forkedFromContentHash: string | null;
 };
 
+type ExactCandidateArtifact = ManifestArtifact & {
+  bytes: Uint8Array;
+};
+
 export type CandidateSnapshot = {
   publicationId: string;
   releaseId: string;
@@ -86,6 +99,11 @@ export type CandidateSnapshot = {
   targetBundle: SituationBundle;
   sourceKind: string;
   changedArtifacts: ChangedArtifact[];
+  allArtifacts?: ExactCandidateArtifact[];
+  candidateHash?: string;
+  compilerDigest?: string;
+  compiledProjection?: PersistedCompiledProjection;
+  affectedRoutes?: RuntimeRouteExpectation[];
 };
 
 export type RuntimeIdentity = {
@@ -99,6 +117,10 @@ export type RuntimeRouteExpectation = {
   situationSlug: string;
   situationBodyHash: string;
   visibility: "PUBLIC" | "RETIRED";
+  pointerGeneration?: string;
+  routePath?: string;
+  verificationPath?: string;
+  expectedRouteStatus?: 200 | 404;
   practice: {
     authoredId: string;
     resolvedLogicalId: string;
@@ -121,6 +143,7 @@ export class PublisherVerificationError extends Error {
     message: string,
     readonly code:
       "AFFECTED_ROUTE_VERIFICATION_FAILED" | "TYPED_PROJECTION_INVALID",
+    readonly retryable = false,
   ) {
     super(message);
     this.name = "PublisherVerificationError";
@@ -171,7 +194,8 @@ export class PublisherCandidateContractError extends Error {
   readonly code:
     | "CANONICAL_SNAPSHOT_INVALID"
     | "PRACTICE_EMBED_MISMATCH"
-    | "PREPARED_ACTION_MISMATCH";
+    | "PREPARED_ACTION_MISMATCH"
+    | "PREFLIGHT_REQUIRED";
 
   constructor(cause: unknown) {
     super(
@@ -180,11 +204,13 @@ export class PublisherCandidateContractError extends Error {
     );
     this.name = "PublisherCandidateContractError";
     const detail = cause instanceof Error ? cause.message : "";
-    this.code = /PracticeEmbed does not match frontmatter/iu.test(detail)
-      ? "PRACTICE_EMBED_MISMATCH"
-      : /PreparedAction does not match frontmatter/iu.test(detail)
-        ? "PREPARED_ACTION_MISMATCH"
-        : "CANONICAL_SNAPSHOT_INVALID";
+    this.code = /PREFLIGHT_REQUIRED/iu.test(detail)
+      ? "PREFLIGHT_REQUIRED"
+      : /PracticeEmbed does not match frontmatter/iu.test(detail)
+        ? "PRACTICE_EMBED_MISMATCH"
+        : /PreparedAction does not match frontmatter/iu.test(detail)
+          ? "PREPARED_ACTION_MISMATCH"
+          : "CANONICAL_SNAPSHOT_INVALID";
   }
 }
 
@@ -238,6 +264,8 @@ type PublisherDependencies = {
   };
   publicationLeaseHeartbeatMs?: number;
   onRuntimeIdentityProbe?: () => Promise<void> | void;
+  /** Test-only fault boundary for a lost response after Leadership COMMIT. */
+  afterPromotionCommit?: () => Promise<void>;
   afterBoundary?: (boundary: PublisherBoundary) => Promise<void>;
   onFailure?: (error: unknown) => void;
 };
@@ -380,9 +408,103 @@ async function convergedRuntimeIdentity(
   throw failure();
 }
 
+async function convergedRuntimeCapabilities(
+  dependencies: Pick<
+    PublisherDependencies,
+    "runtimeCapabilities" | "runtimeVerification"
+  >,
+  beforeProbe?: () => Promise<void>,
+) {
+  if (!dependencies.runtimeCapabilities)
+    throw new LeadershipCapabilityError(
+      "Leadership runtime capabilities are not configured.",
+      "RUNTIME_CAPABILITY_UNAVAILABLE",
+      true,
+    );
+  const attempts = Math.max(
+    1,
+    Math.floor(dependencies.runtimeVerification?.attempts ?? 24),
+  );
+  const intervalMs = Math.max(
+    0,
+    Math.floor(dependencies.runtimeVerification?.intervalMs ?? 500),
+  );
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await beforeProbe?.();
+      return assertLeadershipRuntimeCompatible(
+        await dependencies.runtimeCapabilities(),
+      );
+    } catch (error) {
+      lastError = error;
+      if (error instanceof LeadershipCapabilityError && !error.retryable)
+        throw error;
+    }
+    if (attempt + 1 < attempts)
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw (
+    lastError ??
+    new LeadershipCapabilityError(
+      "Leadership runtime capabilities remained unavailable.",
+      "RUNTIME_CAPABILITY_UNAVAILABLE",
+      true,
+    )
+  );
+}
+
+async function convergedRuntimeRouteProof(
+  dependencies: Pick<
+    PublisherDependencies,
+    "runtimeRouteProof" | "runtimeVerification"
+  >,
+  expected: RuntimeRouteExpectation,
+  beforeProbe?: () => Promise<void>,
+) {
+  if (!dependencies.runtimeRouteProof)
+    throw new PublisherVerificationError(
+      "Affected-route verification is not configured.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  const attempts = Math.max(
+    1,
+    Math.floor(dependencies.runtimeVerification?.attempts ?? 24),
+  );
+  const intervalMs = Math.max(
+    0,
+    Math.floor(dependencies.runtimeVerification?.intervalMs ?? 500),
+  );
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await beforeProbe?.();
+      return await dependencies.runtimeRouteProof(expected);
+    } catch (error) {
+      lastError = error;
+      if (error instanceof PublisherVerificationError && !error.retryable)
+        throw error;
+    }
+    if (attempt + 1 < attempts)
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw (
+    lastError ??
+    new PublisherVerificationError(
+      "The affected Leadership verification endpoint remained unavailable.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+      true,
+    )
+  );
+}
+
 function routeExpectation(
   candidate: CandidateSnapshot,
 ): RuntimeRouteExpectation {
+  const compiled = candidate.affectedRoutes?.find(
+    (route) => route.situationSlug === candidate.targetSlug,
+  );
+  if (compiled) return compiled;
   const situationArtifact = candidate.changedArtifacts.find(
     (artifact) =>
       artifact.type === "SITUATION" &&
@@ -577,14 +699,121 @@ export async function runtimeRouteProofFromSituationPage(
   };
 }
 
+/**
+ * Legacy HTML proof reader retained for historic receipts. New publications
+ * verify the typed, no-store JSON contract below.
+ */
+export async function runtimeRouteProofFromVerificationEndpoint(
+  healthUrl: string,
+  expected: RuntimeRouteExpectation,
+): Promise<RuntimeRouteProof> {
+  const verificationUrl = new URL(
+    expected.verificationPath ??
+      `/api/v1/verification/${encodeURIComponent(expected.situationSlug)}`,
+    healthUrl,
+  );
+  let response: Response;
+  try {
+    response = await fetch(verificationUrl, {
+      headers: {
+        accept: "application/json",
+        "cache-control": "no-cache",
+      },
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch {
+    throw new PublisherVerificationError(
+      "The affected Leadership verification endpoint was unavailable.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+      true,
+    );
+  }
+  if (!response.ok)
+    throw new PublisherVerificationError(
+      `The affected Leadership verification endpoint returned HTTP ${response.status}.`,
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+      response.status === 404 || response.status >= 500,
+    );
+  if (
+    !response.headers.get("cache-control")?.toLowerCase().includes("no-store")
+  )
+    throw new PublisherVerificationError(
+      "The affected Leadership verification endpoint was cacheable.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  if (
+    !response.headers
+      .get("content-type")
+      ?.toLowerCase()
+      .startsWith("application/json")
+  )
+    throw new PublisherVerificationError(
+      "The affected Leadership verification endpoint did not return JSON.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  const parsed = affectedRouteProofSchema.safeParse(
+    await response.json().catch(() => null),
+  );
+  if (!parsed.success)
+    throw new PublisherVerificationError(
+      "The affected Leadership verification endpoint returned an invalid typed proof.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  const proof = parsed.data;
+  const expectedGeneration = expected.pointerGeneration;
+  const identityIsStale =
+    proof.releaseId !== expected.releaseId ||
+    proof.manifestHash !== expected.manifestHash ||
+    (expectedGeneration !== undefined &&
+      proof.pointerGeneration !== expectedGeneration);
+  if (identityIsStale)
+    throw new PublisherVerificationError(
+      "The affected Leadership verification endpoint has not converged to the expected immutable release.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+      true,
+    );
+  if (
+    proof.slug !== expected.situationSlug ||
+    proof.visibility !== expected.visibility ||
+    proof.situationBodyHash !== expected.situationBodyHash ||
+    canonicalJson(proof.practice) !== canonicalJson(expected.practice)
+  )
+    throw new PublisherVerificationError(
+      "The affected Leadership typed route proof differs from the preflight expectation.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  const expectedHeader = response.headers.get("x-content-release");
+  if (expectedHeader !== expected.manifestHash)
+    throw new PublisherVerificationError(
+      "The affected Leadership proof header differs from its typed body.",
+      "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    );
+  return {
+    code:
+      expected.visibility === "RETIRED"
+        ? "AFFECTED_ROUTE_RETIRED"
+        : "AFFECTED_ROUTE_VERIFIED",
+    httpStatus:
+      expected.expectedRouteStatus ??
+      (expected.visibility === "RETIRED" ? 404 : 200),
+    observedReleaseId: proof.releaseId,
+    observedManifestHash: proof.manifestHash,
+    observedSituationBodyHash: proof.situationBodyHash,
+    observedPracticeLogicalId: proof.practice?.resolvedLogicalId ?? null,
+    observedPracticeContentHash: proof.practice?.contentHash ?? null,
+  };
+}
+
 async function assertPublicationFence(
   studio: DatabaseClient,
   input: {
     jobId: string;
+    claimToken: string;
     situationId: string;
     checkoutId: string;
     checkoutFence: bigint;
-    claimToken?: string;
   },
 ) {
   const [job, checkout, situation] = await Promise.all([
@@ -603,6 +832,7 @@ async function assertPublicationFence(
   ]);
   if (
     !job ||
+    job.claimToken !== input.claimToken ||
     !["ASSEMBLING", "PROMOTING", "VERIFYING"].includes(job.state) ||
     job.checkoutFence !== input.checkoutFence ||
     job.claimToken !== (input.claimToken ?? null) ||
@@ -638,6 +868,110 @@ const manifestSchema = z.object({
       evidence: z.string().min(1),
     }),
   ),
+});
+
+const compiledProjectionSchema = z
+  .object({
+    schemaVersion: z.literal("publishable-situation-projection-v1"),
+    situationId: z.uuid(),
+    releaseId: z.uuid(),
+    publicationId: z.uuid(),
+    visibility: z.enum(["PUBLIC", "RETIRED"]),
+    frontmatter: publishableSituationFrontmatterSchema,
+    bodyMdx: z.string().min(1),
+    bodyMdxHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    situationArtifactHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    managedComponents: publishableManagedComponentsSchema,
+    relationships: z.array(publishableSituationRelationshipSchema),
+    scopedArtifacts: z.array(
+      z
+        .object({
+          logicalId: z.string().min(1).max(240),
+          type: z.enum([
+            "PRACTICE",
+            "GUIDE",
+            "SOURCE",
+            "LESSON_PLAN",
+            "PREPARATION_PROMPT",
+          ]),
+          path: z.string().min(1).max(1_000),
+          visibility: z.enum(["SITUATION_SCOPED", "INTERNAL"]),
+          ownerSituationSlug: z.string().min(1),
+          forkedFromLogicalId: z.string().min(1),
+          forkedFromContentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+          contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+          byteLength: z.number().int().nonnegative(),
+        })
+        .strict(),
+    ),
+    promotion: publishablePromotionSchema.nullable(),
+    persistence: z
+      .object({
+        situation: publishableSituationFrontmatterSchema.safeExtend({
+          studioSituationId: z.uuid(),
+          visibility: z.enum(["PUBLIC", "RETIRED"]),
+          bodyMdx: z.string().min(1),
+          // Scoped practices persist their collision-proof physical identity,
+          // not the authored slug constrained by frontmatter.
+          practiceId: z.string().min(1).max(240),
+          practiceVariant: z.string().min(1).max(160),
+        }),
+        practice: z
+          .object({
+            authoredId: z.string().min(1),
+            resolvedLogicalId: z.string().min(1),
+            contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+            projectedId: z.string().min(1),
+            projectedVariant: z.string().min(1),
+          })
+          .strict(),
+        artifactBindings: z.array(
+          z
+            .object({
+              artifactType: z.enum([
+                "PRACTICE",
+                "GUIDE",
+                "SOURCE",
+                "LESSON_PLAN",
+                "PREPARATION_PROMPT",
+              ]),
+              originalLogicalId: z.string().min(1),
+              resolvedLogicalId: z.string().min(1),
+              visibility: z.enum(["SITUATION_SCOPED", "INTERNAL"]),
+              position: z.number().int().nonnegative(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+  })
+  .strict();
+
+type PersistedCompiledProjection = z.infer<typeof compiledProjectionSchema>;
+
+const affectedRouteProofSchema = z
+  .object({
+    schemaVersion: z.literal("affected-route-proof-json-v1"),
+    slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
+    releaseId: z.uuid(),
+    manifestHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    pointerGeneration: z.string().regex(/^[1-9][0-9]*$/u),
+    visibility: z.enum(["PUBLIC", "RETIRED"]),
+    situationBodyHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    practice: z
+      .object({
+        authoredId: z.string().min(1),
+        resolvedLogicalId: z.string().min(1).max(240),
+        contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+      })
+      .nullable(),
+  })
+  .strict();
+
+const affectedRouteExpectationSchema = affectedRouteProofSchema.extend({
+  routePath: z.string().startsWith("/"),
+  verificationPath: z.string().startsWith("/"),
+  expectedRouteStatus: z.union([z.literal(200), z.literal(404)]),
 });
 
 function jsonInput(value: unknown): Prisma.InputJsonValue {
@@ -703,6 +1037,12 @@ function visibilityForPublication(
 
 function bundleForPublication(bundle: SituationBundle, sourceKind: string) {
   const visibility = visibilityForPublication(bundle, sourceKind);
+  if (bundle.schemaVersion === "situation-bundle-v2")
+    return publishableSituationBundleSchema.parse({
+      ...bundle,
+      visibility,
+      promotion: visibility === "PUBLIC" ? bundle.promotion : null,
+    });
   return situationBundleSchema.parse({
     ...bundle,
     visibility,
@@ -834,12 +1174,27 @@ async function lockPublicationCoordination(
   `;
 }
 
+function requiredClaimToken(claimToken: string) {
+  if (!claimToken) throw new Error("A publication claim token is required.");
+  return claimToken;
+}
+
 async function appendPublicationEvent(
-  transaction: Pick<StudioTransaction, "publicationEvent">,
+  transaction: Prisma.TransactionClient,
   jobId: string,
   kind: PublicationEventKind,
   payload: Record<string, unknown>,
 ) {
+  const duplicates = await transaction.publicationEvent.findMany({
+    where: { jobId, kind },
+    select: { payload: true },
+  });
+  if (
+    duplicates.some(
+      (existing) => canonicalJson(existing.payload) === canonicalJson(payload),
+    )
+  )
+    return;
   const aggregate = await transaction.publicationEvent.aggregate({
     where: { jobId },
     _max: { sequence: true },
@@ -854,6 +1209,8 @@ async function appendPublicationEvent(
   });
 }
 
+const appendEvent = appendPublicationEvent;
+
 async function event(
   studio: DatabaseClient,
   jobId: string,
@@ -863,6 +1220,80 @@ async function event(
   await studio.$transaction((transaction) =>
     appendPublicationEvent(transaction, jobId, kind, payload),
   );
+}
+
+async function claimedEvent(
+  studio: DatabaseClient,
+  jobId: string,
+  claimToken: string,
+  kind: PublicationEventKind,
+  payload: Record<string, unknown>,
+) {
+  await studio.$transaction(async (transaction) => {
+    const owned = await transaction.publicationJob.updateMany({
+      where: {
+        id: jobId,
+        claimToken,
+        state: { in: ["ASSEMBLING", "PROMOTING", "VERIFYING"] },
+      },
+      data: { leaseExpiresAt: new Date(Date.now() + 180_000) },
+    });
+    if (owned.count !== 1)
+      throw new Error("Publication lease was lost to another publisher.");
+    await appendEvent(transaction, jobId, kind, payload);
+  });
+}
+
+async function claimedJobUpdate(
+  studio: DatabaseClient,
+  jobId: string,
+  claimToken: string,
+  data: Prisma.PublicationJobUpdateManyMutationInput,
+  states: Array<"ASSEMBLING" | "PROMOTING" | "VERIFYING"> = [
+    "ASSEMBLING",
+    "PROMOTING",
+    "VERIFYING",
+  ],
+) {
+  const updated = await studio.publicationJob.updateMany({
+    where: { id: jobId, claimToken, state: { in: states } },
+    data,
+  });
+  if (updated.count !== 1)
+    throw new Error("Publication lease was lost to another publisher.");
+}
+
+async function claimedTransitionWithEvent(
+  studio: DatabaseClient,
+  input: {
+    jobId: string;
+    claimToken: string;
+    states?: Array<"ASSEMBLING" | "PROMOTING" | "VERIFYING">;
+    data: Prisma.PublicationJobUpdateManyMutationInput;
+    eventKind: PublicationEventKind;
+    eventPayload: Record<string, unknown>;
+  },
+) {
+  await studio.$transaction(async (transaction) => {
+    const updated = await transaction.publicationJob.updateMany({
+      where: {
+        id: input.jobId,
+        claimToken: input.claimToken,
+        state: {
+          in: input.states ?? ["ASSEMBLING", "PROMOTING", "VERIFYING"],
+        },
+      },
+      data: input.data,
+    });
+    if (updated.count !== 1)
+      throw new Error("Publication lease was lost to another publisher.");
+    await appendEvent(
+      transaction,
+      input.jobId,
+      input.eventKind,
+      input.eventPayload,
+    );
+  });
 }
 
 export async function claimPublicationJob(studio: DatabaseClient) {
@@ -919,9 +1350,8 @@ export async function claimPublicationJob(studio: DatabaseClient) {
 async function renewPublicationLease(
   studio: DatabaseClient,
   jobId: string,
-  claimToken?: string,
+  claimToken: string,
 ) {
-  if (!claimToken) return;
   const renewed = await studio.publicationJob.updateMany({
     where: {
       id: jobId,
@@ -943,7 +1373,7 @@ async function withPublicationLeaseHeartbeat<T>(
     situationId: string;
     checkoutId: string;
     checkoutFence: bigint;
-    claimToken?: string;
+    claimToken: string;
     heartbeatMs?: number;
   },
   operation: (assertAuthority: () => Promise<void>) => Promise<T>,
@@ -996,6 +1426,9 @@ async function loadJob(
       situation: true,
       candidateSnapshot: true,
       receipt: true,
+      preflightReceipt: {
+        include: { artifacts: { orderBy: { position: "asc" } } },
+      },
       targetRevision: {
         include: {
           artifacts: {
@@ -1114,11 +1547,543 @@ function stableObservedBundle(
   );
 }
 
+function utf8ArtifactBody(artifact: ExactCandidateArtifact) {
+  if (artifact.encoding !== "UTF8")
+    throw new PublisherCandidateContractError(
+      new Error(`Publication artifact ${artifact.logicalId} is not UTF-8.`),
+    );
+  return new TextDecoder("utf-8", { fatal: true }).decode(artifact.bytes);
+}
+
+function exactBytesMatch(left: Uint8Array, right: Uint8Array) {
+  if (left.byteLength !== right.byteLength) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+async function immutableLeadershipCompilationBase(
+  leadershipUrl: string,
+  releaseId: string,
+  expectedManifestHash: string,
+) {
+  const leadership = new Client({
+    connectionString: leadershipUrl,
+    application_name: "situation-studio-publisher-preflight-verifier",
+    statement_timeout: 30_000,
+  });
+  await leadership.connect();
+  try {
+    await leadership.query(
+      "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+    );
+    const release = await leadership.query<{
+      manifest_body: string;
+      manifest_hash: string;
+    }>(
+      `
+        SELECT manifest::text AS manifest_body, manifest_hash
+          FROM content_releases
+         WHERE id = $1
+      `,
+      [releaseId],
+    );
+    const row = release.rows[0];
+    if (!row)
+      throw new Error(`Immutable Leadership base ${releaseId} is absent.`);
+    const manifestBody = canonicalJson(JSON.parse(row.manifest_body));
+    if (
+      row.manifest_hash !== expectedManifestHash ||
+      sha256(manifestBody) !== expectedManifestHash
+    )
+      throw new Error(
+        `Immutable Leadership base ${releaseId} differs from the preflight fence.`,
+      );
+    const artifacts = await leadership.query<{
+      content_hash: string;
+      encoding: "UTF8" | "BINARY";
+      text_body: string | null;
+      binary_body: Uint8Array | null;
+    }>(
+      `
+        SELECT membership.content_hash,
+               version.encoding::text,
+               version.text_body,
+               version.binary_body
+          FROM release_artifacts membership
+          JOIN artifact_versions version
+            ON version.id = membership.artifact_version_id
+         WHERE membership.release_id = $1
+         ORDER BY membership.sort_order
+      `,
+      [releaseId],
+    );
+    const bodies = new Map<string, Uint8Array>();
+    for (const artifact of artifacts.rows) {
+      const bytes =
+        artifact.encoding === "UTF8"
+          ? artifact.text_body === null
+            ? null
+            : new TextEncoder().encode(artifact.text_body)
+          : artifact.binary_body === null
+            ? null
+            : Uint8Array.from(artifact.binary_body);
+      if (!bytes)
+        throw new Error(
+          `Immutable Leadership base artifact ${artifact.content_hash} has no exact bytes.`,
+        );
+      if (sha256(bytes) !== artifact.content_hash)
+        throw new Error(
+          `Immutable Leadership base artifact ${artifact.content_hash} failed its content hash.`,
+        );
+      bodies.set(artifact.content_hash, bytes);
+    }
+    await validateCanonicalSnapshot(manifestBody, bodies);
+    await leadership.query("COMMIT");
+    return { releaseId, manifestBody, bodies };
+  } catch (error) {
+    await leadership.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    await leadership.end();
+  }
+}
+
+async function candidateFromPreflight(leadershipUrl: string, job: ClaimedJob) {
+  const receipt = job.preflightReceipt;
+  if (!receipt)
+    throw new Error(
+      "PREFLIGHT_REQUIRED: Publication has no immutable preflight receipt.",
+    );
+  if (
+    job.preflightReceiptId !== receipt.id ||
+    job.publicationId !== receipt.publicationId ||
+    job.situationId !== receipt.situationId ||
+    job.targetRevisionId !== receipt.revisionId ||
+    job.checkoutId !== receipt.checkoutId ||
+    job.checkoutFence !== receipt.checkoutFence ||
+    job.targetBundleHash !== receipt.revisionBundleHash ||
+    job.candidateHash !== receipt.candidateHash ||
+    job.sourceKind !== receipt.sourceKind ||
+    job.legacyPreflightExempt ||
+    receipt.validationResult !== "PASSED" ||
+    receipt.sealedAt === null
+  )
+    throw new PublisherCandidateContractError(
+      new Error("Publication job identity differs from its preflight receipt."),
+    );
+  if (
+    receipt.contractDigest !== PUBLICATION_COMPILER_DIGEST ||
+    canonicalJson(receipt.contractIdentity) !==
+      canonicalJson(PUBLICATION_COMPILER_IDENTITY)
+  )
+    throw new PublisherCandidateContractError(
+      new Error(
+        "Publication compiler identity differs from the pinned contract.",
+      ),
+    );
+  const manifest = manifestSchema.parse(JSON.parse(receipt.manifestBody));
+  if (
+    canonicalJson(manifest) !== receipt.manifestBody ||
+    sha256(receipt.manifestBody) !== receipt.manifestHash ||
+    manifest.source.releaseId !== receipt.releaseId ||
+    manifest.artifacts.length !== receipt.artifactCount ||
+    manifest.edges.length !== receipt.edgeCount
+  )
+    throw new PublisherCandidateContractError(
+      new Error("Preflight manifest evidence is not exact."),
+    );
+  const allArtifacts: ExactCandidateArtifact[] = receipt.artifacts.map(
+    (artifact) => ({
+      logicalId: artifact.logicalId,
+      type: artifact.artifactType,
+      path: artifact.path,
+      contentHash: artifact.contentHash,
+      byteLength: artifact.byteLength,
+      encoding: artifact.encoding,
+      mediaType: artifact.mediaType,
+      bytes: Uint8Array.from(artifact.bytes),
+    }),
+  );
+  const byLogicalId = new Map(
+    allArtifacts.map((artifact) => [artifact.logicalId, artifact]),
+  );
+  if (
+    allArtifacts.length !== receipt.artifactCount ||
+    allArtifacts.reduce(
+      (total, artifact) => total + BigInt(artifact.byteLength),
+      0n,
+    ) !== receipt.totalByteLength
+  )
+    throw new PublisherCandidateContractError(
+      new Error("Preflight artifact count or byte total differs."),
+    );
+  for (const manifestArtifact of manifest.artifacts) {
+    const artifact = byLogicalId.get(manifestArtifact.logicalId);
+    if (
+      !artifact ||
+      canonicalJson({ ...artifact, bytes: undefined }) !==
+        canonicalJson({ ...manifestArtifact, bytes: undefined }) ||
+      artifact.bytes.byteLength !== artifact.byteLength ||
+      sha256(artifact.bytes) !== artifact.contentHash
+    )
+      throw new PublisherCandidateContractError(
+        new Error(
+          `Preflight artifact ${manifestArtifact.logicalId} differs from the manifest or hash.`,
+        ),
+      );
+  }
+  if (byLogicalId.size !== manifest.artifacts.length)
+    throw new PublisherCandidateContractError(
+      new Error("Preflight artifact identities are not one-to-one."),
+    );
+  const rawBundleResult = publishableSituationBundleSchema.safeParse(
+    job.targetRevision.bundleManifest,
+  );
+  const targetBody = job.targetRevision.artifacts.find(
+    (artifact) => artifact.kind === "SITUATION",
+  )?.content.textBody;
+  if (
+    !rawBundleResult.success ||
+    targetBody === null ||
+    targetBody === undefined ||
+    (rawBundleResult.success &&
+      (rawBundleResult.data.situationId !== receipt.situationId ||
+        rawBundleResult.data.metadata.slug !== job.situation.slug ||
+        bundleHash(rawBundleResult.data) !== receipt.revisionBundleHash))
+  )
+    throw new PublisherCandidateContractError(
+      new Error(
+        "Preflight receipt no longer matches its immutable Studio revision.",
+      ),
+    );
+  const rawBundle = rawBundleResult.data;
+  if (
+    (receipt.sourceKind === "RETIRE" && rawBundle.visibility !== "RETIRED") ||
+    ((receipt.sourceKind === "CREATE" ||
+      receipt.sourceKind === "MANUAL" ||
+      receipt.sourceKind === "AGENT_ASSISTED") &&
+      rawBundle.visibility !== "PUBLIC")
+  )
+    throw new PublisherCandidateContractError(
+      new Error(
+        "Publication source kind differs from the sealed revision visibility intent.",
+      ),
+    );
+  const targetBundle = rawBundle;
+  const scopedBodies = new Map<string, string>();
+  for (const scoped of targetBundle.artifacts) {
+    const persisted = byLogicalId.get(scoped.logicalId);
+    if (
+      !persisted ||
+      persisted.type !== scoped.kind ||
+      persisted.path !== scoped.path ||
+      persisted.contentHash !== scoped.contentHash ||
+      persisted.byteLength !== scoped.byteLength ||
+      persisted.encoding !== scoped.encoding ||
+      persisted.mediaType !== scoped.mediaType
+    )
+      throw new PublisherCandidateContractError(
+        new Error(
+          `Exact Studio scoped artifact ${scoped.logicalId} differs from the preflight bytes.`,
+        ),
+      );
+    scopedBodies.set(scoped.logicalId, utf8ArtifactBody(persisted));
+  }
+  let snapshot;
+  try {
+    snapshot = toPublishableSituationSnapshot({
+      bundle: targetBundle,
+      body: targetBody,
+      scopedArtifactBodies: scopedBodies,
+    });
+  } catch (error) {
+    throw new PublisherCandidateContractError(error);
+  }
+  let base;
+  try {
+    base = await immutableLeadershipCompilationBase(
+      leadershipUrl,
+      receipt.baseReleaseId,
+      receipt.baseManifestHash,
+    );
+  } catch (error) {
+    const connectionCode =
+      error && typeof error === "object" && "code" in error
+        ? String(error.code)
+        : null;
+    if (
+      connectionCode &&
+      /^(?:ECONNREFUSED|ECONNRESET|ENETUNREACH|ENOTFOUND|ETIMEDOUT|EAI_AGAIN)$/u.test(
+        connectionCode,
+      )
+    )
+      throw error;
+    throw new PublisherCandidateContractError(error);
+  }
+  const compiled = await compilePublishableSituationSnapshot({
+    snapshot,
+    base,
+    publication: {
+      releaseId: receipt.releaseId,
+      publicationId: receipt.publicationId,
+      parentReleaseId: receipt.baseReleaseId,
+      expectedBaseGeneration: receipt.expectedPointerGeneration,
+      sourceKind: receipt.sourceKind,
+    },
+  });
+  if (!compiled.ok)
+    throw new PublisherCandidateContractError(
+      new Error(
+        `Publisher recompilation rejected the exact Studio revision: ${compiled.diagnostics
+          .map(
+            (diagnostic) =>
+              `${diagnostic.path.join(".") || "snapshot"}: ${diagnostic.message}`,
+          )
+          .join(" ")}`,
+      ),
+    );
+  const projection = compiledProjectionSchema.parse(receipt.compiledProjection);
+  const independentlyCompiledProjection = compiledProjectionSchema.parse(
+    compiled.typedProjection,
+  );
+  if (
+    projection.releaseId !== receipt.releaseId ||
+    projection.publicationId !== receipt.publicationId ||
+    projection.situationId !== receipt.situationId ||
+    projection.frontmatter.slug !== job.situation.slug ||
+    sha256(canonicalText(projection.bodyMdx)) !== projection.bodyMdxHash ||
+    canonicalJson(projection) !== canonicalJson(independentlyCompiledProjection)
+  )
+    throw new PublisherCandidateContractError(
+      new Error(
+        "Preflight typed projection differs from an independent compilation of the exact Studio revision.",
+      ),
+    );
+  if (
+    compiled.compiler.digest !== receipt.contractDigest ||
+    canonicalJson(compiled.compiler.identity) !==
+      canonicalJson(receipt.contractIdentity) ||
+    compiled.candidate.completeCandidateHash !== receipt.candidateHash ||
+    compiled.candidate.manifestHash !== receipt.manifestHash ||
+    compiled.candidate.manifestBody !== receipt.manifestBody ||
+    canonicalJson(compiled.candidate.manifest) !== canonicalJson(manifest) ||
+    compiled.candidate.artifactCount !== receipt.artifactCount ||
+    compiled.candidate.edgeCount !== receipt.edgeCount ||
+    BigInt(compiled.candidate.totalByteLength) !== receipt.totalByteLength
+  )
+    throw new PublisherCandidateContractError(
+      new Error(
+        "Preflight candidate identity differs from an independent compilation of the exact Studio revision.",
+      ),
+    );
+  if (compiled.candidate.artifacts.length !== allArtifacts.length)
+    throw new PublisherCandidateContractError(
+      new Error("The independently compiled artifact set is incomplete."),
+    );
+  for (const [
+    position,
+    compiledArtifact,
+  ] of compiled.candidate.artifacts.entries()) {
+    const persisted = allArtifacts[position];
+    if (
+      !persisted ||
+      canonicalJson({ ...persisted, bytes: undefined }) !==
+        canonicalJson({ ...compiledArtifact, bytes: undefined }) ||
+      !exactBytesMatch(persisted.bytes, compiledArtifact.bytes)
+    )
+      throw new PublisherCandidateContractError(
+        new Error(
+          `Preflight artifact ${compiledArtifact.logicalId} differs from independent compiler output.`,
+        ),
+      );
+  }
+  const changedArtifacts: ChangedArtifact[] =
+    compiled.candidate.changedArtifacts.map((compiledArtifact) => {
+      const persisted = byLogicalId.get(compiledArtifact.logicalId);
+      if (
+        !persisted ||
+        !exactBytesMatch(persisted.bytes, compiledArtifact.bytes)
+      )
+        throw new PublisherCandidateContractError(
+          new Error(
+            `Changed artifact ${compiledArtifact.logicalId} differs from the persisted candidate.`,
+          ),
+        );
+      return {
+        ...persisted,
+        body: utf8ArtifactBody(persisted),
+        visibility: compiledArtifact.visibility,
+        ownerSituationSlug: compiledArtifact.ownerSituationSlug,
+        forkedFromLogicalId: compiledArtifact.forkedFromLogicalId,
+        forkedFromContentHash: compiledArtifact.forkedFromContentHash,
+      };
+    });
+  const rawRoutes = z
+    .array(affectedRouteExpectationSchema)
+    .length(1)
+    .parse(receipt.routeExpectations);
+  const independentlyCompiledRoutes = z
+    .array(affectedRouteExpectationSchema)
+    .length(1)
+    .parse(compiled.affectedRoutes);
+  if (canonicalJson(rawRoutes) !== canonicalJson(independentlyCompiledRoutes))
+    throw new PublisherCandidateContractError(
+      new Error(
+        "Preflight route expectations differ from independent compiler output.",
+      ),
+    );
+  const affectedRoutes: RuntimeRouteExpectation[] = rawRoutes.map((route) => ({
+    releaseId: route.releaseId,
+    manifestHash: route.manifestHash,
+    situationSlug: route.slug,
+    situationBodyHash: route.situationBodyHash,
+    visibility: route.visibility,
+    pointerGeneration: route.pointerGeneration,
+    routePath: route.routePath,
+    verificationPath: route.verificationPath,
+    expectedRouteStatus: route.expectedRouteStatus,
+    practice: route.practice,
+  }));
+  const route = affectedRoutes[0];
+  if (
+    !route ||
+    route.releaseId !== receipt.releaseId ||
+    route.manifestHash !== receipt.manifestHash ||
+    route.pointerGeneration !==
+      (receipt.expectedPointerGeneration + 1n).toString() ||
+    route.situationBodyHash !== projection.situationArtifactHash
+  )
+    throw new PublisherCandidateContractError(
+      new Error("Preflight route expectation differs from the candidate."),
+    );
+  const candidate: CandidateSnapshot = {
+    publicationId: receipt.publicationId,
+    releaseId: receipt.releaseId,
+    parentReleaseId: receipt.baseReleaseId,
+    expectedGeneration: receipt.expectedPointerGeneration,
+    manifest,
+    manifestBody: receipt.manifestBody,
+    manifestHash: receipt.manifestHash,
+    artifactCount: receipt.artifactCount,
+    edgeCount: receipt.edgeCount,
+    totalByteLength: receipt.totalByteLength,
+    targetSlug: job.situation.slug,
+    targetSituationId: job.situationId,
+    targetBody: canonicalText(targetBody),
+    targetBundle,
+    sourceKind: receipt.sourceKind,
+    changedArtifacts,
+    allArtifacts,
+    candidateHash: compiled.candidate.completeCandidateHash,
+    compilerDigest: compiled.compiler.digest,
+    compiledProjection: independentlyCompiledProjection,
+    affectedRoutes,
+  };
+  validateCandidate(candidate);
+  await validateCanonicalSnapshot(
+    candidate.manifestBody,
+    new Map(
+      allArtifacts.map((artifact) => [
+        artifact.contentHash,
+        artifact.bytes.slice(),
+      ]),
+    ),
+  ).catch((error) => {
+    throw new PublisherCandidateContractError(error);
+  });
+  return candidate;
+}
+
+async function persistReceiptBackedCandidateSnapshot(
+  studio: DatabaseClient,
+  job: ClaimedJob,
+  claimToken: string,
+  candidate: CandidateSnapshot,
+) {
+  if (!job.preflightReceiptId) return;
+  if (
+    !candidate.candidateHash ||
+    !candidate.compilerDigest ||
+    !candidate.compiledProjection ||
+    !candidate.allArtifacts
+  )
+    throw new PublisherCandidateContractError(
+      new Error(
+        "The receipt-backed publisher candidate lacks exact snapshot evidence.",
+      ),
+    );
+  const assembly = {
+    schemaVersion: "sealed-preflight-candidate-snapshot-v1",
+    preflightReceiptId: job.preflightReceiptId,
+    candidateHash: candidate.candidateHash,
+    compilerDigest: candidate.compilerDigest,
+    targetSlug: candidate.targetSlug,
+    targetRevisionId: job.targetRevisionId,
+    targetBundleHash: job.targetBundleHash,
+    bodyMdxHash: candidate.compiledProjection.bodyMdxHash,
+    situationArtifactHash: candidate.compiledProjection.situationArtifactHash,
+    artifactIdentities: candidate.allArtifacts.map((artifact, position) => ({
+      logicalId: artifact.logicalId,
+      position,
+      contentHash: artifact.contentHash,
+      byteLength: artifact.byteLength,
+    })),
+    edgeHash: sha256(canonicalJson(candidate.manifest.edges)),
+  };
+  await studio.$transaction(async (transaction) => {
+    const fenced = await transaction.publicationJob.updateMany({
+      where: {
+        id: job.id,
+        claimToken,
+        state: { in: ["ASSEMBLING", "PROMOTING", "VERIFYING"] },
+      },
+      data: { leaseExpiresAt: new Date(Date.now() + 180_000) },
+    });
+    if (fenced.count !== 1)
+      throw new Error("Publication lease was lost to another publisher.");
+    const existing = await transaction.publicationCandidateSnapshot.findUnique({
+      where: { jobId: job.id },
+    });
+    if (existing) {
+      if (
+        existing.releaseId !== candidate.releaseId ||
+        existing.parentReleaseId !== candidate.parentReleaseId ||
+        existing.expectedPointerGeneration !== candidate.expectedGeneration ||
+        existing.manifestHash !== candidate.manifestHash ||
+        existing.manifestBody !== candidate.manifestBody ||
+        existing.artifactCount !== candidate.artifactCount ||
+        existing.edgeCount !== candidate.edgeCount ||
+        existing.totalByteLength !== candidate.totalByteLength ||
+        canonicalJson(existing.assembly) !== canonicalJson(assembly)
+      )
+        throw new PublisherCandidateContractError(
+          new Error(
+            "Persisted publisher snapshot differs from the sealed preflight candidate.",
+          ),
+        );
+      return;
+    }
+    await transaction.publicationCandidateSnapshot.create({
+      data: {
+        jobId: job.id,
+        releaseId: candidate.releaseId,
+        parentReleaseId: candidate.parentReleaseId,
+        expectedPointerGeneration: candidate.expectedGeneration,
+        manifestHash: candidate.manifestHash,
+        manifestBody: candidate.manifestBody,
+        artifactCount: candidate.artifactCount,
+        edgeCount: candidate.edgeCount,
+        totalByteLength: candidate.totalByteLength,
+        assembly: jsonInput(assembly),
+      },
+    });
+  });
+}
+
 async function buildCandidate(
   studio: DatabaseClient,
   leadershipUrl: string,
   job: ClaimedJob,
-  claimToken?: string,
+  claimToken: string,
 ) {
   const bodyArtifact = job.targetRevision.artifacts.find(
     (artifact) => artifact.kind === "SITUATION",
@@ -1146,21 +2111,35 @@ async function buildCandidate(
     observedReleaseId: observed.identity.releaseId,
   });
   if (decision.kind === "NEEDS_REFRESH") {
-    throw new PublisherNeedsRefreshError({
-      observedReleaseId: observed.identity.releaseId,
-      observedBundleHash,
-      baseBundleHash: job.baseBundleHash,
-      expectedPointerGeneration: BigInt(observed.identity.generation),
+    await claimedTransitionWithEvent(studio, {
+      jobId: job.id,
+      claimToken,
+      data: {
+        state: "NEEDS_REFRESH",
+        failureCode: "TARGET_CHANGED",
+        observedReleaseId: observed.identity.releaseId,
+        expectedPointerGeneration: BigInt(observed.identity.generation),
+        finishedAt: new Date(),
+        claimToken: null,
+        leaseExpiresAt: null,
+      },
+      eventKind: "CONFLICTED",
+      eventPayload: {
+        observedReleaseId: observed.identity.releaseId,
+        observedBundleHash,
+        baseBundleHash: job.baseBundleHash,
+      },
     });
+    return null;
   }
 
-  await event(studio, job.id, "POINTER_OBSERVED", {
+  await claimedEvent(studio, job.id, claimToken, "POINTER_OBSERVED", {
     releaseId: observed.identity.releaseId,
     manifestHash: observed.identity.manifestHash,
     generation: observed.identity.generation,
   });
   if (decision.rebase)
-    await event(studio, job.id, "REBASED", {
+    await claimedEvent(studio, job.id, claimToken, "REBASED", {
       fromReleaseId: job.situation.productionReleaseId,
       toReleaseId: observed.identity.releaseId,
     });
@@ -1401,7 +2380,8 @@ async function buildCandidate(
         }),
       },
     });
-    await event(studio, job.id, "SNAPSHOT_BUILT", {
+    await renewPublicationLease(studio, job.id, claimToken);
+    await claimedEvent(studio, job.id, claimToken, "SNAPSHOT_BUILT", {
       releaseId: candidate.releaseId,
       manifestHash: candidate.manifestHash,
       artifactCount: candidate.artifactCount,
@@ -1412,27 +2392,15 @@ async function buildCandidate(
       candidate,
       observed.identity.releaseId,
     );
-    await renewPublicationLease(studio, job.id, claimToken);
-    const transitioned = await studio.publicationJob.updateMany({
-      where: {
-        id: job.id,
-        claimToken: claimToken ?? null,
-        state: { in: ["REQUESTED", "ASSEMBLING", "PROMOTING"] },
-      },
-      data: {
-        observedReleaseId: candidate.parentReleaseId,
-        expectedPointerGeneration: candidate.expectedGeneration,
-        leadershipReleaseId: candidate.releaseId,
-        leadershipManifestHash: candidate.manifestHash,
-        previousReleaseId: candidate.parentReleaseId,
-        state: "PROMOTING",
-      },
+    await claimedJobUpdate(studio, job.id, claimToken, {
+      observedReleaseId: candidate.parentReleaseId,
+      expectedPointerGeneration: candidate.expectedGeneration,
+      leadershipReleaseId: candidate.releaseId,
+      leadershipManifestHash: candidate.manifestHash,
+      previousReleaseId: candidate.parentReleaseId,
+      state: "PROMOTING",
     });
-    if (transitioned.count !== 1)
-      throw new Error(
-        "Publication authority was lost before promotion could begin.",
-      );
-    await event(studio, job.id, "VALIDATED", {
+    await claimedEvent(studio, job.id, claimToken, "VALIDATED", {
       targetBundleHash: job.targetBundleHash,
       manifestHash: candidate.manifestHash,
     });
@@ -1443,6 +2411,13 @@ async function buildCandidate(
 }
 
 export function validateCandidate(candidate: CandidateSnapshot) {
+  if (
+    candidate.candidateHash !== undefined &&
+    (!candidate.compiledProjection || !candidate.affectedRoutes?.length)
+  )
+    throw new Error(
+      "A preflight candidate requires its exact typed projection and route expectations.",
+    );
   assertSafeManagedMdx(
     candidate.targetBody,
     `content/situations/${candidate.targetSlug}.mdx`,
@@ -1466,6 +2441,34 @@ export function validateCandidate(candidate: CandidateSnapshot) {
     manifest.edges.length !== candidate.edgeCount
   )
     throw new Error("Candidate release count metadata differs.");
+  if (candidate.allArtifacts) {
+    if (
+      (candidate.candidateHash !== undefined &&
+        candidate.compilerDigest !== PUBLICATION_COMPILER_DIGEST) ||
+      candidate.allArtifacts.length !== candidate.artifactCount ||
+      candidate.allArtifacts.reduce(
+        (total, artifact) => total + BigInt(artifact.byteLength),
+        0n,
+      ) !== candidate.totalByteLength
+    )
+      throw new Error(
+        "Persisted candidate compiler or artifact totals differ.",
+      );
+    const exactById = new Map(
+      candidate.allArtifacts.map((artifact) => [artifact.logicalId, artifact]),
+    );
+    for (const artifact of manifest.artifacts) {
+      const exact = exactById.get(artifact.logicalId);
+      if (
+        !exact ||
+        sha256(exact.bytes) !== exact.contentHash ||
+        exact.bytes.byteLength !== exact.byteLength
+      )
+        throw new Error(
+          `Persisted artifact ${artifact.logicalId} is not exact.`,
+        );
+    }
+  }
   const edgeKeys = manifest.edges.map(
     (edge) => `${edge.source}\0${edge.type}\0${edge.target}`,
   );
@@ -1486,7 +2489,7 @@ export function validateCandidate(candidate: CandidateSnapshot) {
         `Release edge ${edge.source} -> ${edge.target} is broken.`,
       );
   for (const changed of candidate.changedArtifacts) {
-    if (sha256(canonicalText(changed.body)) !== changed.contentHash)
+    if (sha256(new TextEncoder().encode(changed.body)) !== changed.contentHash)
       throw new Error(`Changed artifact ${changed.logicalId} hash differs.`);
     if (
       changed.visibility !== "GLOBAL" &&
@@ -1506,22 +2509,81 @@ export function validateCandidate(candidate: CandidateSnapshot) {
     throw new Error(bundleValidation.errors.join(" "));
 }
 
-async function insertChangedArtifacts(
+async function insertCandidateArtifacts(
   client: PoolClient | Client,
   candidate: CandidateSnapshot,
 ) {
   const versionIds = new Map<string, string>();
-  for (const artifact of candidate.changedArtifacts) {
-    const identity = await client.query<{ id: string }>(
+  const exactArtifacts =
+    candidate.allArtifacts ??
+    candidate.changedArtifacts.map((artifact) => ({
+      ...artifact,
+      bytes: new TextEncoder().encode(artifact.body),
+    }));
+  const changedById = new Map(
+    candidate.changedArtifacts.map((artifact) => [
+      artifact.logicalId,
+      artifact,
+    ]),
+  );
+  for (const artifact of exactArtifacts) {
+    const changed = changedById.get(artifact.logicalId);
+    const identity = await client.query<{
+      id: string;
+      type: string;
+      canonical_path: string;
+      visibility: "GLOBAL" | "SITUATION_SCOPED" | "INTERNAL";
+      owner_situation_slug: string | null;
+      forked_from_logical_id: string | null;
+      forked_from_content_hash: string | null;
+    }>(
       `
-        SELECT id
+        SELECT id,
+               type::text,
+               canonical_path,
+               visibility::text,
+               owner_situation_slug,
+               forked_from_logical_id,
+               forked_from_content_hash
           FROM content_artifacts
          WHERE logical_id = $1
       `,
       [artifact.logicalId],
     );
     let artifactId = identity.rows[0]?.id;
+    const existingIdentity = identity.rows[0];
+    if (
+      existingIdentity &&
+      (existingIdentity.type !== artifact.type ||
+        existingIdentity.canonical_path !== artifact.path)
+    )
+      throw new PublisherCandidateContractError(
+        new Error(
+          `Artifact identity ${artifact.logicalId} differs from its persisted type or path.`,
+        ),
+      );
+    if (
+      existingIdentity &&
+      changed &&
+      (existingIdentity.visibility !== changed.visibility ||
+        existingIdentity.owner_situation_slug !== changed.ownerSituationSlug ||
+        existingIdentity.forked_from_logical_id !==
+          changed.forkedFromLogicalId ||
+        existingIdentity.forked_from_content_hash !==
+          changed.forkedFromContentHash)
+    )
+      throw new PublisherCandidateContractError(
+        new Error(
+          `Artifact identity ${artifact.logicalId} differs from its persisted visibility or provenance.`,
+        ),
+      );
     if (!artifactId) {
+      if (!changed)
+        throw new PublisherCandidateContractError(
+          new Error(
+            `Carried artifact identity ${artifact.logicalId} is absent from Leadership.`,
+          ),
+        );
       artifactId = crypto.randomUUID();
       await client.query(
         `
@@ -1550,10 +2612,10 @@ async function insertChangedArtifacts(
           artifact.logicalId,
           artifact.type,
           artifact.path,
-          artifact.visibility,
-          artifact.ownerSituationSlug,
-          artifact.forkedFromLogicalId,
-          artifact.forkedFromContentHash,
+          changed.visibility,
+          changed.ownerSituationSlug,
+          changed.forkedFromLogicalId,
+          changed.forkedFromContentHash,
         ],
       );
     }
@@ -1584,20 +2646,24 @@ async function insertChangedArtifacts(
             $1,
             $2,
             $3,
-            'UTF8',
-            $4,
+            $4::"ContentEncoding",
             $5,
             $6,
-            NULL
+            $7,
+            $8
           )
         `,
         [
           versionId,
           artifactId,
           artifact.contentHash,
+          artifact.encoding,
           artifact.mediaType,
           artifact.byteLength,
-          canonicalText(artifact.body),
+          artifact.encoding === "UTF8"
+            ? new TextDecoder("utf-8", { fatal: true }).decode(artifact.bytes)
+            : null,
+          artifact.encoding === "BINARY" ? artifact.bytes : null,
         ],
       );
     }
@@ -1629,6 +2695,13 @@ async function cloneTypedProjection(
         scopedPractice.contentHash,
       )
     : null;
+  const projectedPracticeId =
+    candidate.compiledProjection?.persistence.practice.projectedId ??
+    scopedPracticeId ??
+    ("practiceId" in metadata ? metadata.practiceId : "listen-first");
+  const projectedPracticeVariant =
+    candidate.compiledProjection?.persistence.practice.projectedVariant ??
+    ("practiceVariant" in metadata ? metadata.practiceVariant : "default");
   await executeStatements(
     client,
     `
@@ -1810,20 +2883,13 @@ async function cloneTypedProjection(
         CASE WHEN situation.slug = $3 THEN ($4::jsonb->>'lastReviewed')::date ELSE situation.last_reviewed END,
         CASE WHEN situation.slug = $3 THEN $4::jsonb->>'author' ELSE situation.author_id END,
         CASE WHEN situation.slug = $3 THEN $4::jsonb->>'reviewer' ELSE situation.reviewer_id END,
-        CASE
-          WHEN situation.slug = $3 AND $8::text IS NOT NULL THEN $8
-          ELSE situation.practice_id
-        END,
-        CASE
-          WHEN situation.slug = $3 AND $8::text IS NOT NULL
-            THEN 'situation-scoped'
-          ELSE situation.practice_variant
-        END,
-        situation.field_note_present,
-        situation.safety_escalation_note_present,
+        CASE WHEN situation.slug = $3 THEN $8 ELSE situation.practice_id END,
+        CASE WHEN situation.slug = $3 THEN $9 ELSE situation.practice_variant END,
+        CASE WHEN situation.slug = $3 THEN ($4::jsonb->>'fieldNotePresent')::boolean ELSE situation.field_note_present END,
+        CASE WHEN situation.slug = $3 THEN ($4::jsonb->>'safetyEscalationNotePresent')::boolean ELSE situation.safety_escalation_note_present END,
         CASE WHEN situation.slug = $3 THEN $4::jsonb->>'socialHook' ELSE situation.social_hook END,
         CASE WHEN situation.slug = $3 THEN $4::jsonb->>'campaignCluster' ELSE situation.campaign_cluster END,
-        situation.review_status,
+        CASE WHEN situation.slug = $3 THEN $4::jsonb->>'reviewStatus' ELSE situation.review_status END,
         CASE WHEN situation.slug = $3 THEN $5 ELSE situation.body_mdx END,
         CASE WHEN situation.slug = $3 THEN $6::"SituationVisibility" ELSE situation.visibility END,
         CASE WHEN situation.slug = $3 THEN $7::uuid ELSE situation.studio_situation_id END
@@ -1838,16 +2904,11 @@ async function cloneTypedProjection(
       candidate.targetBody,
       visibility,
       candidate.targetSituationId,
-      scopedPracticeId,
+      projectedPracticeId,
+      projectedPracticeVariant,
     ],
   );
   if (!targetExists.rowCount) {
-    const defaultPractice =
-      scopedPracticeId ??
-      candidate.targetBundle.relationships
-        .find((relationship) => relationship.kind === "PRACTICE")
-        ?.logicalId.replace(/^practice:/u, "") ??
-      "listen-first";
     await client.query(
       `
         INSERT INTO situations (
@@ -1858,29 +2919,26 @@ async function cloneTypedProjection(
           campaign_cluster, review_status, body_mdx, visibility,
           studio_situation_id
         ) VALUES (
-          gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-          $11::date, $12::date, $13, $14, $15, 'default', true, true, $16,
-          $17, 'human-approved', $18, $19::"SituationVisibility", $20::uuid
+          gen_random_uuid(), $1, $2,
+          $3::jsonb->>'title', $3::jsonb->>'description',
+          $3::jsonb->>'stakes', $3::jsonb->>'primarySkill',
+          $3::jsonb->>'preparationTime', $3::jsonb->>'emotionalLoad',
+          $3::jsonb->>'pattern', $3::jsonb->>'scope',
+          ($3::jsonb->>'published')::date,
+          ($3::jsonb->>'lastReviewed')::date,
+          $3::jsonb->>'author', $3::jsonb->>'reviewer', $4, $5,
+          ($3::jsonb->>'fieldNotePresent')::boolean,
+          ($3::jsonb->>'safetyEscalationNotePresent')::boolean,
+          $3::jsonb->>'socialHook', $3::jsonb->>'campaignCluster',
+          $3::jsonb->>'reviewStatus', $6, $7::"SituationVisibility", $8::uuid
         )
       `,
       [
         candidate.releaseId,
         metadata.slug,
-        metadata.title,
-        metadata.description,
-        metadata.stakes,
-        metadata.primarySkill,
-        metadata.preparationTime,
-        metadata.emotionalLoad,
-        metadata.pattern,
-        metadata.scope,
-        metadata.published,
-        metadata.lastReviewed,
-        metadata.author,
-        metadata.reviewer,
-        defaultPractice,
-        metadata.socialHook,
-        metadata.campaignCluster,
+        JSON.stringify(metadata),
+        projectedPracticeId,
+        projectedPracticeVariant,
         candidate.targetBody,
         visibility,
         candidate.targetSituationId,
@@ -1937,7 +2995,22 @@ async function cloneTypedProjection(
         JOIN studio_situation_map source_map
           ON source_map.old_id = relation.source_situation_id
         JOIN studio_situation_map target_map
-          ON target_map.old_id = relation.target_situation_id;
+          ON target_map.old_id = relation.target_situation_id
+        JOIN situations original_source
+          ON original_source.id = relation.source_situation_id
+       WHERE original_source.slug <> $3;
+
+      INSERT INTO situation_relations (
+        source_situation_id, target_situation_id, position
+      )
+      SELECT source.id, target.id, related.ordinality - 1
+        FROM situations source
+        CROSS JOIN LATERAL
+             jsonb_array_elements_text($4::jsonb->'relatedSituationIds')
+               WITH ORDINALITY AS related(slug, ordinality)
+        JOIN situations target
+          ON target.release_id = $2 AND target.slug = related.slug
+       WHERE source.release_id = $2 AND source.slug = $3;
 
       INSERT INTO situation_source_references (
         situation_id, source_id, position
@@ -1952,17 +3025,27 @@ async function cloneTypedProjection(
           ON original_situation.id = reference.situation_id
         JOIN sources original_source
           ON original_source.id = reference.source_id
-       WHERE NOT (
-         original_situation.slug = $3
-         AND ('source:' || original_source.source_id) = ANY($5::varchar[])
-       );
+       WHERE original_situation.slug <> $3;
+
+      INSERT INTO situation_source_references (
+        situation_id, source_id, position
+      )
+      SELECT target.id, source.id, reference.ordinality - 1
+        FROM situations target
+        CROSS JOIN LATERAL
+             jsonb_array_elements_text($4::jsonb->'sourceReferences')
+               WITH ORDINALITY AS reference(source_id, ordinality)
+        JOIN sources source
+          ON source.release_id = $2
+         AND source.source_id = reference.source_id
+         AND source.visibility = 'GLOBAL'
+       WHERE target.release_id = $2 AND target.slug = $3;
     `,
     [
       candidate.parentReleaseId,
       candidate.releaseId,
       candidate.targetSlug,
       JSON.stringify(metadata),
-      scopedOriginals,
     ],
   );
 
@@ -2043,22 +3126,12 @@ async function cloneTypedProjection(
     ],
   );
 
-  const promotion =
-    Object.keys(candidate.targetBundle.promotion).length > 0
-      ? candidate.targetBundle.promotion
-      : {
-          status: "human-review-required",
-          canonical: `/situations/${candidate.targetSlug}`,
-          socialDrafts: [metadata.socialHook],
-          scenarioQuestion: `What would you do next in ${metadata.title}?`,
-          pullQuoteIdea: metadata.socialHook,
-          utm: {
-            campaign: metadata.campaignCluster,
-            content: candidate.targetSlug.replaceAll("-", "_"),
-          },
-          ogPreview: `/situations/${candidate.targetSlug}/opengraph-image`,
-        };
-  if (visibility === "PUBLIC")
+  const promotion = candidate.targetBundle.promotion;
+  if (visibility === "PUBLIC") {
+    if (!promotion)
+      throw new PublisherCandidateContractError(
+        new Error("A public candidate has no exact promotion packet."),
+      );
     await client.query(
       `
         INSERT INTO promotion_packets (
@@ -2071,26 +3144,16 @@ async function cloneTypedProjection(
       [
         candidate.releaseId,
         candidate.targetSlug,
-        String(promotion.status ?? "human-review-required"),
-        String(promotion.canonical ?? `/situations/${candidate.targetSlug}`),
-        JSON.stringify(promotion.socialDrafts ?? [metadata.socialHook]),
-        String(
-          promotion.scenarioQuestion ??
-            `What would you do next in ${metadata.title}?`,
-        ),
-        String(promotion.pullQuoteIdea ?? metadata.socialHook),
-        JSON.stringify(
-          promotion.utm ?? {
-            campaign: metadata.campaignCluster,
-            content: candidate.targetSlug.replaceAll("-", "_"),
-          },
-        ),
-        String(
-          promotion.ogPreview ??
-            `/situations/${candidate.targetSlug}/opengraph-image`,
-        ),
+        promotion.status,
+        promotion.canonical,
+        JSON.stringify(promotion.socialDrafts),
+        promotion.scenarioQuestion,
+        promotion.pullQuoteIdea,
+        JSON.stringify(promotion.utm),
+        promotion.ogPreview,
       ],
     );
+  }
 
   await insertScopedProjection(client, candidate);
 }
@@ -2122,6 +3185,11 @@ async function insertScopedProjection(
       throw new Error(
         `Scoped projection ${variant.logicalId} lacks provenance.`,
       );
+    const exactBinding =
+      candidate.compiledProjection?.persistence.artifactBindings.find(
+        (binding) => binding.resolvedLogicalId === variant.logicalId,
+      );
+    const exactBindingPosition = exactBinding?.position ?? bindingPosition;
     await client.query(
       `
         INSERT INTO situation_artifact_bindings (
@@ -2139,9 +3207,10 @@ async function insertScopedProjection(
         variant.forkedFromLogicalId,
         variant.logicalId,
         variant.visibility,
-        bindingPosition++,
+        exactBindingPosition,
       ],
     );
+    bindingPosition = Math.max(bindingPosition + 1, exactBindingPosition + 1);
     if (variant.type === "PRACTICE") {
       const practice = scopedPracticeSchema.parse(JSON.parse(variant.body));
       const practiceId = crypto.randomUUID();
@@ -2343,6 +3412,135 @@ async function insertScopedProjection(
   }
 }
 
+async function assertLeadershipReleaseMatchesCandidate(
+  client: Client,
+  candidate: CandidateSnapshot,
+) {
+  if (!candidate.allArtifacts)
+    throw new PublisherCandidateContractError(
+      new Error(
+        "Exact persisted candidate bytes are required for release reconciliation.",
+      ),
+    );
+  const release = await client.query<{
+    manifest_body: string;
+    manifest_hash: string;
+    studio_publication_id: string | null;
+    artifact_count: number;
+    edge_count: number;
+    total_byte_length: string;
+  }>(
+    `
+      SELECT manifest::text AS manifest_body,
+             manifest_hash,
+             studio_publication_id,
+             artifact_count,
+             edge_count,
+             total_byte_length::text
+        FROM content_releases
+       WHERE id = $1
+    `,
+    [candidate.releaseId],
+  );
+  const persistedRelease = release.rows[0];
+  if (
+    !persistedRelease ||
+    canonicalJson(JSON.parse(persistedRelease.manifest_body)) !==
+      candidate.manifestBody ||
+    persistedRelease.manifest_hash !== candidate.manifestHash ||
+    persistedRelease.studio_publication_id !== candidate.publicationId ||
+    persistedRelease.artifact_count !== candidate.artifactCount ||
+    persistedRelease.edge_count !== candidate.edgeCount ||
+    BigInt(persistedRelease.total_byte_length) !== candidate.totalByteLength
+  )
+    throw new PublisherCandidateContractError(
+      new Error(
+        "The persisted Leadership release identity differs from preflight.",
+      ),
+    );
+  const artifacts = await client.query<{
+    logical_id: string;
+    type: string;
+    canonical_path: string;
+    content_hash: string;
+    byte_length: number;
+    encoding: "UTF8" | "BINARY";
+    media_type: string;
+    text_body: string | null;
+    binary_body: Uint8Array | null;
+    visibility: "GLOBAL" | "SITUATION_SCOPED" | "INTERNAL";
+    owner_situation_slug: string | null;
+    forked_from_logical_id: string | null;
+    forked_from_content_hash: string | null;
+  }>(
+    `
+      SELECT membership.logical_id,
+             membership.type::text,
+             membership.canonical_path,
+             membership.content_hash,
+             membership.byte_length,
+             version.encoding::text,
+             version.media_type,
+             version.text_body,
+             version.binary_body,
+             identity.visibility::text,
+             identity.owner_situation_slug,
+             identity.forked_from_logical_id,
+             identity.forked_from_content_hash
+        FROM release_artifacts membership
+        JOIN artifact_versions version
+          ON version.id = membership.artifact_version_id
+        JOIN content_artifacts identity
+          ON identity.id = version.artifact_id
+       WHERE membership.release_id = $1
+       ORDER BY membership.sort_order
+    `,
+    [candidate.releaseId],
+  );
+  if (artifacts.rows.length !== candidate.allArtifacts.length)
+    throw new PublisherCandidateContractError(
+      new Error("The persisted Leadership artifact set is incomplete."),
+    );
+  for (const [position, expected] of candidate.allArtifacts.entries()) {
+    const persisted = artifacts.rows[position];
+    const changed = candidate.changedArtifacts.find(
+      (artifact) => artifact.logicalId === expected.logicalId,
+    );
+    const bytes =
+      persisted?.encoding === "UTF8"
+        ? persisted.text_body === null
+          ? null
+          : new TextEncoder().encode(persisted.text_body)
+        : persisted?.binary_body === null ||
+            persisted?.binary_body === undefined
+          ? null
+          : Uint8Array.from(persisted.binary_body);
+    if (
+      !persisted ||
+      persisted.logical_id !== expected.logicalId ||
+      persisted.type !== expected.type ||
+      persisted.canonical_path !== expected.path ||
+      persisted.content_hash !== expected.contentHash ||
+      persisted.byte_length !== expected.byteLength ||
+      persisted.encoding !== expected.encoding ||
+      persisted.media_type !== expected.mediaType ||
+      (changed !== undefined &&
+        (persisted.visibility !== changed.visibility ||
+          persisted.owner_situation_slug !== changed.ownerSituationSlug ||
+          persisted.forked_from_logical_id !== changed.forkedFromLogicalId ||
+          persisted.forked_from_content_hash !==
+            changed.forkedFromContentHash)) ||
+      !bytes ||
+      !exactBytesMatch(bytes, expected.bytes)
+    )
+      throw new PublisherCandidateContractError(
+        new Error(
+          `Persisted Leadership artifact ${expected.logicalId} differs from the immutable preflight bytes.`,
+        ),
+      );
+  }
+}
+
 async function insertAndPromote(
   client: Client,
   candidate: CandidateSnapshot,
@@ -2372,6 +3570,7 @@ async function insertAndPromote(
         existingRelease.manifest_hash !== candidate.manifestHash
       )
         throw new Error("Publication id maps to a different release.");
+      await assertLeadershipReleaseMatchesCandidate(client, candidate);
       const pointer = await client.query<{
         release_id: string;
         generation: string;
@@ -2470,44 +3669,15 @@ async function insertAndPromote(
         }),
       ],
     );
-    const versionIds = await insertChangedArtifacts(client, candidate);
-    const changedIds = new Set(
-      candidate.changedArtifacts.map((item) => item.logicalId),
-    );
-    const existingMemberships = await client.query<{
-      artifact_version_id: string;
-      logical_id: string;
-      canonical_path: string;
-      type: string;
-      content_hash: string;
-      byte_length: number;
-      sort_order: number;
-    }>(
-      `
-        SELECT artifact_version_id, logical_id, canonical_path, type::text,
-               content_hash, byte_length, sort_order
-          FROM release_artifacts
-         WHERE release_id = $1
-         ORDER BY sort_order
-      `,
-      [candidate.parentReleaseId],
-    );
-    const memberships = [
-      ...existingMemberships.rows.filter(
-        (membership) => !changedIds.has(membership.logical_id),
-      ),
-      ...candidate.changedArtifacts.map((artifact) => ({
-        artifact_version_id: versionIds.get(artifact.logicalId) ?? "",
-        logical_id: artifact.logicalId,
-        canonical_path: artifact.path,
-        type: artifact.type,
-        content_hash: artifact.contentHash,
-        byte_length: artifact.byteLength,
-        sort_order: 0,
-      })),
-    ].sort((left, right) =>
-      left.canonical_path.localeCompare(right.canonical_path),
-    );
+    const versionIds = await insertCandidateArtifacts(client, candidate);
+    const memberships = candidate.manifest.artifacts.map((artifact) => ({
+      artifact_version_id: versionIds.get(artifact.logicalId) ?? "",
+      logical_id: artifact.logicalId,
+      canonical_path: artifact.path,
+      type: artifact.type,
+      content_hash: artifact.contentHash,
+      byte_length: artifact.byteLength,
+    }));
     for (const [sortOrder, membership] of memberships.entries())
       await client.query(
         `
@@ -2545,6 +3715,7 @@ async function insertAndPromote(
         ],
       );
     await cloneTypedProjection(client, candidate);
+    await assertLeadershipReleaseMatchesCandidate(client, candidate);
     await client.query(
       `
         SELECT *
@@ -2599,6 +3770,48 @@ async function databaseIdentity(client: Client) {
   };
 }
 
+async function reconcileAmbiguousPromotion(
+  leadershipUrl: string,
+  candidate: CandidateSnapshot,
+) {
+  const client = new Client({
+    connectionString: leadershipUrl,
+    application_name: "situation-studio-publisher-commit-reconciler",
+    statement_timeout: 30_000,
+  });
+  await client.connect();
+  try {
+    const release = await client.query<{ id: string; manifest_hash: string }>(
+      `
+        SELECT id, manifest_hash
+          FROM content_releases
+         WHERE studio_publication_id = $1
+      `,
+      [candidate.publicationId],
+    );
+    const pointer = await databaseIdentity(client);
+    const observedRelease = release.rows[0];
+    if (
+      observedRelease &&
+      (observedRelease.id !== candidate.releaseId ||
+        observedRelease.manifest_hash !== candidate.manifestHash)
+    )
+      throw new PublisherCandidateContractError(
+        new Error("Publication id maps to different Leadership release bytes."),
+      );
+    return {
+      releaseExists: Boolean(observedRelease),
+      promoted:
+        observedRelease?.id === candidate.releaseId &&
+        pointer.releaseId === candidate.releaseId &&
+        pointer.manifestHash === candidate.manifestHash,
+      pointer,
+    };
+  } finally {
+    await client.end();
+  }
+}
+
 export async function reconcilePublicationRecovery(
   dependencies: PublisherDependencies,
 ) {
@@ -2607,6 +3820,7 @@ export async function reconcilePublicationRecovery(
     orderBy: { createdAt: "asc" },
     include: {
       candidateSnapshot: true,
+      preflightReceipt: true,
       targetRevision: { select: { actorId: true } },
     },
   });
@@ -2625,9 +3839,11 @@ export async function reconcilePublicationRecovery(
   try {
     for (const recovery of recoveries) {
       const snapshot = recovery.candidateSnapshot;
-      if (!snapshot) continue;
+      const parentReleaseId =
+        recovery.preflightReceipt?.baseReleaseId ?? snapshot?.parentReleaseId;
+      if (!parentReleaseId) continue;
       const restored = await databaseIdentity(leadership);
-      if (restored.releaseId !== snapshot.parentReleaseId) continue;
+      if (restored.releaseId !== parentReleaseId) continue;
       let runtime: RuntimeIdentity;
       try {
         runtime = await convergedRuntimeIdentity(dependencies, {
@@ -2645,11 +3861,32 @@ export async function reconcilePublicationRecovery(
       )
         continue;
       const reconciledAt = new Date();
+      const recoveryToken = crypto.randomUUID();
+      const claimed = await dependencies.studio.publicationJob.updateMany({
+        where: {
+          id: recovery.id,
+          state: "RECOVERY_REQUIRED",
+          OR: [
+            { claimToken: null },
+            { leaseExpiresAt: null },
+            { leaseExpiresAt: { lt: new Date() } },
+          ],
+        },
+        data: {
+          claimToken: recoveryToken,
+          leaseExpiresAt: new Date(Date.now() + 180_000),
+        },
+      });
+      if (claimed.count !== 1) continue;
       const changed = await dependencies.studio.$transaction(
         async (transaction) => {
           await lockPublicationCoordination(transaction);
           const updated = await transaction.publicationJob.updateMany({
-            where: { id: recovery.id, state: "RECOVERY_REQUIRED" },
+            where: {
+              id: recovery.id,
+              state: "RECOVERY_REQUIRED",
+              claimToken: recoveryToken,
+            },
             data: {
               state: "RESTORED",
               finishedAt: reconciledAt,
@@ -2670,22 +3907,11 @@ export async function reconcilePublicationRecovery(
               }),
             },
           });
-          const aggregate = await transaction.publicationEvent.aggregate({
-            where: { jobId: recovery.id },
-            _max: { sequence: true },
-          });
-          await transaction.publicationEvent.create({
-            data: {
-              jobId: recovery.id,
-              sequence: (aggregate._max.sequence ?? 0) + 1,
-              kind: "RESTORED",
-              payload: jsonInput({
-                releaseId: restored.releaseId,
-                manifestHash: restored.manifestHash,
-                generation: restored.generation.toString(),
-                reconciledAfterRuntimeConvergence: true,
-              }),
-            },
+          await appendEvent(transaction, recovery.id, "RESTORED", {
+            releaseId: restored.releaseId,
+            manifestHash: restored.manifestHash,
+            generation: restored.generation.toString(),
+            reconciledAfterRuntimeConvergence: true,
           });
           await transaction.auditEvent.create({
             data: {
@@ -2737,8 +3963,8 @@ async function restorePrevious(
 async function finalizeSuccess(
   studio: DatabaseClient,
   job: ClaimedJob,
+  claimToken: string,
   attemptId: string,
-  claimToken: string | undefined,
   candidate: CandidateSnapshot,
   identity: { releaseId: string; manifestHash: string; generation: bigint },
   runtime: RuntimeIdentity,
@@ -2767,7 +3993,7 @@ async function finalizeSuccess(
       if (
         currentJob.checkoutFence !== job.checkoutFence ||
         currentJob.state !== "VERIFYING" ||
-        currentJob.claimToken !== (claimToken ?? null) ||
+        currentJob.claimToken !== claimToken ||
         !checkout ||
         checkout.releasedAt ||
         checkout.fence !== job.checkoutFence ||
@@ -2775,22 +4001,40 @@ async function finalizeSuccess(
         situation.fence !== job.checkoutFence
       )
         throw new Error("Late publisher result was fenced.");
-      const observation =
-        (await transaction.leadershipReleaseObservation.findUnique({
+      let observation =
+        await transaction.leadershipReleaseObservation.findUnique({
           where: { releaseId: candidate.releaseId },
-        })) ??
-        (await transaction.leadershipReleaseObservation.create({
-          data: {
-            releaseId: candidate.releaseId,
-            manifestHash: candidate.manifestHash,
-            pointerGeneration: identity.generation,
-            state: "OFFICIAL",
-            sourceKind: "SITUATION_STUDIO",
-            manifest: jsonInput(candidate.manifest),
-            publishedAt: new Date(),
+        });
+      if (
+        observation &&
+        (observation.manifestHash !== candidate.manifestHash ||
+          observation.pointerGeneration !== identity.generation)
+      )
+        throw new Error(
+          "Leadership observation differs from verified release.",
+        );
+      observation ??= await transaction.leadershipReleaseObservation.create({
+        data: {
+          releaseId: candidate.releaseId,
+          manifestHash: candidate.manifestHash,
+          pointerGeneration: identity.generation,
+          state: "OFFICIAL",
+          sourceKind: "SITUATION_STUDIO",
+          manifest: jsonInput(candidate.manifest),
+          publishedAt: new Date(),
+        },
+      });
+      let version = await transaction.productionSituationVersion.findUnique({
+        where: {
+          situationId_observationId: {
+            situationId: job.situationId,
+            observationId: observation.id,
           },
-        }));
-      const version = await transaction.productionSituationVersion.create({
+        },
+      });
+      if (version && version.bundleHash !== productionBundleHash)
+        throw new Error("Production version differs from verified candidate.");
+      version ??= await transaction.productionSituationVersion.create({
         data: {
           situationId: job.situationId,
           observationId: observation.id,
@@ -2840,8 +4084,8 @@ async function finalizeSuccess(
           },
         },
       });
-      await transaction.situation.update({
-        where: { id: job.situationId },
+      const updatedSituation = await transaction.situation.updateMany({
+        where: { id: job.situationId, fence: job.checkoutFence },
         data: {
           title: candidate.targetBundle.metadata.title,
           visibility: candidate.targetBundle.visibility,
@@ -2850,31 +4094,47 @@ async function finalizeSuccess(
           productionAt: version.productionAt,
         },
       });
-      await transaction.verificationReceipt.create({
-        data: {
-          jobId: job.id,
-          expectedReleaseId: candidate.releaseId,
-          expectedManifestHash: candidate.manifestHash,
-          observedDatabaseReleaseId: identity.releaseId,
-          observedDatabaseHash: identity.manifestHash,
-          observedRuntimeReleaseId: runtime.releaseId,
-          observedRuntimeHash: runtime.manifestHash,
-          pointerGeneration: identity.generation,
-          producerCommit,
-          producerContractDigest: requiredContentContractIdentity.packageSha256,
-          consumerCommit: capabilities.deployment.commit,
-          capabilityDigest: capabilities.capabilityDigest,
-          affectedSituationSlug: candidate.targetSlug,
-          typedParityCode: leadershipTypedParityPredicate,
-          routeProbeCode: routeProof.code,
-          routeHttpStatus: routeProof.httpStatus,
-          observedRouteReleaseId: routeProof.observedReleaseId,
-          observedRouteManifestHash: routeProof.observedManifestHash,
-          observedSituationBodyHash: routeProof.observedSituationBodyHash,
-          observedPracticeLogicalId: routeProof.observedPracticeLogicalId,
-          observedPracticeContentHash: routeProof.observedPracticeContentHash,
-        },
+      if (updatedSituation.count !== 1)
+        throw new Error("Publication situation update was fenced.");
+      const existingReceipt = await transaction.verificationReceipt.findUnique({
+        where: { jobId: job.id },
       });
+      if (
+        existingReceipt &&
+        (existingReceipt.expectedReleaseId !== candidate.releaseId ||
+          existingReceipt.expectedManifestHash !== candidate.manifestHash)
+      )
+        throw new Error(
+          "Verification receipt differs from verified candidate.",
+        );
+      if (!existingReceipt)
+        await transaction.verificationReceipt.create({
+          data: {
+            jobId: job.id,
+            expectedReleaseId: candidate.releaseId,
+            expectedManifestHash: candidate.manifestHash,
+            observedDatabaseReleaseId: identity.releaseId,
+            observedDatabaseHash: identity.manifestHash,
+            observedRuntimeReleaseId: runtime.releaseId,
+            observedRuntimeHash: runtime.manifestHash,
+            pointerGeneration: identity.generation,
+            producerCommit,
+            producerContractDigest:
+              candidate.compilerDigest ??
+              requiredContentContractIdentity.packageSha256,
+            consumerCommit: capabilities.deployment.commit,
+            capabilityDigest: capabilities.capabilityDigest,
+            affectedSituationSlug: candidate.targetSlug,
+            typedParityCode: leadershipTypedParityPredicate,
+            routeProbeCode: routeProof.code,
+            routeHttpStatus: routeProof.httpStatus,
+            observedRouteReleaseId: routeProof.observedReleaseId,
+            observedRouteManifestHash: routeProof.observedManifestHash,
+            observedSituationBodyHash: routeProof.observedSituationBodyHash,
+            observedPracticeLogicalId: routeProof.observedPracticeLogicalId,
+            observedPracticeContentHash: routeProof.observedPracticeContentHash,
+          },
+        });
       const released = await transaction.situationCheckout.updateMany({
         where: {
           id: job.checkoutId,
@@ -2885,26 +4145,23 @@ async function finalizeSuccess(
       });
       if (released.count !== 1)
         throw new Error("Publication checkout release was fenced.");
-      await transaction.draft.update({
-        where: { id: job.targetRevision.draftId },
+      await transaction.draft.updateMany({
+        where: { id: job.targetRevision.draftId, state: "ACTIVE" },
         data: { state: "ARCHIVED", archivedAt: new Date() },
       });
-      const completedJob = await transaction.publicationJob.updateMany({
-        where: {
-          id: job.id,
-          state: "VERIFYING",
-          claimToken: claimToken ?? null,
-        },
-        data: {
-          state: "SUCCEEDED",
-          finishedAt: new Date(),
-          failureCode: null,
-          claimToken: null,
-          leaseExpiresAt: null,
-        },
+      await appendEvent(transaction, job.id, "VERIFIED", {
+        releaseId: identity.releaseId,
+        manifestHash: identity.manifestHash,
+        runtimeReleaseId: runtime.releaseId,
+        runtimeManifestHash: runtime.manifestHash,
+        capabilityDigest: capabilities.capabilityDigest,
+        typedParityCode: leadershipTypedParityPredicate,
+        routeProbeCode: routeProof.code,
+        routeHttpStatus: routeProof.httpStatus,
       });
-      if (completedJob.count !== 1)
-        throw new Error("Publication authority was lost during finalization.");
+      await appendEvent(transaction, job.id, "SUCCEEDED", {
+        releaseId: candidate.releaseId,
+      });
       await transaction.backupReceipt.create({
         data: {
           publicationJobId: job.id,
@@ -2927,20 +4184,6 @@ async function finalizeSuccess(
           },
         },
       });
-      await beforeCommit?.();
-      await appendPublicationEvent(transaction, job.id, "VERIFIED", {
-        releaseId: identity.releaseId,
-        manifestHash: identity.manifestHash,
-        runtimeReleaseId: runtime.releaseId,
-        runtimeManifestHash: runtime.manifestHash,
-        capabilityDigest: capabilities.capabilityDigest,
-        typedParityCode: leadershipTypedParityPredicate,
-        routeProbeCode: routeProof.code,
-        routeHttpStatus: routeProof.httpStatus,
-      });
-      await appendPublicationEvent(transaction, job.id, "SUCCEEDED", {
-        releaseId: candidate.releaseId,
-      });
       await transaction.publicationAttempt.update({
         where: { id: attemptId },
         data: {
@@ -2953,34 +4196,121 @@ async function finalizeSuccess(
           }),
         },
       });
+      const completed = await transaction.publicationJob.updateMany({
+        where: {
+          id: job.id,
+          claimToken,
+          state: "VERIFYING",
+          checkoutFence: job.checkoutFence,
+        },
+        data: {
+          state: "SUCCEEDED",
+          finishedAt: new Date(),
+          failureCode: null,
+          claimToken: null,
+          leaseExpiresAt: null,
+        },
+      });
+      if (completed.count !== 1)
+        throw new Error("Late publisher finalization was fenced.");
+      await beforeCommit?.();
     },
     { isolationLevel: "Serializable" },
   );
 }
 
-async function candidateFromPersisted(
-  studio: DatabaseClient,
+async function legacyRecoveryCandidateFromSnapshot(
   leadershipUrl: string,
   job: ClaimedJob,
-  options: { validate?: boolean } = {},
 ) {
   const snapshot = job.candidateSnapshot;
-  if (!snapshot) return buildCandidate(studio, leadershipUrl, job);
+  if (
+    !job.legacyPreflightExempt ||
+    (job.state !== "PROMOTING" && job.state !== "VERIFYING") ||
+    !snapshot
+  )
+    throw new PublisherCandidateContractError(
+      new Error(
+        "PREFLIGHT_REQUIRED: Nonterminal legacy publication jobs are quarantined and cannot assemble or rebase a candidate.",
+      ),
+    );
   const body = job.targetRevision.artifacts.find(
     (artifact) => artifact.kind === "SITUATION",
   )?.content.textBody;
-  if (!body) throw new Error("Persisted publication lost its Studio body.");
-  const bundle = bundleForPublication(
-    situationBundleSchema.parse(job.targetRevision.bundleManifest),
-    job.sourceKind,
-  );
+  if (!body)
+    throw new PublisherCandidateContractError(
+      new Error(
+        "Historical candidate recovery lost its immutable Studio body.",
+      ),
+    );
+  const bundle = situationBundleSchema.parse(job.targetRevision.bundleManifest);
+  const validation = validateSituationBundle(bundle, body);
+  if (!validation.valid || validation.bundleHash !== job.targetBundleHash)
+    throw new PublisherCandidateContractError(
+      new Error(
+        validation.errors.join(" ") ||
+          "Historical candidate Studio revision hash differs.",
+      ),
+    );
+  const manifest = manifestSchema.parse(JSON.parse(snapshot.manifestBody));
+  if (
+    canonicalJson(manifest) !== snapshot.manifestBody ||
+    sha256(snapshot.manifestBody) !== snapshot.manifestHash ||
+    manifest.source.releaseId !== snapshot.releaseId ||
+    manifest.artifacts.length !== snapshot.artifactCount ||
+    manifest.edges.length !== snapshot.edgeCount
+  )
+    throw new PublisherCandidateContractError(
+      new Error("Historical persisted candidate manifest is not exact."),
+    );
   const leadership = new Client({
     connectionString: leadershipUrl,
-    application_name: "situation-studio-publisher-reconciler",
+    application_name: "situation-studio-publisher-legacy-recovery",
     statement_timeout: 30_000,
   });
   await leadership.connect();
   try {
+    const release = await leadership.query<{
+      id: string;
+      parent_release_id: string;
+      manifest_body: string;
+      manifest_hash: string;
+      studio_publication_id: string | null;
+      artifact_count: number;
+      edge_count: number;
+      total_byte_length: string;
+    }>(
+      `
+        SELECT id,
+               parent_release_id,
+               manifest::text AS manifest_body,
+               manifest_hash,
+               studio_publication_id,
+               artifact_count,
+               edge_count,
+               total_byte_length::text
+          FROM content_releases
+         WHERE id = $1
+      `,
+      [snapshot.releaseId],
+    );
+    const persistedRelease = release.rows[0];
+    if (
+      !persistedRelease ||
+      persistedRelease.parent_release_id !== snapshot.parentReleaseId ||
+      persistedRelease.studio_publication_id !== job.publicationId ||
+      canonicalJson(JSON.parse(persistedRelease.manifest_body)) !==
+        snapshot.manifestBody ||
+      persistedRelease.manifest_hash !== snapshot.manifestHash ||
+      persistedRelease.artifact_count !== snapshot.artifactCount ||
+      persistedRelease.edge_count !== snapshot.edgeCount ||
+      BigInt(persistedRelease.total_byte_length) !== snapshot.totalByteLength
+    )
+      throw new PublisherCandidateContractError(
+        new Error(
+          "Historical candidate release is absent or differs from its persisted snapshot.",
+        ),
+      );
     const rows = await leadership.query<{
       logical_id: string;
       type: string;
@@ -2990,6 +4320,7 @@ async function candidateFromPersisted(
       encoding: "UTF8" | "BINARY";
       media_type: string;
       text_body: string | null;
+      binary_body: Uint8Array | null;
       visibility: "GLOBAL" | "SITUATION_SCOPED" | "INTERNAL";
       owner_situation_slug: string | null;
       forked_from_logical_id: string | null;
@@ -3004,6 +4335,7 @@ async function candidateFromPersisted(
                version.encoding::text,
                version.media_type,
                version.text_body,
+               version.binary_body,
                artifact.visibility::text,
                artifact.owner_situation_slug,
                artifact.forked_from_logical_id,
@@ -3014,41 +4346,83 @@ async function candidateFromPersisted(
           JOIN content_artifacts artifact
             ON artifact.id = version.artifact_id
          WHERE membership.release_id = $1
-           AND (
-             membership.logical_id = $2
-             OR membership.logical_id = ANY($3::varchar[])
-           )
+         ORDER BY membership.sort_order
       `,
-      [
-        snapshot.releaseId,
-        `situation:${job.situation.slug}`,
-        bundle.artifacts.map((artifact) => artifact.logicalId),
-      ],
+      [snapshot.releaseId],
     );
-    if (!rows.rowCount) {
-      if (options.validate === false)
-        throw new Error("Persisted candidate release artifacts are absent.");
-      return buildCandidate(studio, leadershipUrl, job);
-    }
-    const changedArtifacts: ChangedArtifact[] = rows.rows.map((row) => {
-      if (row.encoding !== "UTF8" || row.text_body === null)
-        throw new Error(`Publication artifact ${row.logical_id} is not UTF-8.`);
-      return {
-        logicalId: row.logical_id,
-        type: row.type,
-        path: row.canonical_path,
-        contentHash: row.content_hash,
-        byteLength: row.byte_length,
-        encoding: row.encoding,
-        mediaType: row.media_type,
-        body: row.text_body,
-        visibility: row.visibility,
-        ownerSituationSlug: row.owner_situation_slug,
-        forkedFromLogicalId: row.forked_from_logical_id,
-        forkedFromContentHash: row.forked_from_content_hash,
-      };
-    });
-    const manifest = manifestSchema.parse(JSON.parse(snapshot.manifestBody));
+    if (rows.rows.length !== snapshot.artifactCount)
+      throw new PublisherCandidateContractError(
+        new Error("Historical candidate artifact set is incomplete."),
+      );
+    const allArtifacts: ExactCandidateArtifact[] = rows.rows.map(
+      (artifact, position) => {
+        const manifestArtifact = manifest.artifacts[position];
+        const bytes =
+          artifact.encoding === "UTF8"
+            ? artifact.text_body === null
+              ? null
+              : new TextEncoder().encode(artifact.text_body)
+            : artifact.binary_body === null
+              ? null
+              : Uint8Array.from(artifact.binary_body);
+        if (
+          !manifestArtifact ||
+          !bytes ||
+          artifact.logical_id !== manifestArtifact.logicalId ||
+          artifact.type !== manifestArtifact.type ||
+          artifact.canonical_path !== manifestArtifact.path ||
+          artifact.content_hash !== manifestArtifact.contentHash ||
+          artifact.byte_length !== manifestArtifact.byteLength ||
+          artifact.encoding !== manifestArtifact.encoding ||
+          artifact.media_type !== manifestArtifact.mediaType ||
+          bytes.byteLength !== artifact.byte_length ||
+          sha256(bytes) !== artifact.content_hash
+        )
+          throw new PublisherCandidateContractError(
+            new Error(
+              `Historical candidate artifact ${artifact.logical_id} is not exact.`,
+            ),
+          );
+        return {
+          logicalId: artifact.logical_id,
+          type: artifact.type,
+          path: artifact.canonical_path,
+          contentHash: artifact.content_hash,
+          byteLength: artifact.byte_length,
+          encoding: artifact.encoding,
+          mediaType: artifact.media_type,
+          bytes,
+        };
+      },
+    );
+    const changedIds = new Set([
+      `situation:${job.situation.slug}`,
+      ...bundle.artifacts.map((artifact) => artifact.logicalId),
+    ]);
+    const changedArtifacts: ChangedArtifact[] = rows.rows
+      .filter((artifact) => changedIds.has(artifact.logical_id))
+      .map((artifact) => {
+        if (artifact.encoding !== "UTF8" || artifact.text_body === null)
+          throw new PublisherCandidateContractError(
+            new Error(
+              `Historical changed artifact ${artifact.logical_id} is not UTF-8.`,
+            ),
+          );
+        return {
+          logicalId: artifact.logical_id,
+          type: artifact.type,
+          path: artifact.canonical_path,
+          contentHash: artifact.content_hash,
+          byteLength: artifact.byte_length,
+          encoding: artifact.encoding,
+          mediaType: artifact.media_type,
+          body: artifact.text_body,
+          visibility: artifact.visibility,
+          ownerSituationSlug: artifact.owner_situation_slug,
+          forkedFromLogicalId: artifact.forked_from_logical_id,
+          forkedFromContentHash: artifact.forked_from_content_hash,
+        };
+      });
     const candidate: CandidateSnapshot = {
       publicationId: job.publicationId,
       releaseId: snapshot.releaseId,
@@ -3063,19 +4437,25 @@ async function candidateFromPersisted(
       targetSlug: job.situation.slug,
       targetSituationId: job.situationId,
       targetBody: body,
-      targetBundle: bundle,
+      targetBundle: bundleForPublication(bundle, job.sourceKind),
       sourceKind: job.sourceKind,
       changedArtifacts,
+      allArtifacts,
     };
-    if (options.validate !== false) {
-      validateCandidate(candidate);
-      await validateCanonicalCandidate(
-        leadership,
-        candidate,
-        snapshot.releaseId,
-      );
-    }
+    validateCandidate(candidate);
+    await validateCanonicalSnapshot(
+      candidate.manifestBody,
+      new Map(
+        allArtifacts.map((artifact) => [
+          artifact.contentHash,
+          artifact.bytes.slice(),
+        ]),
+      ),
+    );
     return candidate;
+  } catch (error) {
+    if (error instanceof PublisherCandidateContractError) throw error;
+    throw new PublisherCandidateContractError(error);
   } finally {
     await leadership.end();
   }
@@ -3087,11 +4467,18 @@ function safePublicationFailureDetail(error: unknown) {
   return parsed.success ? parsed.data : null;
 }
 
+async function candidateFromPersisted(leadershipUrl: string, job: ClaimedJob) {
+  if (!job.preflightReceipt)
+    return legacyRecoveryCandidateFromSnapshot(leadershipUrl, job);
+  return candidateFromPreflight(leadershipUrl, job);
+}
+
 function publicationFailureCode(error: unknown) {
   if (error instanceof LeadershipCapabilityError) return error.code;
   if (error instanceof PublisherCandidateContractError) return error.code;
   if (error instanceof PublisherRuntimeConvergenceError) return error.code;
   if (error instanceof PublisherVerificationError) return error.code;
+  if (error instanceof z.ZodError) return "CANONICAL_SNAPSHOT_INVALID";
   if (
     error instanceof Error &&
     /TYPED_PROJECTION_INVALID/iu.test(error.message)
@@ -3235,24 +4622,145 @@ async function beginAutomaticRestoration(
 export async function processPublicationJob(
   dependencies: PublisherDependencies,
   jobId: string,
-  claimToken?: string,
+  claimToken: string,
 ) {
+  const token = requiredClaimToken(claimToken);
   const { studio, leadershipPublisherUrl } = dependencies;
-  await renewPublicationLease(studio, jobId, claimToken);
-  const started = await startPublicationAttempt(studio, jobId, claimToken);
-  let job = started.job;
-  const { attempt } = started;
-  const leadership = new Client({
-    connectionString: leadershipPublisherUrl,
-    application_name: "situation-studio-publisher",
-    statement_timeout: 120_000,
-  });
+  let leadership: Client | null = null;
+  let job: ClaimedJob | null = null;
+  let attempt: { id: string } | null = null;
   let promoted = false;
   let promotionAttempted = false;
+  let promotionStateKnown = true;
+  let runtimeVerified = false;
   let activeCandidate: CandidateSnapshot | null = null;
-  let activeCapabilities: LeadershipRuntimeCapabilities | null = null;
   try {
+    await renewPublicationLease(studio, jobId, token);
+    const started = await startPublicationAttempt(studio, jobId, token);
+    job = started.job;
+    attempt = started.attempt;
+    if (job.claimToken !== token)
+      throw new Error("Publication lease was lost to another publisher.");
+    if (!/^[a-f0-9]{40}$/u.test(dependencies.producerCommit))
+      throw new Error(
+        "The publisher deployment commit is not an immutable Git identity.",
+      );
+    const candidate = await candidateFromPersisted(leadershipPublisherUrl, job);
+    activeCandidate = candidate;
+    await persistReceiptBackedCandidateSnapshot(studio, job, token, candidate);
+    if (job.state === "PROMOTING" || job.state === "VERIFYING") {
+      // A reclaimed job may be resuming after COMMIT reached Leadership but
+      // before Studio recorded the boundary. Reconcile that durable fact
+      // before any capability/health gate can fail and choose restoration.
+      promotionAttempted = true;
+      promotionStateKnown = false;
+      const reconciled = await reconcileAmbiguousPromotion(
+        leadershipPublisherUrl,
+        candidate,
+      );
+      promotionStateKnown = true;
+      promoted = reconciled.promoted;
+    }
+    await claimedEvent(studio, jobId, token, "SNAPSHOT_BUILT", {
+      preflightReceiptId: job.preflightReceiptId,
+      releaseId: candidate.releaseId,
+      manifestHash: candidate.manifestHash,
+      candidateHash: candidate.candidateHash,
+      artifactCount: candidate.artifactCount,
+      edgeCount: candidate.edgeCount,
+      exactPersistedBytes: Boolean(candidate.allArtifacts),
+    });
+    await claimedEvent(studio, jobId, token, "VALIDATED", {
+      targetRevisionId: job.targetRevisionId,
+      targetBundleHash: job.targetBundleHash,
+      manifestHash: candidate.manifestHash,
+      candidateHash: candidate.candidateHash,
+      compilerDigest: candidate.compilerDigest,
+    });
+    await dependencies.afterBoundary?.("CANDIDATE_PERSISTED");
+    let activeCapabilities = await convergedRuntimeCapabilities(
+      dependencies,
+      () => renewPublicationLease(studio, jobId, token),
+    );
+    await renewPublicationLease(studio, jobId, token);
+    await assertPublicationFence(studio, {
+      jobId,
+      claimToken: token,
+      situationId: job.situationId,
+      checkoutId: job.checkoutId,
+      checkoutFence: job.checkoutFence,
+    });
+
+    leadership = new Client({
+      connectionString: leadershipPublisherUrl,
+      application_name: "situation-studio-publisher",
+      statement_timeout: 120_000,
+    });
     await leadership.connect();
+    const before = await databaseIdentity(leadership);
+    // A retry may begin after the prior worker committed promotion. Remember
+    // that external fact before any subsequent candidate/runtime validation so
+    // a definitive mismatch restores instead of leaving the bad pointer live.
+    promoted = before.releaseId === candidate.releaseId;
+    if (
+      before.releaseId !== candidate.releaseId &&
+      (before.releaseId !== candidate.parentReleaseId ||
+        (job.preflightReceipt !== null &&
+          before.manifestHash !== job.preflightReceipt.baseManifestHash) ||
+        before.generation !== candidate.expectedGeneration)
+    ) {
+      await claimedTransitionWithEvent(studio, {
+        jobId,
+        claimToken: token,
+        data: {
+          state: "NEEDS_REFRESH",
+          observedReleaseId: before.releaseId,
+          failureCode: "PREFLIGHT_BASE_CHANGED",
+          finishedAt: new Date(),
+          claimToken: null,
+          leaseExpiresAt: null,
+        },
+        eventKind: "CONFLICTED",
+        eventPayload: {
+          expectedReleaseId: candidate.parentReleaseId,
+          expectedManifestHash: job.preflightReceipt?.baseManifestHash,
+          expectedGeneration: candidate.expectedGeneration.toString(),
+          observedReleaseId: before.releaseId,
+          observedManifestHash: before.manifestHash,
+          observedGeneration: before.generation.toString(),
+          candidateHash: candidate.candidateHash,
+        },
+      });
+      await studio.publicationAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          finishedAt: new Date(),
+          reconciledState: { outcome: "NEEDS_REFRESH" },
+        },
+      });
+      return;
+    }
+    await claimedEvent(studio, jobId, token, "POINTER_OBSERVED", {
+      releaseId: before.releaseId,
+      manifestHash: before.manifestHash,
+      generation: before.generation.toString(),
+    });
+    if (job.state !== "VERIFYING")
+      await claimedJobUpdate(
+        studio,
+        jobId,
+        token,
+        {
+          state: "PROMOTING",
+          observedReleaseId: candidate.parentReleaseId,
+          expectedPointerGeneration: candidate.expectedGeneration,
+          leadershipReleaseId: candidate.releaseId,
+          leadershipManifestHash: candidate.manifestHash,
+          previousReleaseId: candidate.parentReleaseId,
+        },
+        ["ASSEMBLING", "PROMOTING"],
+      );
+
     const external = await leadership.query<{
       id: string;
       manifest_hash: string;
@@ -3266,132 +4774,101 @@ export async function processPublicationJob(
       [job.publicationId],
     );
     const existing = external.rows[0];
-    let candidate: CandidateSnapshot | null = null;
-    if (existing && job.candidateSnapshot) {
+    if (existing) {
       if (
-        existing.id !== job.candidateSnapshot.releaseId ||
-        existing.manifest_hash !== job.candidateSnapshot.manifestHash
+        existing.id !== candidate.releaseId ||
+        existing.manifest_hash !== candidate.manifestHash
       )
-        throw new Error("Reconciled publication release differs from Studio.");
-      const observed = await databaseIdentity(leadership);
-      promoted =
-        observed.releaseId === job.candidateSnapshot.releaseId &&
-        observed.manifestHash === job.candidateSnapshot.manifestHash;
-      candidate = await candidateFromPersisted(
-        studio,
-        leadershipPublisherUrl,
-        job,
-      );
-      if (
-        existing.id !== candidate?.releaseId ||
-        existing.manifest_hash !== candidate?.manifestHash
-      )
-        throw new Error("Reconciled publication release differs from Studio.");
-      activeCandidate = candidate;
+        throw new PublisherCandidateContractError(
+          new Error("Reconciled publication release differs from preflight."),
+        );
+      await assertLeadershipReleaseMatchesCandidate(leadership, candidate);
     }
-    if (!/^[a-f0-9]{40}$/u.test(dependencies.producerCommit))
-      throw new Error(
-        "The publisher deployment commit is not an immutable Git identity.",
-      );
-    if (!dependencies.runtimeCapabilities)
-      throw new LeadershipCapabilityError(
-        "Leadership runtime capabilities are not configured.",
-        "RUNTIME_CAPABILITY_UNAVAILABLE",
-        true,
-      );
-    activeCapabilities = assertLeadershipRuntimeCompatible(
-      await dependencies.runtimeCapabilities(),
-    );
-    if (!candidate)
-      candidate = await buildCandidate(
-        studio,
-        leadershipPublisherUrl,
-        job,
-        claimToken,
-      );
-    activeCandidate = candidate;
-    await dependencies.afterBoundary?.("CANDIDATE_PERSISTED");
-    await renewPublicationLease(studio, jobId, claimToken);
-    await assertPublicationFence(studio, {
-      jobId,
-      situationId: job.situationId,
-      checkoutId: job.checkoutId,
-      checkoutFence: job.checkoutFence,
-      claimToken,
-    });
-
-    const before = await databaseIdentity(leadership);
     if (before.releaseId !== candidate.releaseId) {
       promotionAttempted = true;
-      const insertion = await withPublicationLeaseHeartbeat(
-        studio,
-        {
-          jobId,
-          situationId: job.situationId,
-          checkoutId: job.checkoutId,
-          checkoutFence: job.checkoutFence,
-          claimToken,
-          heartbeatMs: dependencies.publicationLeaseHeartbeatMs,
-        },
-        (assertAuthority) =>
-          insertAndPromote(leadership, candidate, {
-            beforePromotion: async () => {
-              await dependencies.afterBoundary?.("LEADERSHIP_PROMOTION_READY");
-              await assertAuthority();
-            },
-            beforeCommit: async () => {
-              await dependencies.afterBoundary?.(
-                "LEADERSHIP_PROMOTION_COMMIT_READY",
-              );
-              await assertAuthority();
-            },
-          }),
-      );
-      if (insertion.pointerChanged) {
-        // No candidate rows committed. Re-observe and automatically rebase on
-        // the next durable attempt.
-        await studio.$transaction(
-          async (transaction) => {
-            await lockPublicationCoordination(transaction);
-            await transaction.publicationCandidateSnapshot.delete({
-              where: { jobId },
-            });
-            const rebased = await transaction.publicationJob.updateMany({
-              where: {
-                id: jobId,
-                state: "PROMOTING",
-                claimToken: claimToken ?? null,
-              },
-              data: {
-                state: "ASSEMBLING",
-                leadershipReleaseId: null,
-                leadershipManifestHash: null,
-                expectedPointerGeneration: null,
-                observedReleaseId: null,
-                claimToken: null,
-                leaseExpiresAt: null,
-              },
-            });
-            if (rebased.count !== 1)
-              throw new Error(
-                "Publication authority was lost before pointer rebase.",
-              );
-            await transaction.publicationAttempt.update({
-              where: { id: attempt.id },
-              data: {
-                finishedAt: new Date(),
-                reconciledState: jsonInput({
-                  outcome: "POINTER_REBASE_RETRY",
-                }),
-              },
-            });
+      promotionStateKnown = false;
+      let insertion: Awaited<ReturnType<typeof insertAndPromote>>;
+      try {
+        insertion = await withPublicationLeaseHeartbeat(
+          studio,
+          {
+            jobId,
+            situationId: job.situationId,
+            checkoutId: job.checkoutId,
+            checkoutFence: job.checkoutFence,
+            claimToken: token,
+            heartbeatMs: dependencies.publicationLeaseHeartbeatMs,
           },
-          { isolationLevel: "Serializable" },
+          (assertAuthority) =>
+            insertAndPromote(leadership!, candidate, {
+              beforePromotion: async () => {
+                await dependencies.afterBoundary?.(
+                  "LEADERSHIP_PROMOTION_READY",
+                );
+                await assertAuthority();
+              },
+              beforeCommit: async () => {
+                await dependencies.afterBoundary?.(
+                  "LEADERSHIP_PROMOTION_COMMIT_READY",
+                );
+                await assertAuthority();
+              },
+            }),
         );
+        if (!insertion.pointerChanged)
+          await dependencies.afterPromotionCommit?.();
+        promotionStateKnown = true;
+      } catch (error) {
+        const reconciled = await reconcileAmbiguousPromotion(
+          leadershipPublisherUrl,
+          candidate,
+        );
+        promotionStateKnown = true;
+        if (!reconciled.promoted) throw error;
+        promoted = true;
+        insertion = { inserted: false };
+        await leadership.end().catch(() => undefined);
+        leadership = new Client({
+          connectionString: leadershipPublisherUrl,
+          application_name: "situation-studio-publisher-reconciled",
+          statement_timeout: 120_000,
+        });
+        await leadership.connect();
+      }
+      if (insertion.pointerChanged) {
+        const observed = await databaseIdentity(leadership);
+        await claimedTransitionWithEvent(studio, {
+          jobId,
+          claimToken: token,
+          data: {
+            state: "NEEDS_REFRESH",
+            observedReleaseId: observed.releaseId,
+            failureCode: "PREFLIGHT_BASE_CHANGED",
+            finishedAt: new Date(),
+            claimToken: null,
+            leaseExpiresAt: null,
+          },
+          eventKind: "CONFLICTED",
+          eventPayload: {
+            candidateHash: candidate.candidateHash,
+            expectedReleaseId: candidate.parentReleaseId,
+            observedReleaseId: observed.releaseId,
+            observedManifestHash: observed.manifestHash,
+            observedGeneration: observed.generation.toString(),
+          },
+        });
+        await studio.publicationAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            finishedAt: new Date(),
+            reconciledState: { outcome: "NEEDS_REFRESH" },
+          },
+        });
         return;
       }
+      promoted = true;
       await dependencies.afterBoundary?.("LEADERSHIP_PROMOTION_COMMITTED");
-      await event(studio, jobId, "RELEASE_INSERTED", {
+      await claimedEvent(studio, jobId, token, "RELEASE_INSERTED", {
         releaseId: candidate.releaseId,
         manifestHash: candidate.manifestHash,
         inserted: insertion.inserted,
@@ -3404,23 +4881,12 @@ export async function processPublicationJob(
     if (!promoted)
       throw new Error("Leadership promotion did not select the candidate.");
     await dependencies.afterBoundary?.("LEADERSHIP_PROMOTED");
-    await renewPublicationLease(studio, jobId, claimToken);
-    const verifying = await studio.publicationJob.updateMany({
-      where: {
-        id: jobId,
-        state: { in: ["PROMOTING", "VERIFYING"] },
-        claimToken: claimToken ?? null,
-      },
-      data: {
-        state: "VERIFYING",
-        leaseExpiresAt: new Date(Date.now() + 180_000),
-      },
+    await renewPublicationLease(studio, jobId, token);
+    await claimedJobUpdate(studio, jobId, token, {
+      state: "VERIFYING",
+      leaseExpiresAt: new Date(Date.now() + 180_000),
     });
-    if (verifying.count !== 1)
-      throw new Error(
-        "Publication authority was lost before verification could begin.",
-      );
-    await event(studio, jobId, "POINTER_ADVANCED", {
+    await claimedEvent(studio, jobId, token, "POINTER_ADVANCED", {
       releaseId: promotedIdentity.releaseId,
       manifestHash: promotedIdentity.manifestHash,
       generation: promotedIdentity.generation.toString(),
@@ -3431,21 +4897,25 @@ export async function processPublicationJob(
         releaseId: candidate.releaseId,
         manifestHash: candidate.manifestHash,
       },
-      () => renewPublicationLease(studio, jobId, claimToken),
+      () => renewPublicationLease(studio, jobId, token),
     );
-    if (!dependencies.runtimeRouteProof)
-      throw new PublisherVerificationError(
-        "Affected-route verification is not configured.",
-        "AFFECTED_ROUTE_VERIFICATION_FAILED",
-      );
-    const routeCapabilitiesBefore = assertLeadershipRuntimeCompatible(
-      await dependencies.runtimeCapabilities(),
+    if (
+      runtime.releaseId !== candidate.releaseId ||
+      runtime.manifestHash !== candidate.manifestHash
+    )
+      throw new Error("Running Leadership application identity differs.");
+    const routeCapabilitiesBefore = await convergedRuntimeCapabilities(
+      dependencies,
+      () => renewPublicationLease(studio, jobId, token),
     );
-    const routeProof = await dependencies.runtimeRouteProof(
+    const routeProof = await convergedRuntimeRouteProof(
+      dependencies,
       routeExpectation(candidate),
+      () => renewPublicationLease(studio, jobId, token),
     );
-    const routeCapabilitiesAfter = assertLeadershipRuntimeCompatible(
-      await dependencies.runtimeCapabilities(),
+    const routeCapabilitiesAfter = await convergedRuntimeCapabilities(
+      dependencies,
+      () => renewPublicationLease(studio, jobId, token),
     );
     if (
       routeCapabilitiesBefore.deployment.commit !==
@@ -3459,14 +4929,15 @@ export async function processPublicationJob(
         true,
       );
     activeCapabilities = routeCapabilitiesAfter;
+    runtimeVerified = true;
     await dependencies.afterBoundary?.("RUNTIME_VERIFIED");
-    await renewPublicationLease(studio, jobId, claimToken);
+    await renewPublicationLease(studio, jobId, token);
     job = await loadJob(studio, jobId);
     await finalizeSuccess(
       studio,
       job,
+      token,
       attempt.id,
-      claimToken,
       candidate,
       promotedIdentity,
       runtime,
@@ -3480,104 +4951,94 @@ export async function processPublicationJob(
     await dependencies.afterBoundary?.("STUDIO_SUCCESS_COMMITTED");
   } catch (error) {
     if (error instanceof PublisherCrashInjectionError) throw error;
-    if (error instanceof PublisherNeedsRefreshError) {
-      await terminalizePublicationOutcome(studio, {
+    if (!job || !attempt) throw error;
+    const failureCode = publicationFailureCode(error);
+    const failureDetail = safePublicationFailureDetail(error);
+    if (runtimeVerified) {
+      const finalized = await studio.publicationJob.findUnique({
+        where: { id: jobId },
+        include: { receipt: true },
+      });
+      if (
+        finalized?.state === "SUCCEEDED" &&
+        finalized.receipt?.expectedReleaseId === activeCandidate?.releaseId &&
+        finalized.receipt?.expectedManifestHash ===
+          activeCandidate?.manifestHash
+      )
+        return;
+      dependencies.onFailure?.(error);
+      await claimedJobUpdate(
+        studio,
         jobId,
-        attemptId: attempt.id,
-        state: "NEEDS_REFRESH",
-        jobFailureCode: "TARGET_CHANGED",
-        finishJob: true,
-        eventKind: "CONFLICTED",
-        eventPayload: {
-          observedReleaseId: error.detail.observedReleaseId,
-          observedBundleHash: error.detail.observedBundleHash,
-          baseBundleHash: error.detail.baseBundleHash,
+        token,
+        { claimToken: null, leaseExpiresAt: null },
+        ["VERIFYING"],
+      ).catch(() => undefined);
+      await studio.publicationAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          finishedAt: new Date(),
+          failureCode: "STUDIO_FINALIZATION_RETRY",
+          reconciledState: {
+            failureCode,
+            promoted: true,
+            runtimeVerified: true,
+            restorationSuppressed: true,
+          },
         },
-        attemptFailureCode: null,
-        reconciledState: { outcome: "NEEDS_REFRESH" },
-        observedReleaseId: error.detail.observedReleaseId,
-        expectedPointerGeneration: error.detail.expectedPointerGeneration,
-        claimToken,
-        expectedStates: ["REQUESTED", "ASSEMBLING", "PROMOTING"],
       });
       return;
     }
-    const failureCode = publicationFailureCode(error);
-    if (failureCode === "PUBLICATION_AUTHORITY_LOST") {
-      dependencies.onFailure?.(error);
-      throw error;
-    }
-    const failureDetail = safePublicationFailureDetail(error);
-    let recoveryFailureDetail: PublicationFailureDetail | null = null;
-    let authoritativeJobReloaded = false;
-    if (!(error instanceof PublisherCandidateContractError)) {
+    dependencies.onFailure?.(error);
+    if (promotionAttempted && !promotionStateKnown && activeCandidate) {
       try {
-        job = await loadJob(studio, jobId);
-        authoritativeJobReloaded = true;
+        const reconciled = await reconcileAmbiguousPromotion(
+          leadershipPublisherUrl,
+          activeCandidate,
+        );
+        promoted = reconciled.promoted;
+        promotionStateKnown = true;
       } catch {
-        // A failed authoritative reload cannot make a possibly committed
-        // Leadership promotion safe to classify as a normal failure.
+        promotionStateKnown = false;
       }
     }
-    if (promoted && !authoritativeJobReloaded) {
-      dependencies.onFailure?.(error);
-      throw error;
-    }
-    const committedCandidate = activeCandidate ?? job.candidateSnapshot;
-    const studioSuccessCommitted =
-      promoted &&
-      job.state === "SUCCEEDED" &&
-      Boolean(committedCandidate) &&
-      job.receipt?.expectedReleaseId === committedCandidate?.releaseId &&
-      job.receipt?.expectedManifestHash === committedCandidate?.manifestHash;
-    if (studioSuccessCommitted) return;
-    if (promoted && job.state === "SUCCEEDED") {
-      dependencies.onFailure?.(error);
-      throw new Error(
-        "Studio reports publication success without matching verification evidence.",
-        { cause: error },
-      );
-    }
-    dependencies.onFailure?.(error);
     const promotionStateUnverified =
-      !promoted &&
-      !(error instanceof PublisherCandidateContractError) &&
-      (promotionAttempted ||
-        (Boolean(job.candidateSnapshot) &&
-          (job.state === "PROMOTING" || job.state === "VERIFYING")) ||
-        (!authoritativeJobReloaded && Boolean(activeCandidate)));
+      promotionAttempted && !promoted && !promotionStateKnown;
     if (promoted) {
-      const snapshot = job.candidateSnapshot;
-      if (!snapshot)
-        throw new Error("Promoted job has no candidate snapshot.", {
-          cause: error,
-        });
+      job = await loadJob(studio, jobId);
       await beginAutomaticRestoration(studio, {
         jobId,
         previousReleaseId: job.previousReleaseId,
         reason: failureCode,
         failureDetail,
-        claimToken,
+        claimToken: token,
       });
       let restored: Awaited<ReturnType<typeof databaseIdentity>>;
+      let recoveryLeadership: Client | null = null;
       try {
-        const current = await databaseIdentity(leadership);
+        recoveryLeadership = new Client({
+          connectionString: leadershipPublisherUrl,
+          application_name: "situation-studio-publisher-restorer",
+          statement_timeout: 120_000,
+        });
+        await recoveryLeadership.connect();
+        const current = await databaseIdentity(recoveryLeadership);
         const candidate =
           activeCandidate ??
-          (await candidateFromPersisted(studio, leadershipPublisherUrl, job, {
-            validate: false,
-          }));
-        if (!candidate)
-          throw new Error("Candidate disappeared during recovery.");
-        await restorePrevious(leadership, candidate, current.generation);
-        restored = await databaseIdentity(leadership);
+          (await candidateFromPersisted(leadershipPublisherUrl, job));
+        await restorePrevious(
+          recoveryLeadership,
+          candidate,
+          current.generation,
+        );
+        restored = await databaseIdentity(recoveryLeadership);
         const runtime = await convergedRuntimeIdentity(
           dependencies,
           {
             releaseId: restored.releaseId,
             manifestHash: restored.manifestHash,
           },
-          () => renewPublicationLease(studio, jobId, claimToken),
+          () => renewPublicationLease(studio, jobId, token),
         );
         if (
           restored.releaseId !== candidate.parentReleaseId ||
@@ -3586,7 +5047,8 @@ export async function processPublicationJob(
         )
           throw new Error("Prior official release could not be verified.");
       } catch (restorationError) {
-        recoveryFailureDetail = safePublicationFailureDetail(restorationError);
+        const recoveryFailureDetail =
+          safePublicationFailureDetail(restorationError);
         await terminalizePublicationOutcome(studio, {
           jobId,
           attemptId: attempt.id,
@@ -3604,15 +5066,16 @@ export async function processPublicationJob(
             failureCode,
             promoted,
             promotionAttempted,
-            authoritativeJobReloaded,
             promotionStateUnverified,
             ...(failureDetail ? { failureDetail } : {}),
             ...(recoveryFailureDetail ? { recoveryFailureDetail } : {}),
           },
-          claimToken,
+          claimToken: token,
           expectedStates: ["RECOVERY_REQUIRED"],
         });
         return;
+      } finally {
+        await recoveryLeadership?.end().catch(() => undefined);
       }
       await terminalizePublicationOutcome(studio, {
         jobId,
@@ -3631,11 +5094,10 @@ export async function processPublicationJob(
           failureCode,
           promoted,
           promotionAttempted,
-          authoritativeJobReloaded,
           promotionStateUnverified,
           ...(failureDetail ? { failureDetail } : {}),
         },
-        claimToken,
+        claimToken: token,
         expectedStates: ["RECOVERY_REQUIRED"],
       });
     } else if (promotionStateUnverified) {
@@ -3655,11 +5117,10 @@ export async function processPublicationJob(
           failureCode,
           promoted,
           promotionAttempted,
-          authoritativeJobReloaded,
           promotionStateUnverified,
           ...(failureDetail ? { failureDetail } : {}),
         },
-        claimToken,
+        claimToken: token,
         expectedStates: ["REQUESTED", "ASSEMBLING", "PROMOTING", "VERIFYING"],
       });
     } else {
@@ -3679,16 +5140,15 @@ export async function processPublicationJob(
           failureCode,
           promoted,
           promotionAttempted,
-          authoritativeJobReloaded,
           promotionStateUnverified,
           ...(failureDetail ? { failureDetail } : {}),
         },
-        claimToken,
+        claimToken: token,
         expectedStates: ["REQUESTED", "ASSEMBLING", "PROMOTING", "VERIFYING"],
       });
     }
   } finally {
-    await leadership.end().catch(() => undefined);
+    await leadership?.end().catch(() => undefined);
   }
 }
 

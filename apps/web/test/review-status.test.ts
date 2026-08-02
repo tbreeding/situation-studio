@@ -5,8 +5,10 @@ import {
   type ReviewStatusRecord,
 } from "../src/server/review-status";
 import {
+  LEGACY_REVIEW_STAGE_TOTAL,
   reviewStatusSnapshotSchema,
   REVIEW_STAGE_TOTAL,
+  REVIEW_STATUS_SCHEMA_VERSION,
 } from "../src/review-status-contract";
 
 const reviewJobId = "11111111-1111-4111-8111-111111111111";
@@ -26,7 +28,7 @@ function statusRecord(
     proposal: null,
     steps: Array.from({ length: REVIEW_STAGE_TOTAL }, (_, index) => ({
       ordinal: index + 1,
-      roleCode: index === 0 ? "surface-mapper" : `stage-${index + 1}`,
+      roleCode: index === 0 ? "context-mapper" : `stage-${index + 1}`,
       state: index === 0 ? "READY" : "PENDING",
       runs: [],
     })),
@@ -39,15 +41,15 @@ describe("public review-status snapshots", () => {
     const snapshot = buildReviewStatusSnapshot(statusRecord());
     expect(reviewStatusSnapshotSchema.parse(snapshot)).toEqual(snapshot);
     expect(snapshot).toMatchObject({
-      schemaVersion: "review-status-v3",
+      schemaVersion: REVIEW_STATUS_SCHEMA_VERSION,
       reviewJobId,
       state: "QUEUED",
       completedStages: 0,
       totalStages: REVIEW_STAGE_TOTAL,
       currentStage: {
         ordinal: 1,
-        code: "surface-mapper",
-        displayName: "Mapping the review surfaces",
+        code: "context-mapper",
+        displayName: "Mapping the situation context",
         state: "READY",
         attempt: null,
       },
@@ -63,7 +65,12 @@ describe("public review-status snapshots", () => {
 
   it("keeps historical 22-stage review snapshots readable", () => {
     const legacy = statusRecord({
-      steps: statusRecord().steps.slice(0, 22),
+      steps: Array.from({ length: LEGACY_REVIEW_STAGE_TOTAL }, (_, index) => ({
+        ordinal: index + 1,
+        roleCode: index === 0 ? "surface-mapper" : `legacy-stage-${index + 1}`,
+        state: index === 0 ? "READY" : "PENDING",
+        runs: [],
+      })),
     });
     const snapshot = buildReviewStatusSnapshot(legacy);
     expect(reviewStatusSnapshotSchema.parse(snapshot)).toEqual(snapshot);
@@ -105,8 +112,8 @@ describe("public review-status snapshots", () => {
       explanation: "The provider timed out or returned a temporary error.",
       stage: {
         ordinal: 1,
-        code: "surface-mapper",
-        displayName: "Mapping the review surfaces",
+        code: "context-mapper",
+        displayName: "Mapping the situation context",
       },
     });
     const serialized = JSON.stringify(snapshot);
@@ -146,16 +153,16 @@ describe("public review-status snapshots", () => {
   it("explains a focused candidate failure without exposing raw output", () => {
     const record = statusRecord({
       state: "FAILED",
-      laneOwner: true,
-      failureCode: "INVALID_OUTPUT",
-      failureReasonCode: "CANDIDATE_METADATA_JSON_INVALID",
-      failureStageOrdinal: 19,
-      failureStageRole: "bundle-writer",
+      laneOwner: false,
+      failureCode: "APPLICATION",
+      failureReasonCode: "CANDIDATE_AUDIT_REVISE",
+      failureStageOrdinal: 4,
+      failureStageRole: "candidate-audit",
     });
     record.steps = record.steps.map((step) =>
-      step.ordinal < 19
+      step.ordinal < 4
         ? { ...step, state: "SUCCEEDED" }
-        : step.ordinal === 19
+        : step.ordinal === 4
           ? {
               ...step,
               state: "FAILED",
@@ -172,15 +179,15 @@ describe("public review-status snapshots", () => {
     const snapshot = buildReviewStatusSnapshot(record);
     expect(snapshot).toMatchObject({
       state: "FAILED",
-      laneState: "FOCUSED",
+      laneState: "RELEASED",
       failure: {
         failureClass: "OUTPUT_INVALID",
-        reasonCode: "CANDIDATE_METADATA_JSON_INVALID",
-        title: "A proposed metadata change was invalid",
+        reasonCode: "CANDIDATE_AUDIT_REVISE",
+        title: "The candidate still needs revision",
         stage: {
-          ordinal: 19,
-          code: "bundle-writer",
-          displayName: "Writing the proposal bundle",
+          ordinal: 4,
+          code: "candidate-audit",
+          displayName: "Auditing the exact candidate",
         },
       },
     });

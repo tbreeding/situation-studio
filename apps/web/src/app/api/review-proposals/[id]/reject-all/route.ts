@@ -9,6 +9,8 @@ import {
 const inputSchema = z.object({
   checkoutId: z.uuid(),
   fence: z.string().regex(/^\d+$/u),
+  revisionId: z.uuid(),
+  bundleHash: z.string().regex(/^[a-f0-9]{64}$/u),
 });
 
 export async function POST(
@@ -32,6 +34,8 @@ export async function POST(
         checkoutId: input.checkoutId,
         fence: BigInt(input.fence),
         proposalId: id,
+        revisionId: input.revisionId,
+        bundleHash: input.bundleHash,
       }),
     );
   } catch (error) {

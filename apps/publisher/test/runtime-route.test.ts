@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PublisherVerificationError,
   runtimeRouteProofFromSituationPage,
+  runtimeRouteProofFromVerificationEndpoint,
   type RuntimeRouteExpectation,
 } from "../src/index";
 
@@ -18,6 +19,28 @@ const expectation: RuntimeRouteExpectation = {
     contentHash: "c".repeat(64),
   },
 };
+
+const typedExpectation: RuntimeRouteExpectation = {
+  ...expectation,
+  pointerGeneration: "42",
+  routePath: "/situations/nothing-in-one-on-ones",
+  verificationPath: "/api/v1/verification/nothing-in-one-on-ones",
+  expectedRouteStatus: 200,
+};
+
+function typedProof(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: "affected-route-proof-json-v1",
+    slug: typedExpectation.situationSlug,
+    releaseId: typedExpectation.releaseId,
+    manifestHash: typedExpectation.manifestHash,
+    pointerGeneration: typedExpectation.pointerGeneration,
+    visibility: typedExpectation.visibility,
+    situationBodyHash: typedExpectation.situationBodyHash,
+    practice: typedExpectation.practice,
+    ...overrides,
+  };
+}
 
 const renderProof = "509b4fe2-00cb-4a60-9bdb-5c3c97924e84";
 
@@ -140,6 +163,152 @@ describe("affected Leadership route verification", () => {
       ),
     ).rejects.toMatchObject({
       code: "AFFECTED_ROUTE_VERIFICATION_FAILED",
+    });
+  });
+});
+
+describe("typed affected-route proof verification", () => {
+  it("accepts the exact no-store JSON proof", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(typedProof()), {
+            status: 200,
+            headers: {
+              "cache-control": "no-store",
+              "content-type": "application/json",
+              "x-content-release": typedExpectation.manifestHash,
+            },
+          }),
+      ),
+    );
+    await expect(
+      runtimeRouteProofFromVerificationEndpoint(
+        "http://127.0.0.1:3005/health/content",
+        typedExpectation,
+      ),
+    ).resolves.toMatchObject({
+      code: "AFFECTED_ROUTE_VERIFIED",
+      observedReleaseId: typedExpectation.releaseId,
+      observedManifestHash: typedExpectation.manifestHash,
+      observedSituationBodyHash: typedExpectation.situationBodyHash,
+    });
+  });
+
+  it("classifies a stale release identity as transient", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify(
+              typedProof({
+                releaseId: "348bb68f-86fd-4860-8aca-32151c384487",
+              }),
+            ),
+            {
+              status: 200,
+              headers: {
+                "cache-control": "no-store",
+                "content-type": "application/json",
+              },
+            },
+          ),
+      ),
+    );
+    await expect(
+      runtimeRouteProofFromVerificationEndpoint(
+        "http://127.0.0.1:3005/health/content",
+        typedExpectation,
+      ),
+    ).rejects.toMatchObject({
+      code: "AFFECTED_ROUTE_VERIFICATION_FAILED",
+      retryable: true,
+    });
+  });
+
+  it("classifies same-release projection drift as definitive", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify(typedProof({ situationBodyHash: "f".repeat(64) })),
+            {
+              status: 200,
+              headers: {
+                "cache-control": "no-store",
+                "content-type": "application/json",
+              },
+            },
+          ),
+      ),
+    );
+    await expect(
+      runtimeRouteProofFromVerificationEndpoint(
+        "http://127.0.0.1:3005/health/content",
+        typedExpectation,
+      ),
+    ).rejects.toMatchObject({
+      code: "AFFECTED_ROUTE_VERIFICATION_FAILED",
+      retryable: false,
+    });
+  });
+
+  it("rejects a typed proof without the immutable manifest header", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(typedProof()), {
+            status: 200,
+            headers: {
+              "cache-control": "no-store",
+              "content-type": "application/json",
+            },
+          }),
+      ),
+    );
+    await expect(
+      runtimeRouteProofFromVerificationEndpoint(
+        "http://127.0.0.1:3005/health/content",
+        typedExpectation,
+      ),
+    ).rejects.toMatchObject({
+      code: "AFFECTED_ROUTE_VERIFICATION_FAILED",
+      retryable: false,
+    });
+  });
+
+  it("records retired route status from an exact typed proof", async () => {
+    const retired = {
+      ...typedExpectation,
+      visibility: "RETIRED" as const,
+      expectedRouteStatus: 404 as const,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(typedProof({ visibility: "RETIRED" })), {
+            status: 200,
+            headers: {
+              "cache-control": "no-store",
+              "content-type": "application/json",
+              "x-content-release": typedExpectation.manifestHash,
+            },
+          }),
+      ),
+    );
+    await expect(
+      runtimeRouteProofFromVerificationEndpoint(
+        "http://127.0.0.1:3005/health/content",
+        retired,
+      ),
+    ).resolves.toMatchObject({
+      code: "AFFECTED_ROUTE_RETIRED",
+      httpStatus: 404,
     });
   });
 });

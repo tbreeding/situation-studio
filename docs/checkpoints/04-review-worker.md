@@ -1,146 +1,163 @@
-# Checkpoint 4 — Review worker and proposals
+# Checkpoint 4 — Bounded review worker and proposals
 
-Status: deterministic route, live subscription route, and durable automatic
-retry handling complete.
+Status: four-phase review, exact candidate validation, bounded repair, durable
+provider retry, and legacy-job compatibility complete.
 
-The review worker implements the full durable 24-stage DAG with one global
-running job and FIFO claiming. Jobs pin an immutable input revision and remain
-read-only while queued or running. Cancellation and force-check-in fence late
-work. Retry resumes at the first incomplete stage.
+New reviews use one durable four-stage workflow:
 
-Pinned subscription CLIs are the production adapters: Codex first and Claude
-fallback. They parse output through strict schemas and record
-requested/resolved provider, model, reasoning effort, evidence/output hashes,
-structured output, token usage, and failure classification. Child processes
-receive no Studio database, session, publisher, backup, or Leadership
-credentials. Claude tools are disabled. Codex ignores user/project
-configuration and rules, runs ephemerally in a temporary read-only sandbox,
-and receives a stripped tool-command environment.
+1. **Context Mapper** maps the pinned situation, its teaching surfaces, linked
+   evidence, and concrete evidence gaps.
+2. **Critical Review** performs one integrated pass across the packaged
+   leadership frameworks and reconciles their tradeoffs in the same response.
+3. **Candidate Builder** emits typed findings and declarative change intents.
+4. **Candidate Audit** evaluates the exact server-materialized candidate and
+   returns a typed `PASS` or `REVISE` verdict with blocking-finding references.
 
-Deterministic integration tests execute all 24 stages in order and prove
-durable evidence, one global runner, cancellation, proposal isolation, and
-idempotent retries. Adapter tests prove Codex-first ordering, Claude fallback,
-secret-minimal child environments, strict output validation, and rejection of
-secret-shaped output. A live Codex wrapper smoke used ChatGPT subscription
-authentication with `gpt-5.6-sol` and returned valid structured output. The
-production review user has authenticated Codex and Claude subscription
-sessions.
+The old specialist, issue-register, rebuttal, adjudication, teaching-designer,
+and LLM deterministic-validator stages are not created for new jobs. A rolling
+upgrade may still finish already-persisted 22- or 24-stage jobs only when their
+pinned input is already a valid v2 snapshot. For such a job, the retained
+deterministic-validator role runs local deterministic validation without
+calling a model. Retained v1 drafts must first create and adopt a fenced v2
+action checkpoint and start a new review; direct v1 API and worker ingress fail
+closed.
 
-## Automatic provider retry
+Jobs pin an immutable input revision ID and bundle hash. Editing may continue
+in a later revision while review runs; it does not change the reviewed bytes.
+If the draft advances before proposal creation, the proposal remains pinned to
+the reviewed input and is created explicitly superseded, naming the newer
+revision. Proposal commands must present an exact revision ID and bundle hash,
+and successful application returns the authoritative resulting revision.
+
+## Server-owned candidate semantics
+
+Models do not author durable IDs, before hashes, application modes, writer
+identity, or executable patch operations. The Candidate Builder emits only
+typed change intents with a target, proposed body, explanation, rationale,
+upstream finding references, and evidence roles. The worker then:
+
+- generates stable UUIDs from the pinned revision and intent position;
+- resolves each target against the exact candidate bytes;
+- derives the actual before body and hash;
+- chooses the application mode from server policy;
+- applies supported changes incrementally through the shared situation bundle
+  validator; and
+- validates the complete candidate again before audit and proposal creation.
+
+Section and supported metadata replacements may be automatic when their exact
+target exists. Broad bundle and embed requests are manual. Global relationship
+changes are manual because review intent does not contain the complete linked
+artifact identity; already-complete canonical relationship snapshots remain
+publishable. New publishable-v2 scoped-variant requests are also manual because
+the legacy variant patch does not contain the complete publishable artifact identity.
+Those suggestions remain visible for editor judgment and cannot become
+automatic proposal changes.
+
+A malformed or overlapping intent is isolated when its failure is safely local
+to that suggestion. Valid sibling intents still materialize, and each discarded
+intent becomes an important, non-actionable proposal finding explaining why it
+was retained without an executable change. A failure of the exact candidate as
+a whole remains terminal.
+
+The Candidate Audit receives the complete materialized body, bundle, candidate
+hash, server-derived changes, and discarded intents. It must echo the exact
+candidate hash. `PASS` cannot contain or reference a blocking finding. `REVISE`
+must reference real blocking findings. The worker permits one repair by
+rerunning Candidate Builder and Candidate Audit with the first audit in the
+repair evidence. A second `REVISE`, an audit of another candidate hash, or an
+invalid blocking reference prevents proposal creation and fails the review.
+
+## Deadlines, retries, and the global lane
+
+Each model stage receives at most 90 seconds, further bounded by the remaining
+eight-minute total job deadline. Hitting the total deadline is a terminal
+`REVIEW_JOB_DEADLINE_EXCEEDED` failure. Terminal failures clear the claim and
+release the global lane immediately, so an unrelated queued review can run.
 
 Only an `AdapterFailure` explicitly marked retryable is automatically retried.
 A stage receives three total automatic attempts. Failures after attempts one
 and two return the job to `QUEUED`, keep the failed stage as the first ready
-incomplete stage, and persist a 5-second or 30-second `retry_not_before`
-timestamp. Claims filter on that timestamp, so a restart cannot bypass the
-backoff. The job releases its lease and the one-global-runner slot while it
-waits.
+incomplete stage, and persist a five-second or 30-second `retry_not_before`
+timestamp. The focused job retains the one-global-review lane during this short
+backoff so later work cannot jump ahead of it. A restart cannot bypass the
+durable retry time.
 
-Succeeded stages are never reset. Each retry appends a new `AgentRun`; the
-prior run retains its safe failure class, retryability, and at most two
-provider-attempt records containing provider, model, bounded duration, safe
-outcome, and safe failure class. Provider stdout, stderr, error messages, and
-credentials are not retained. Each schedule appends a system-attributed
-`REVIEW_AUTOMATIC_RETRY_SCHEDULED` audit with the stage, safe class, attempt,
-maximum attempts, and scheduled time.
+Succeeded stages are never reset for provider retries. Each retry appends a new
+`AgentRun`; the prior run retains its safe failure class, retryability, and at
+most two provider-attempt records containing provider, model, bounded duration,
+safe outcome, and safe failure class. Provider stdout, stderr, error messages,
+and credentials are not retained. Each scheduled retry appends a
+system-attributed `REVIEW_AUTOMATIC_RETRY_SCHEDULED` audit event. Attempt-three
+exhaustion and non-retryable failures remain terminal and leave the existing
+editor-triggered **Retry review** action available.
 
-Authentication, application, cancellation, unsafe-output, and every other
-non-retryable failure remain terminal. Attempt-three exhaustion also remains
-terminal and leaves the existing editor-triggered **Retry review** action
-available.
-
-The workspace renders `RETRYING` with the stage, safe failure class, attempt
-count, and scheduled time. Readiness treats a terminal provider result as a
-recent availability signal for five minutes; an old retained failure no longer
-causes a healthy worker heartbeat to report provider unavailability forever.
+Pinned subscription CLIs remain the production adapters: Codex first and
+Claude fallback. Strict schemas record requested and resolved provider/model,
+reasoning effort, evidence and output hashes, structured output, usage, and
+failure classification. Child processes receive no Studio database, session,
+publisher, backup, or Leadership credentials. Review execution no longer
+depends on live Leadership runtime capability checks; those checks belong to
+publication preflight.
 
 ## Real-time workspace status
 
-Review progress uses authenticated, same-origin Server-Sent Events rather than
-Next.js `_rsc` requests or repeated `router.refresh()` calls. The Node route
-`/api/reviews/[id]/events` is GET-only and has no mutation or CSRF exception.
-It responds with `text/event-stream`,
-`Cache-Control: private, no-cache, no-store, no-transform`, and
-`X-Accel-Buffering: no`.
+Review progress uses authenticated, same-origin Server-Sent Events at
+`/api/reviews/[id]/events`. The Node route is GET-only and responds with
+`text/event-stream`, private no-store cache controls, and disabled proxy
+buffering. It sends a complete snapshot on connection, emits only when the
+deterministic projection changes, uses comments as heartbeats, and closes after
+a terminal state or the bounded stream lifetime. Review durability, leases,
+cancellation, retries, and serialization do not depend on the browser
+connection.
 
-The connection lifecycle is:
-
-1. An active `QUEUED` or `RUNNING` review creates one native `EventSource`.
-2. The server authenticates the existing session and sends a complete
-   `review-status-v2` snapshot, regardless of `Last-Event-ID`.
-3. A bounded 1.5-second database projection check emits only when the safe
-   deterministic snapshot changes; 15-second comments provide heartbeats.
-4. A dropped connection shows **Reconnecting…** while native reconnection uses
-   a three-second server-advertised delay. The worker, lease, cancellation
-   fence, global serialization, and durable retry schedule do not depend on the
-   browser connection.
-5. A terminal snapshot closes the stream and causes one client refresh so
-   proposal content and controls come from the ordinary server render. An
-   active stream also closes after two minutes to force a fresh authenticated
-   snapshot.
-6. Component unmount, request abort, reader cancellation, database failure, and
-   stream expiry clear every timer. Database and schema errors close with only
-   a generic comment so native reconnection can recover.
-
-The safe snapshot contains the schema version, review job ID, job state, exact
-completed and total stage counts, all 24 ordinal/state rail entries, the current
-or first incomplete stage with a display name and applicable attempt, bounded
-retry state and scheduled time, terminal state and safe failure class, proposal
-readiness, and a deterministic SHA-256 snapshot identity. It deliberately
-excludes review content, prompts, evidence, structured provider output, raw
-failure text, credentials, stdout/stderr, claim tokens, leases, checkout
+The current `review-status-v4` snapshot reports four stages. Its parser also
+accepts retained 22- and 24-stage snapshots during rolling upgrades. The safe
+projection includes the review ID and state, exact completed and total counts,
+ordered stage entries, current or first incomplete stage, bounded retry state,
+safe terminal failure metadata, proposal readiness, lane ownership, and a
+deterministic snapshot identity. It excludes content, prompts, evidence,
+provider output, raw failure text, credentials, claim tokens, leases, checkout
 fences, and audit payloads.
 
-The client reducer rejects a snapshot for another review ID or an earlier local
-connection generation. Stage and progress updates do not alter editor,
-autosave, checkout, or proposal state. The rail transitions completed stages
-with a restrained color/scale transition, applies a slow traveling highlight
-only to the active stage, and uses one calm activity pulse during active work.
-Failure and cancellation stop motion. `prefers-reduced-motion` removes all
-review animations while preserving text, exact counts, the semantic
-progressbar, retry schedule, and controls. One `aria-live="polite"` region
-announces meaningful changes at most every five seconds, except important
-retry and terminal transitions; heartbeats and visual countdown ticks are not
-announced.
+The client reducer rejects another review ID or an older connection generation.
+A terminal snapshot causes one refresh so proposal content and authoritative
+revision state come from the server render. Reduced-motion preferences remove
+review animation while preserving text, exact counts, the progressbar, retry
+schedule, and controls.
 
 ## Requirement traceability
 
-| Requirement                                  | Implementation                                                | Deterministic evidence                                                    |
-| -------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Explicit retryability and three attempts     | `apps/review-worker/src/review.ts`                            | timeout recovery, exhaustion, and non-retryable integration scenarios     |
-| Durable backoff and restart safety           | `review_jobs.retry_not_before` plus due-only claim            | pre-due rejection and post-due reclaim in review integration              |
-| Preserve stages and attempt history          | `ReviewStep` aggregate state plus append-only attempt numbers | successful-stage and immutable-run assertions                             |
-| Cancellation, fencing, leases, serialization | fenced claim token and existing partial unique indexes        | cancellation/backoff, force-check-in/backoff, and expired-lease scenarios |
-| Safe retry audit                             | worker insert-only audit authority and bounded payload        | system attribution and exact safe payload assertion                       |
-| Provider diagnostics                         | bounded `agent_runs.provider_attempts` JSON                   | adapter double-timeout and persisted metadata assertions                  |
-| Retry UI                                     | workspace retry projection and status card                    | retry presentation unit test and browser/accessibility scenario           |
-| Readiness recovery                           | time-bounded provider-failure health signal                   | old-terminal-failure status test                                          |
-| Authenticated initial/reconnect snapshot     | review status route and stream lifecycle                      | auth rejection, initial event, and `Last-Event-ID` reconnect tests        |
-| Changed-only events and cleanup              | deterministic snapshot ID plus bounded timers                 | unchanged projection, heartbeat, abort, cancel, and DB-error tests        |
-| Live progress without reload                 | runtime-validated EventSource reducer                         | direct disposable-database browser advancement scenario                   |
-| Stale event rejection and terminal refresh   | review ID plus connection generation and refresh fence        | reducer terminal/stale tests and browser proposal-load scenario           |
-| Motion and accessible status                 | review progress presentation and reduced-motion CSS           | countdown/announcement unit tests plus reduced-motion Axe browser check   |
+| Requirement                            | Implementation                                          | Deterministic evidence                                                          |
+| -------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Three-to-five bounded phases           | Four explicit roles in `packages/domain`                | exact four-role DAG unit and integration assertions                             |
+| Typed findings and constrained intents | strict adapter schemas                                  | rejection of model-authored IDs, modes, and hashes                              |
+| Server-owned patch semantics           | review-worker materialization                           | stable IDs, derived modes/hashes, granular-target tests                         |
+| Exact shared validation seam           | incremental and final candidate validation              | publishable-v2 preservation and injected validation tests                       |
+| Typed blocking audit gate              | candidate-audit schema and worker gate                  | one-repair success and second-`REVISE` terminal scenarios                       |
+| Isolate malformed suggestions          | per-intent materialization boundary                     | malformed, missing-lineage, overlap, and named-block tests                      |
+| Exact proposal fencing                 | pinned input and current revision/hash fields           | edit-during-review and superseded-proposal integration tests                    |
+| Terminal lane release                  | terminal worker state transition                        | unrelated review claimed immediately after blocking failure                     |
+| Stage and total deadlines              | 90-second stage / eight-minute job budgets              | timeout recovery and no-next-stage deadline scenario                            |
+| Durable provider retry                 | retained attempt history and backoff                    | restart, exhaustion, non-retryable, fencing, and lease tests                    |
+| Rolling compatibility                  | retained v2 legacy role recognition and local validator | legacy prompt/output paths and 22/24-stage status parsing; v1 ingress rejection |
+| Safe live progress                     | `review-status-v4` SSE projection                       | status contract, reducer, and stream unit tests                                 |
 
 ## Known limitations
 
+The final audit is still a model judgment, although the server enforces its
+typed verdict, exact candidate identity, blocker references, and one-repair
+limit. Deterministic compilation and validation remain the authoritative gate.
+
+Global relationship and new publishable-v2 scoped-variant review suggestions
+are intentionally manual until review intents can carry their complete linked
+artifact bytes, paths, media types, and edge identities. Already-complete
+canonical relationship, scoped guide, and scoped practice snapshots remain
+publishable through the shared compiler. The review limit is a safe disabled
+capability, not a hidden publisher fallback.
+
 Provider diagnostics deliberately retain no stdout, stderr, provider error
-message, or active provider probe. They can distinguish provider order,
-duration, timeout, safe class, and fallback outcome, but deeper upstream
-diagnosis still requires provider-side telemetry. Readiness therefore reflects
-worker liveness plus a five-minute recent-result signal, not a synthetic call
-to either subscription provider.
-
-The SSE implementation intentionally performs one compact PostgreSQL query per
-active browser connection every 1.5 seconds. It does not hold a database
-connection between checks and is appropriate for this small private workbench,
-but query load grows linearly at roughly 0.67 queries per second per connected
-workspace. Before broad multi-tenant use, replace the per-connection check with
-a shared process broadcaster or PostgreSQL `LISTEN`/`NOTIFY` invalidation while
-retaining a full authoritative snapshot on every connect.
-
-Authentication is evaluated when each bounded stream opens. A session revoked
-from another browser can therefore retain access to this small, non-content
-status projection until the connection closes, for no more than two minutes;
-logout and workspace navigation close it immediately. A future shared
-broadcaster should also add explicit session-revocation fan-out if that window
-is no longer acceptable.
+message, or active synthetic probe. Readiness therefore reflects worker
+liveness plus recent safe provider results. The SSE implementation performs a
+compact periodic projection query per connected workspace; before broad
+multi-tenant use it should move to shared invalidation while retaining a full
+authoritative snapshot on every connection.

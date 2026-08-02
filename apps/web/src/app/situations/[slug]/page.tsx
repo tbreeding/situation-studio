@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import {
+  bundleHash,
   parseSituationSections,
   requiredSituationSections,
   situationBundleSchema,
@@ -9,7 +10,6 @@ import { WorkspaceEditor } from "@/components/workspace-editor";
 import { workspaceTabFromSearchParam } from "@/components/workspace-tabs";
 import { requireSession } from "@/server/auth/request";
 import {
-  newSituationTemplate,
   publicationBackupReadiness,
   publicationRecoveryRequired,
   workspaceForSlug,
@@ -45,6 +45,7 @@ export default async function SituationPage({
   const draft = workspace.drafts[0];
   const revision = draft?.revisions[0];
   const production = workspace.productionVersions[0];
+  if (!revision && !production) notFound();
   const productionBody =
     production?.artifacts.find((artifact) => artifact.kind === "SITUATION")
       ?.content.textBody ?? "";
@@ -53,19 +54,16 @@ export default async function SituationPage({
       ?.content.textBody ??
     productionBody ??
     "";
-  const fallback = newSituationTemplate({
-    situationId: workspace.id,
-    slug: workspace.slug,
-    title: workspace.title,
-  });
   const initialBundle = situationBundleSchema.parse(
-    revision?.bundleManifest ?? production?.bundleManifest ?? fallback.bundle,
+    revision?.bundleManifest ?? production?.bundleManifest,
   );
   let initialSections: Record<string, string>;
   try {
-    initialSections = parseSituationSections(initialBody || fallback.body);
+    initialSections = parseSituationSections(initialBody);
   } catch {
-    initialSections = parseSituationSections(fallback.body);
+    initialSections = Object.fromEntries(
+      requiredSituationSections.map((section) => [section, ""]),
+    );
   }
   const activeReview = workspace.reviewJobs[0];
   const publicationJob = workspace.publicationJobs[0];
@@ -89,6 +87,10 @@ export default async function SituationPage({
           ? {
               id: activeReview.proposal.id,
               summary: activeReview.proposal.summary,
+              currentRevisionId: activeReview.proposal.currentRevisionId,
+              currentBundleHash: activeReview.proposal.currentBundleHash,
+              supersededAt:
+                activeReview.proposal.supersededAt?.toISOString() ?? null,
               candidate: activeReview.proposal.candidate
                 ? {
                     body: activeReview.proposal.candidate.body,
@@ -169,7 +171,20 @@ export default async function SituationPage({
         }}
         initialBundle={initialBundle}
         initialSections={initialSections}
-        initialBody={initialBody || fallback.body}
+        initialBody={initialBody}
+        initialRevision={{
+          id: revision?.id ?? production?.id ?? workspace.id,
+          revision: revision?.revision ?? 0,
+          bundleHash:
+            revision?.bundleHash ??
+            production?.bundleHash ??
+            bundleHash(initialBundle),
+          savedAt: (
+            revision?.createdAt ??
+            production?.createdAt ??
+            workspace.createdAt
+          ).toISOString(),
+        }}
         productionBody={productionBody}
         sectionNames={[...requiredSituationSections]}
         checkout={

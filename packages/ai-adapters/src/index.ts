@@ -89,6 +89,54 @@ export const candidateEditSchema = z
       });
   });
 
+/**
+ * A model-authored request for one narrowly scoped change. Durable IDs,
+ * application modes, before/after hashes, and executable patch semantics are
+ * deliberately absent: the review worker derives all of them from the pinned
+ * candidate and this intent.
+ */
+export const changeIntentSchema = z
+  .object({
+    targetKind: z.enum([
+      "SECTION",
+      "METADATA",
+      "SCOPED_VARIANT",
+      "RELATIONSHIP",
+      "EMBED",
+      "BUNDLE",
+    ]),
+    targetKey: z.string().min(1).max(240),
+    afterBody: z.string().max(512_000),
+    problem: z.string().min(1).max(4_000),
+    explanation: z.string().min(1).max(4_000),
+    rationale: z.string().min(1).max(12_000),
+    upstreamFindingIds: z.array(z.string().min(1).max(240)).min(1).max(50),
+    evidenceRoleCodes: z.array(z.string().min(1).max(100)).max(30),
+  })
+  .strict()
+  .superRefine((intent, context) => {
+    if (
+      intent.targetKind === "SECTION" &&
+      !parseSituationSectionTargetKey(intent.targetKey)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["targetKey"],
+        message:
+          "A section target must name a top-level section, a section/subheading, or a section#named-block anchor.",
+      });
+    if (
+      intent.targetKind === "SCOPED_VARIANT" &&
+      !parseScopedVariantTargetKey(intent.targetKey)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["targetKey"],
+        message:
+          "A scoped-variant target must name a linked logical ID, optionally followed by #new-variant-id.",
+      });
+  });
+
 export const normalizedOutputSchema = z.object({
   role: z.string().min(1).max(100),
   summary: z.string().min(1).max(2_000),
@@ -100,9 +148,57 @@ export const bundleWriterOutputSchema = normalizedOutputSchema.extend({
   candidateEdits: z.array(candidateEditSchema).max(200),
 });
 
+export const candidateBuilderOutputSchema = normalizedOutputSchema.extend({
+  changeIntents: z.array(changeIntentSchema).max(200),
+});
+
+export const candidateAuditOutputSchema = normalizedOutputSchema
+  .extend({
+    candidateHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    verdict: z.enum(["PASS", "REVISE"]),
+    blockingFindingIds: z.array(z.string().min(1).max(240)).max(200),
+  })
+  .superRefine((audit, context) => {
+    const ownBlocking = new Set(
+      audit.findings
+        .filter((finding) => finding.severity === "blocking")
+        .map((finding) => finding.id),
+    );
+    if (audit.verdict === "PASS" && audit.blockingFindingIds.length > 0)
+      context.addIssue({
+        code: "custom",
+        path: ["blockingFindingIds"],
+        message: "A passing candidate audit cannot retain blocking findings.",
+      });
+    if (audit.verdict === "PASS" && ownBlocking.size > 0)
+      context.addIssue({
+        code: "custom",
+        path: ["findings"],
+        message: "A passing candidate audit cannot emit a blocking finding.",
+      });
+    if (audit.verdict === "REVISE" && audit.blockingFindingIds.length === 0)
+      context.addIssue({
+        code: "custom",
+        path: ["blockingFindingIds"],
+        message: "A revision verdict must identify at least one blocker.",
+      });
+    for (const id of ownBlocking)
+      if (
+        !audit.blockingFindingIds.includes(id) &&
+        !audit.blockingFindingIds.includes(`${audit.role}:${id}`)
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["blockingFindingIds"],
+          message: `Blocking audit finding ${id} must be referenced by the verdict.`,
+        });
+  });
+
 export type AdapterOutput =
   | z.infer<typeof normalizedOutputSchema>
-  | z.infer<typeof bundleWriterOutputSchema>;
+  | z.infer<typeof bundleWriterOutputSchema>
+  | z.infer<typeof candidateBuilderOutputSchema>
+  | z.infer<typeof candidateAuditOutputSchema>;
 
 export const providerAttemptMetadataSchema = z.object({
   provider: z.enum(["codex", "claude", "deterministic"]),
@@ -137,7 +233,8 @@ export type AdapterRequest = {
   effort: "low" | "medium" | "high" | "xhigh";
   system: string;
   evidence: string;
-  outputKind: "review" | "bundle-writer";
+  outputKind:
+    "review" | "bundle-writer" | "candidate-builder" | "candidate-audit";
   signal?: AbortSignal;
 };
 
@@ -202,9 +299,12 @@ export type SubscriptionCliProvider = {
 };
 
 function outputSchemaFor(request: AdapterRequest) {
-  return request.outputKind === "bundle-writer"
-    ? bundleWriterOutputSchema
-    : normalizedOutputSchema;
+  if (request.outputKind === "bundle-writer") return bundleWriterOutputSchema;
+  if (request.outputKind === "candidate-builder")
+    return candidateBuilderOutputSchema;
+  if (request.outputKind === "candidate-audit")
+    return candidateAuditOutputSchema;
+  return normalizedOutputSchema;
 }
 
 function providerJsonSchema(request: AdapterRequest) {
@@ -640,12 +740,37 @@ export async function runDeterministic(
   request: AdapterRequest,
 ): Promise<AdapterResult> {
   assertAllowedRequest(request);
+  let candidateHash = "0".repeat(64);
+  if (request.outputKind === "candidate-audit") {
+    try {
+      const evidence = JSON.parse(request.evidence) as {
+        materializedCandidate?: { candidateHash?: unknown };
+      };
+      if (
+        typeof evidence.materializedCandidate?.candidateHash === "string" &&
+        /^[a-f0-9]{64}$/u.test(evidence.materializedCandidate.candidateHash)
+      )
+        candidateHash = evidence.materializedCandidate.candidateHash;
+    } catch {
+      // The deterministic fixture remains schema-valid when evidence is not JSON.
+    }
+  }
   const output = outputSchemaFor(request).parse({
     role: request.role,
     summary: "Deterministic fixture completed.",
     findings: [],
     provenance: "deterministic-provider-v1",
     ...(request.outputKind === "bundle-writer" ? { candidateEdits: [] } : {}),
+    ...(request.outputKind === "candidate-builder"
+      ? { changeIntents: [] }
+      : {}),
+    ...(request.outputKind === "candidate-audit"
+      ? {
+          candidateHash,
+          verdict: "PASS",
+          blockingFindingIds: [],
+        }
+      : {}),
   });
   return {
     requestedProvider: "deterministic",

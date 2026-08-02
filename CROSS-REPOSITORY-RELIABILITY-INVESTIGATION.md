@@ -2,6 +2,12 @@
 
 ## Status and scope
 
+> Historical failure evidence. The current local deterministic reliability
+> overhaul addresses the reproduced contract, typed-route, and finalization
+> gaps, but has not been deployed and has not changed the production pointer.
+> See `docs/validation/deterministic-reliability-overhaul-2026-08-02.md` for
+> the new implementation evidence.
+
 - Investigation completed: 2026-07-29.
 - Coordination repository:
   `/Users/timothybreeding/projects/situation-studio`.

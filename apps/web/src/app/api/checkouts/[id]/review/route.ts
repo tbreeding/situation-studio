@@ -3,7 +3,11 @@ import { z } from "zod";
 import { hasRole, requireMutationSession } from "@/server/auth/request";
 import { WorkflowError, queueReview } from "@/server/workflows/situations";
 
-const inputSchema = z.object({ fence: z.string().regex(/^\d+$/u) });
+const inputSchema = z.object({
+  fence: z.string().regex(/^\d+$/u),
+  revisionId: z.uuid(),
+  bundleHash: z.string().regex(/^[a-f0-9]{64}$/u),
+});
 
 export async function POST(
   request: Request,
@@ -24,6 +28,8 @@ export async function POST(
       actorId: auth.session.userId,
       checkoutId: id,
       fence: BigInt(input.fence),
+      revisionId: input.revisionId,
+      bundleHash: input.bundleHash,
     });
     return NextResponse.json({ jobId: job.id, state: job.state });
   } catch (error) {

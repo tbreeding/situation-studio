@@ -3,6 +3,7 @@ import { reviewStatusEventsResponse } from "../src/server/review-status-stream";
 import {
   reviewStatusSnapshotSchema,
   REVIEW_STAGE_TOTAL,
+  REVIEW_STATUS_SCHEMA_VERSION,
   type ReviewStatusSnapshot,
 } from "../src/review-status-contract";
 
@@ -15,7 +16,7 @@ function snapshot(
   const currentOrdinal =
     completedStages === REVIEW_STAGE_TOTAL ? null : completedStages + 1;
   return reviewStatusSnapshotSchema.parse({
-    schemaVersion: "review-status-v3",
+    schemaVersion: REVIEW_STATUS_SCHEMA_VERSION,
     reviewJobId,
     state: completedStages === REVIEW_STAGE_TOTAL ? "SUCCEEDED" : "RUNNING",
     completedStages,

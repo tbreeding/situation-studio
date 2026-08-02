@@ -45,15 +45,17 @@ export default defineConfig({
   retries: 0,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
-    baseURL: "http://localhost:3015",
+    baseURL: "https://localhost:3015",
+    ignoreHTTPSErrors: true,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
   webServer: {
     command:
-      "pnpm --filter @situation-studio/web build && env NODE_ENV=test pnpm --filter @situation-studio/web start",
-    url: "http://127.0.0.1:3015/health/live",
+      "pnpm --filter @situation-studio/web build && node tests/browser/start-release-server.mjs",
+    url: "https://localhost:3015/health/live",
+    ignoreHTTPSErrors: true,
     reuseExistingServer: false,
     timeout: 120_000,
     env: {
@@ -62,10 +64,8 @@ export default defineConfig({
       SESSION_SECRET: process.env.SESSION_SECRET ?? "s".repeat(32),
       CSRF_SECRET: process.env.CSRF_SECRET ?? "c".repeat(32),
       THROTTLE_SECRET: process.env.THROTTLE_SECRET ?? "t".repeat(32),
-      SITUATION_STUDIO_ORIGIN: "http://localhost:3015",
-      LEADERSHIP_RUNTIME_CAPABILITIES_URL:
-        process.env.LEADERSHIP_RUNTIME_CAPABILITIES_URL ??
-        compatibleCapabilitiesUrl(),
+      SITUATION_STUDIO_ORIGIN: "https://localhost:3015",
+      LEADERSHIP_RUNTIME_CAPABILITIES_URL: compatibleCapabilitiesUrl(),
     },
   },
   projects: [

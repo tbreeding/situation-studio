@@ -35,16 +35,19 @@ const requiredFeatures = [
   "scoped-renderer-context-v1",
   "typed-projection-parity-v1",
   "affected-route-proof-v2",
+  "affected-route-proof-json-v1",
 ];
 if (
   payload.schemaVersion !== "leadership-studio-capabilities-v1" ||
   !/^[a-f0-9]{40}$/u.test(payload.deployment?.commit ?? "") ||
   !/^[a-f0-9]{64}$/u.test(payload.deployment?.archiveSha256 ?? "") ||
-  payload.contracts?.content?.version !== "0.2.0" ||
+  payload.contracts?.content?.version !== "0.3.0" ||
   payload.contracts?.content?.packageSha256 !==
-    "6441251640d45ac3b5280a8e586c108e0e678612c13f7421566b342326321aba" ||
+    "ef9a723608977b3f9ea3c25bd1a7cd5f323871854937c0e462a21ca057ee9f7f" ||
   payload.contracts?.content?.validationPolicyHash !==
-    "4485b61546c3abbc4d9dc1540d9a639eb7c765501246bd361a7ccd81a31de01e" ||
+    "9131270fbc6a2e579ee10752fddf3f1f133b257a554666ea946bb76439deceee" ||
+  payload.contracts?.publicationCompiler?.digest !==
+    "5a0b47948760e9134eaac1727bc658de56c87e52bcc9e03db424bb80ea2d4c95" ||
   payload.contracts?.situation?.version !== "1.0.0" ||
   payload.contracts?.situation?.packageSha256 !==
     "9cd3aeebb384edb2c1fb70647b55d0bbed147910216293fea2979d8eec7b17f4" ||

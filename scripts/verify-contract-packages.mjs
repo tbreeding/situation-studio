@@ -8,16 +8,20 @@ const identities = {
   content: {
     archive: path.join(
       root,
-      "vendor/leadership-field-guide-content-contracts-0.2.0.tgz",
+      "vendor/leadership-field-guide-content-contracts-0.3.0.tgz",
     ),
     runtime: path.join(
       root,
       "apps/publisher/node_modules/@leadership-field-guide/content-contracts/dist/index.js",
     ),
-    digest: "6441251640d45ac3b5280a8e586c108e0e678612c13f7421566b342326321aba",
-    version: "0.2.0",
+    digest: "ef9a723608977b3f9ea3c25bd1a7cd5f323871854937c0e462a21ca057ee9f7f",
+    version: "0.3.0",
     validationPolicyHash:
-      "4485b61546c3abbc4d9dc1540d9a639eb7c765501246bd361a7ccd81a31de01e",
+      "9131270fbc6a2e579ee10752fddf3f1f133b257a554666ea946bb76439deceee",
+    compilerDigest:
+      "5a0b47948760e9134eaac1727bc658de56c87e52bcc9e03db424bb80ea2d4c95",
+    validatorDigest:
+      "0104cd5e4f02ed5172ca5b7c14e31a694e11319e703cbeb3eec4d226518fc53a",
   },
   situation: {
     archive: path.join(
@@ -48,7 +52,10 @@ const content = await import(
 );
 if (
   content.CONTENT_CONTRACT_VERSION !== identities.content.version ||
-  content.validationPolicyHash !== identities.content.validationPolicyHash
+  content.validationPolicyHash !== identities.content.validationPolicyHash ||
+  content.PUBLICATION_COMPILER_DIGEST !== identities.content.compilerDigest ||
+  content.PUBLISHABLE_SITUATION_VALIDATOR_DIGEST !==
+    identities.content.validatorDigest
 )
   throw new Error("Resolved content contract identity differs.");
 
@@ -64,6 +71,8 @@ console.log(
       version: identities.content.version,
       packageSha256: identities.content.digest,
       validationPolicyHash: identities.content.validationPolicyHash,
+      compilerDigest: identities.content.compilerDigest,
+      validatorDigest: identities.content.validatorDigest,
     },
     situationContract: {
       version: identities.situation.version,

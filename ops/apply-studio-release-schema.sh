@@ -147,6 +147,70 @@ docker exec postgres16 psql \
           AND table_name = 'verification_receipts'
           AND column_name = 'route_probe_code'
       )
+      AND NOT EXISTS (
+        SELECT required.column_name
+        FROM (VALUES
+          ('input_bundle_hash')
+        ) AS required(column_name)
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns actual
+          WHERE actual.table_schema = 'public'
+            AND actual.table_name = 'review_jobs'
+            AND actual.column_name = required.column_name
+          )
+      )
+      AND NOT EXISTS (
+        SELECT required.column_name
+        FROM (VALUES
+          ('input_bundle_hash'),
+          ('current_revision_id'),
+          ('current_bundle_hash'),
+          ('superseded_at'),
+          ('superseded_by_revision_id')
+        ) AS required(column_name)
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns actual
+          WHERE actual.table_schema = 'public'
+            AND actual.table_name = 'review_proposals'
+            AND actual.column_name = required.column_name
+        )
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'publication_preflight_receipts'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'publication_preflight_receipts'
+          AND column_name = 'sealed_at'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'publication_candidate_artifacts'
+      )
+      AND NOT EXISTS (
+        SELECT required.column_name
+        FROM (VALUES
+          ('preflight_receipt_id'),
+          ('candidate_hash'),
+          ('legacy_preflight_exempt')
+        ) AS required(column_name)
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns actual
+          WHERE actual.table_schema = 'public'
+            AND actual.table_name = 'publication_jobs'
+            AND actual.column_name = required.column_name
+        )
+      )
       AND has_table_privilege(
         'situation_studio_review_worker',
         'public.audit_events',
@@ -166,6 +230,36 @@ docker exec postgres16 psql \
         'situation_studio_web',
         'public.publication_events',
         'INSERT'
+      )
+      AND has_table_privilege(
+        'situation_studio_web',
+        'public.publication_preflight_receipts',
+        'INSERT'
+      )
+      AND has_table_privilege(
+        'situation_studio_web',
+        'public.publication_preflight_receipts',
+        'UPDATE'
+      )
+      AND has_table_privilege(
+        'situation_studio_web',
+        'public.publication_candidate_artifacts',
+        'SELECT'
+      )
+      AND has_table_privilege(
+        'situation_studio_web',
+        'public.publication_candidate_artifacts',
+        'INSERT'
+      )
+      AND has_table_privilege(
+        'situation_studio_publisher',
+        'public.publication_preflight_receipts',
+        'SELECT'
+      )
+      AND has_table_privilege(
+        'situation_studio_publisher',
+        'public.publication_candidate_artifacts',
+        'SELECT'
       )
     )::integer AS release_schema_guard;
   " >/dev/null

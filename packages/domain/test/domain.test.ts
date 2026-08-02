@@ -1,25 +1,33 @@
 import { describe, expect, it } from "vitest";
 import {
   applySectionProposal,
+  applyDeterministicSituationChange,
   AUTHORED_PRACTICE_ID_MAX_LENGTH,
   assertSafeManagedMdx,
   bundleHash,
   canonicalText,
   createScopedVariant,
+  deterministicSituationChangeTargetBefore,
   deriveSituationStatus,
   parseScopedVariantTargetKey,
   parseSituationSections,
   parseSituationSectionTargetKey,
   publicationConflictDecision,
   physicalPracticeId,
+  PUBLISHABLE_CONTRACT_VERSION,
+  PUBLISHABLE_VALIDATION_POLICY_VERSION,
+  publishableBundleHash,
+  publishableSituationBundleSchema,
   scopedPracticeSchema,
   requiredSituationSections,
   reviewStages,
   serializeSituationSections,
   sha256,
   validateScopedArtifactBody,
+  validatePublishableSituationBundle,
   type SituationBundle,
   type SituationSections,
+  type PublishableSituationBundle,
 } from "../src/index";
 
 function sections(): SituationSections {
@@ -66,6 +74,107 @@ function bundle(): SituationBundle {
   };
 }
 
+function publishableBundle(): {
+  bundle: PublishableSituationBundle;
+  body: string;
+} {
+  const authored = sections();
+  authored["Two-minute practice"] =
+    '<PracticeEmbed surface="situation" variant="emotion-without-diagnosis" practiceId="listen-first" compact />';
+  authored["I have my next move"] =
+    '<PreparedAction skill="feedback" scenario="tears-during-difficult-conversation" />';
+  const body = serializeSituationSections(authored);
+  const candidate = publishableSituationBundleSchema.parse({
+    schemaVersion: "situation-bundle-v2",
+    contractVersion: PUBLISHABLE_CONTRACT_VERSION,
+    validationPolicyVersion: PUBLISHABLE_VALIDATION_POLICY_VERSION,
+    situationId: "d7682090-ae7f-442d-9e5e-7f9bd942104b",
+    visibility: "PUBLIC",
+    metadata: {
+      slug: "tears-during-difficult-conversation",
+      title: "Someone tears up during a difficult conversation",
+      description:
+        "Respond to emotion without diagnosing it while keeping a difficult management conversation humane and clear.",
+      stakes:
+        "The response can either preserve dignity and clarity or make an already difficult conversation feel unsafe.",
+      primarySkill: "feedback",
+      preparationTime: "15 minutes",
+      emotionalLoad: "high",
+      pattern: "first-occurrence",
+      scope: "individual",
+      tags: ["feedback", "emotion"],
+      audience: ["manager"],
+      support: [],
+      published: "2026-07-01",
+      lastReviewed: "2026-08-02",
+      author: "tim-breeding",
+      reviewer: "tim-breeding",
+      sourceReferences: ["nvc-observation-feeling-need-request"],
+      relatedSituationIds: [
+        "delivering-hard-feedback",
+        "responding-to-defensiveness",
+      ],
+      practiceId: "listen-first",
+      practiceVariant: "emotion-without-diagnosis",
+      fieldNotePresent: true,
+      safetyEscalationNotePresent: true,
+      socialHook:
+        "A pause can honor emotion without abandoning the conversation.",
+      campaignCluster: "difficult_conversations",
+      reviewStatus: "human-approved",
+    },
+    bodyHash: sha256(canonicalText(body)),
+    managedComponents: {
+      practiceEmbed: {
+        compact: true,
+        practiceId: "listen-first",
+        surface: "situation",
+        variant: "emotion-without-diagnosis",
+      },
+      preparedAction: {
+        scenario: "tears-during-difficult-conversation",
+        skill: "feedback",
+      },
+    },
+    artifacts: [],
+    relationships: [
+      {
+        kind: "PRACTICE",
+        logicalId: "practice:listen-first",
+        originalLogicalId: "practice:listen-first",
+        position: 0,
+        contentHash: "a".repeat(64),
+        visibility: "GLOBAL",
+      },
+      {
+        kind: "SOURCE",
+        logicalId: "source:nvc-observation-feeling-need-request",
+        originalLogicalId: "source:nvc-observation-feeling-need-request",
+        position: 0,
+        contentHash: "b".repeat(64),
+        visibility: "GLOBAL",
+      },
+    ],
+    promotion: {
+      status: "human-review-required",
+      canonical: "/situations/tears-during-difficult-conversation",
+      socialDrafts: [
+        "A pause can honor emotion without abandoning the conversation.",
+      ],
+      scenarioQuestion: "What would you do next?",
+      pullQuoteIdea: "Make room without making an assumption.",
+      utm: {
+        campaign: "difficult_conversations",
+        content: "tears_during_difficult_conversation",
+      },
+      ogPreview:
+        "/situations/tears-during-difficult-conversation/opengraph-image",
+    },
+    contextHashes: ["a".repeat(64), "b".repeat(64)],
+  });
+  return { bundle: candidate, body };
+}
+
 describe("domain invariants", () => {
   it("derives the small editorial status model", () => {
     expect(
@@ -94,6 +203,138 @@ describe("domain invariants", () => {
     const left = bundle();
     const right = { ...left, contextHashes: [...left.contextHashes].reverse() };
     expect(bundleHash(left)).toBe(bundleHash(right));
+  });
+
+  it("includes every authoritative frontmatter field in v2 revision identity", () => {
+    const original = publishableBundle().bundle;
+    const changed = publishableSituationBundleSchema.parse({
+      ...original,
+      metadata: {
+        ...original.metadata,
+        practiceVariant: "pause-and-name",
+      },
+    });
+    expect(publishableBundleHash(changed)).not.toBe(
+      publishableBundleHash(original),
+    );
+  });
+
+  it.each([
+    ["empty sources", { sourceReferences: [] }],
+    [
+      "duplicate sources",
+      {
+        sourceReferences: [
+          "nvc-observation-feeling-need-request",
+          "nvc-observation-feeling-need-request",
+        ],
+      },
+    ],
+    [
+      "self relationship",
+      {
+        relatedSituationIds: [
+          "tears-during-difficult-conversation",
+          "responding-to-defensiveness",
+        ],
+      },
+    ],
+  ])(
+    "uses Leadership's exact frontmatter policy for %s",
+    (_label, metadata) => {
+      const original = publishableBundle().bundle;
+      expect(
+        publishableSituationBundleSchema.safeParse({
+          ...original,
+          metadata: { ...original.metadata, ...metadata },
+        }).success,
+      ).toBe(false);
+    },
+  );
+
+  it("applies a preview and an accepted automatic change through one exact applier", () => {
+    const original = publishableBundle();
+    const before = deterministicSituationChangeTargetBefore(
+      original.bundle,
+      original.body,
+      { targetKind: "SECTION", targetKey: "The short answer" },
+    );
+    const change = {
+      targetKind: "SECTION" as const,
+      targetKey: "The short answer",
+      beforeHash: before.beforeHash,
+      afterBody: "Name the observation, pause, and ask one grounded question.",
+    };
+    const preview = applyDeterministicSituationChange({
+      bundle: original.bundle,
+      body: original.body,
+      change,
+    });
+    const accepted = applyDeterministicSituationChange({
+      bundle: original.bundle,
+      body: original.body,
+      change,
+    });
+    expect(accepted).toEqual(preview);
+    expect(bundleHash(accepted.bundle)).toBe(bundleHash(preview.bundle));
+  });
+
+  it("rejects the tears PracticeEmbed mismatch before publication", () => {
+    const original = publishableBundle();
+    const mismatchedBody = original.body.replace(
+      ' variant="emotion-without-diagnosis"',
+      "",
+    );
+    const result = validatePublishableSituationBundle(
+      {
+        ...original.bundle,
+        bodyHash: sha256(canonicalText(mismatchedBody)),
+      },
+      mismatchedBody,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(" ")).toMatch(
+      /PracticeEmbed|managed component properties/u,
+    );
+  });
+
+  it("rejects a practice identity change that leaves the context relationship behind", () => {
+    const original = publishableBundle();
+    const changedBody = original.body.replace(
+      'practiceId="listen-first"',
+      'practiceId="name-the-pattern"',
+    );
+    const result = validatePublishableSituationBundle(
+      {
+        ...original.bundle,
+        metadata: {
+          ...original.bundle.metadata,
+          practiceId: "name-the-pattern",
+        },
+        managedComponents: {
+          ...original.bundle.managedComponents,
+          practiceEmbed: {
+            ...original.bundle.managedComponents.practiceEmbed,
+            practiceId: "name-the-pattern",
+          },
+        },
+        bodyHash: sha256(canonicalText(changedBody)),
+      },
+      changedBody,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(" ")).toMatch(/practice relationship/u);
+  });
+
+  it("compares managed MDX properties semantically, independent of order", () => {
+    const original = publishableBundle();
+    expect(
+      validatePublishableSituationBundle(original.bundle, original.body),
+    ).toEqual({
+      valid: true,
+      bundleHash: publishableBundleHash(original.bundle),
+      errors: [],
+    });
   });
 
   it("round-trips all required editable sections", () => {
@@ -186,6 +427,7 @@ describe("domain invariants", () => {
   it("forks shared content with owner and base provenance", () => {
     const variant = createScopedVariant({
       situationId: "d7682090-ae7f-442d-9e5e-7f9bd942104b",
+      ownerSituationSlug: "scoped-variant-test",
       kind: "PRACTICE",
       originalLogicalId: "practice:listen-first",
       originalContentHash: "a".repeat(64),
@@ -193,6 +435,13 @@ describe("domain invariants", () => {
     });
     expect(variant.artifact.visibility).toBe("SITUATION_SCOPED");
     expect(variant.artifact.forkedFromContentHash).toBe("a".repeat(64));
+    expect(variant.artifact).toMatchObject({
+      encoding: "UTF8",
+      mediaType: "application/json; charset=utf-8",
+    });
+    expect(variant.artifact.path).toMatch(
+      /^content\/scoped\/scoped-variant-test\/practice\/.+\.json$/u,
+    );
   });
 
   it("enforces Leadership's complete scoped-practice contract upstream", () => {
@@ -302,28 +551,24 @@ describe("domain invariants", () => {
     ).toBe("NEEDS_REFRESH");
   });
 
-  it("defines the complete durable 24-stage review DAG", () => {
-    expect(reviewStages).toHaveLength(24);
-    expect(reviewStages[0]).toMatchObject({
-      role: "surface-mapper",
-      dependencies: [],
-    });
-    expect(
-      reviewStages.find((stage) => stage.role === "issue-register"),
-    ).toMatchObject({
-      dependencies: [
-        "critic-nvc",
-        "critic-negotiation",
-        "critic-coaching",
-        "critic-team-health",
-        "critic-radical-candor",
-        "critic-change-systems",
-        "critic-manager-tools",
-      ],
-    });
-    expect(
-      reviewStages.find((stage) => stage.role === "rebuttal-nvc")?.dependencies,
-    ).toEqual(["issue-register", "critic-nvc"]);
-    expect(reviewStages.at(-1)?.dependencies).toHaveLength(4);
+  it("defines the bounded four-phase review DAG", () => {
+    expect(reviewStages).toEqual([
+      { ordinal: 1, role: "context-mapper", dependencies: [] },
+      {
+        ordinal: 2,
+        role: "critical-review",
+        dependencies: ["context-mapper"],
+      },
+      {
+        ordinal: 3,
+        role: "candidate-builder",
+        dependencies: ["critical-review"],
+      },
+      {
+        ordinal: 4,
+        role: "candidate-audit",
+        dependencies: ["candidate-builder"],
+      },
+    ]);
   });
 });

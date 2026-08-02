@@ -2,6 +2,10 @@
 
 Status: complete on disposable databases on 2026-07-23.
 
+> Historical checkpoint evidence. Leadership's current unreleased contract is
+> 0.3.0; see `../architecture.md` and
+> `../validation/deterministic-reliability-overhaul-2026-08-02.md`.
+
 Leadership now owns the versioned situation-bundle contract, scoped
 visibility/ownership metadata, situation-scoped bindings, publisher
 provenance, expected-generation validation/promotion/restore functions, and a
@@ -17,7 +21,7 @@ A migration-parity test archives the clean Leadership baseline commit
 `58e8634cb3901e55cf58bc17e9f3cac71d201f37`, applies only its baseline
 migration, imports the production-shaped fixture, captures every legacy table,
 applies the additive migration, and proves exact legacy-row and current-reader
-parity. Leadership integration currently passes 13 tests.
+parity. At that checkpoint, Leadership integration passed 13 tests.
 
 Evidence:
 

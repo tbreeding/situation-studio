@@ -8,7 +8,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@leadership-field-guide/content-contracts": "file:../../vendor/leadership-field-guide-content-contracts-0.2.0.tgz",
+    "@leadership-field-guide/content-contracts": "file:../../vendor/leadership-field-guide-content-contracts-0.3.0.tgz",
     "@situation-studio/db": "workspace:*",
     "@situation-studio/domain": "workspace:*",
     "@situation-studio/leadership-bridge": "workspace:*",

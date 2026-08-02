@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   AdapterFailure,
   bundleWriterOutputSchema,
+  candidateAuditOutputSchema,
+  candidateBuilderOutputSchema,
+  changeIntentSchema,
   runDeterministic,
   runWithFallback,
   type CliExecutor,
@@ -120,6 +123,94 @@ describe("AI adapter contracts", () => {
         ],
       }),
     ).toThrow(/section target/u);
+  });
+
+  it("keeps executable change mechanics out of model-authored intents", () => {
+    const intent = {
+      targetKind: "SECTION" as const,
+      targetKey: "The short answer",
+      afterBody: "Name the directly observed pattern.",
+      problem: "The opening relies on an interpretation.",
+      explanation: "Makes the opening observable.",
+      rationale: "The change separates observation from judgment.",
+      upstreamFindingIds: ["critical-review:observable-language"],
+      evidenceRoleCodes: ["critical-review"],
+    };
+    expect(
+      candidateBuilderOutputSchema.parse({
+        ...reviewOutput("candidate-builder"),
+        changeIntents: [intent],
+      }).changeIntents,
+    ).toEqual([intent]);
+    expect(() =>
+      changeIntentSchema.parse({
+        ...intent,
+        id: "82d81dd7-a6fb-4a80-9e40-a6e2877f895c",
+      }),
+    ).toThrow(/unrecognized key/iu);
+    expect(() =>
+      changeIntentSchema.parse({ ...intent, applicationMode: "AUTOMATIC" }),
+    ).toThrow(/unrecognized key/iu);
+    expect(() =>
+      changeIntentSchema.parse({ ...intent, beforeHash: "a".repeat(64) }),
+    ).toThrow(/unrecognized key/iu);
+  });
+
+  it("requires candidate audits to name every blocking finding", () => {
+    const base = {
+      ...reviewOutput("candidate-audit"),
+      candidateHash: "a".repeat(64),
+    };
+    expect(
+      candidateAuditOutputSchema.parse({
+        ...base,
+        verdict: "PASS",
+        blockingFindingIds: [],
+      }).verdict,
+    ).toBe("PASS");
+    expect(() =>
+      candidateAuditOutputSchema.parse({
+        ...base,
+        verdict: "REVISE",
+        blockingFindingIds: [],
+      }),
+    ).toThrow(/at least one blocker/iu);
+    expect(() =>
+      candidateAuditOutputSchema.parse({
+        ...base,
+        findings: [
+          {
+            id: "unsafe-candidate",
+            severity: "blocking",
+            targetKind: "BUNDLE",
+            targetKey: "candidate",
+            summary: "The candidate is not safe to publish.",
+            rationale: "A blocking audit finding must prevent success.",
+            evidenceRoleCodes: ["candidate-audit"],
+          },
+        ],
+        verdict: "PASS",
+        blockingFindingIds: [],
+      }),
+    ).toThrow(/passing candidate audit/iu);
+    expect(
+      candidateAuditOutputSchema.parse({
+        ...base,
+        findings: [
+          {
+            id: "unsafe-candidate",
+            severity: "blocking",
+            targetKind: "BUNDLE",
+            targetKey: "candidate",
+            summary: "The candidate is not safe to publish.",
+            rationale: "A blocking audit finding must prevent success.",
+            evidenceRoleCodes: ["candidate-audit"],
+          },
+        ],
+        verdict: "REVISE",
+        blockingFindingIds: ["candidate-audit:unsafe-candidate"],
+      }).blockingFindingIds,
+    ).toEqual(["candidate-audit:unsafe-candidate"]);
   });
 
   it("rejects evidence that resembles a secret-bearing environment", async () => {

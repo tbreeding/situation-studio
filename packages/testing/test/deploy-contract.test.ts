@@ -39,6 +39,10 @@ const previousReleaseDecoderPath = path.join(
   root,
   "ops/decode-studio-previous-release.sh",
 );
+const bufferedRemoteRunnerPath = path.join(
+  root,
+  "ops/run-buffered-remote-script.sh",
+);
 const provisionDatabasePath = path.join(
   root,
   "ops/provision-studio-database.sql",
@@ -113,6 +117,51 @@ function executeWithInput(file: string, args: string[], input: string) {
 }
 
 describe("production deployment contract", () => {
+  test("the remote runner consumes the complete program before executing it", async () => {
+    await expect(
+      executeFile("bash", ["-n", bufferedRemoteRunnerPath]),
+    ).resolves.toMatchObject({ stderr: "" });
+    expect(await readFile(bufferedRemoteRunnerPath, "utf8")).toContain(
+      'exec /bin/bash -c "${remote_script}" -- "$@" </dev/null',
+    );
+    const result = await executeWithInput(
+      "bash",
+      [bufferedRemoteRunnerPath, "first", "second"],
+      `set -euo pipefail
+test "\${1}" = first
+test "\${2}" = second
+test -z "$(cat)"
+printf 'buffered:%s:%s\\n' "\${1}" "\${2}"
+`,
+    );
+    expect(result).toEqual({
+      stdout: "buffered:first:second\n",
+      stderr: "",
+    });
+
+    const trapped = await executeFile("bash", [
+      "-c",
+      `set +e
+/bin/bash "\${1}" first <<'PAYLOAD'
+set -euo pipefail
+trap 'printf "trap:%s\\n" "\${1}"' EXIT
+exit 37
+PAYLOAD
+status="\${?}"
+printf 'status:%s\\n' "\${status}"
+`,
+      "buffered-runner-test",
+      bufferedRemoteRunnerPath,
+    ]);
+    expect(trapped).toMatchObject({
+      stdout: "trap:first\nstatus:37\n",
+      stderr: "",
+    });
+    await expect(
+      executeWithInput("bash", [bufferedRemoteRunnerPath], "  \n\t\n"),
+    ).rejects.toThrow("The buffered remote script is empty.");
+  });
+
   test("the launcher is syntactically valid and guards production before SSH", async () => {
     await expect(
       executeFile("bash", ["-n", deployPath]),
@@ -135,6 +184,7 @@ describe("production deployment contract", () => {
       "SITUATION_STUDIO_PUBLISHER_USER",
       "LEADERSHIP_RUNTIME_CAPABILITIES_URL",
       "ops/verify-leadership-runtime-capabilities.mjs",
+      "ops/run-buffered-remote-script.sh",
     ])
       expect(position(source, guard)).toBeLessThan(firstSsh);
   });
@@ -577,6 +627,17 @@ describe("production deployment contract", () => {
     expect(processManagerCommands).toHaveLength(12);
     for (const command of processManagerCommands)
       expect(command).toContain("</dev/null");
+    const interactiveDatabaseCommands = logicalCommands.filter((command) =>
+      command.includes("docker exec -i postgres16 psql"),
+    );
+    expect(interactiveDatabaseCommands).toHaveLength(7);
+    for (const command of interactiveDatabaseCommands)
+      expect(command).toMatch(/\s<<?/u);
+    const databaseClockCommand = logicalCommands.find((command) =>
+      command.includes("SELECT clock_timestamp()::text"),
+    );
+    expect(databaseClockCommand).toContain("docker exec postgres16 psql");
+    expect(databaseClockCommand).not.toContain("docker exec -i");
   });
 
   test("stateful cutover retains the deployment lease until success or verified rollback", async () => {
@@ -590,7 +651,7 @@ describe("production deployment contract", () => {
       cutoverHeading,
     );
     const cutoverSsh = source.indexOf(
-      'ssh "${studio_ssh_target}" bash -s --',
+      '"${studio_release}/${buffered_remote_runner_path}"',
       releaseUnsafe,
     );
     const cutoverStatus = source.indexOf('cutover_status="${?}"', cutoverSsh);

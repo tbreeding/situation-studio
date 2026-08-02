@@ -12,6 +12,10 @@ const leaseHelperPath = path.join(
   root,
   "ops/manage-studio-deployment-lease.sh",
 );
+const bufferedRemoteRunnerPath = path.join(
+  root,
+  "ops/run-buffered-remote-script.sh",
+);
 const deploymentBackupRunnerPath = path.join(
   root,
   "ops/run-deployment-backup.sh",
@@ -125,9 +129,11 @@ describe("deployment serialization and state backup contract", () => {
     await expect(
       Promise.all([
         executeFile("bash", ["-n", deployPath]),
+        executeFile("bash", ["-n", bufferedRemoteRunnerPath]),
         executeFile("bash", ["-n", deploymentBackupRunnerPath]),
       ]),
     ).resolves.toEqual([
+      expect.objectContaining({ stderr: "" }),
       expect.objectContaining({ stderr: "" }),
       expect.objectContaining({ stderr: "" }),
     ]);
@@ -180,6 +186,24 @@ describe("deployment serialization and state backup contract", () => {
     expect(synchronousBackup).toBeLessThan(exactGate);
     expect(exactGate).toBeLessThan(projectionRecheck);
     expect(projectionRecheck).toBeLessThan(migration);
+    expect(
+      deploy.match(
+        /"\$\{studio_release\}\/\$\{buffered_remote_runner_path\}"/gu,
+      ),
+    ).toHaveLength(7);
+    const postExtraction = deploy.slice(
+      position(deploy, "unset archive_extract_command"),
+    );
+    expect(postExtraction).not.toContain(
+      'ssh "${studio_ssh_target}" bash -s --',
+    );
+    const cutover = deploy.slice(
+      position(deploy, "deployment_lease_release_safe=false"),
+      position(deploy, 'cutover_status="${?}"'),
+    );
+    expect(cutover).toContain(
+      '"${studio_release}/${buffered_remote_runner_path}"',
+    );
 
     for (const fragment of [
       "'RUNNING'",

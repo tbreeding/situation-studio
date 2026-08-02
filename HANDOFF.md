@@ -296,7 +296,18 @@ start. The remote `pm2 startup` command had consumed the remaining SSH script
 from standard input and returned success; every process-manager invocation is
 now detached from the script input, with a contract test covering that exact
 boundary. Application cutover was still pending when this candidate evidence
-was committed.
+was committed. A second deployment attempt for release `20260802T080758Z`
+proved the same failure class was not process-manager-specific: an interactive
+Docker client used only to capture the database clock consumed the remaining
+`bash -s` input after quiescing the old processes. The stateful program again
+ended before a backup anchor, migration, pointer change, or candidate start;
+the outer health gate restored and verified the previous release, and the
+active review-state hash remained
+`649abf47d2247264917ee51a4c213b8222190bb70a218127d030a547a5f4b269`.
+Post-extraction remote programs are now fully buffered before they execute, so
+every subprocess inherits an exhausted input stream; the clock query also no
+longer requests interactive Docker input, and executable contract coverage
+proves both properties.
 
 The current candidate now enforces that prerequisite rather than relying on
 the runbook alone. Follow-up deployment preflight requires the dedicated backup

@@ -32,6 +32,7 @@ backup_mode_verifier_path="ops/verify-backup-readiness-mode.sh"
 backup_database_identity_verifier_path="ops/verify-studio-backup-database-identity.sh"
 backup_environment_reader_path="ops/read-studio-backup-environment.sh"
 deployment_lease_helper_path="ops/manage-studio-deployment-lease.sh"
+buffered_remote_runner_path="ops/run-buffered-remote-script.sh"
 
 if [[ -n "${studio_ssh_user}" ]]; then
   studio_ssh_target="${studio_ssh_user}@${studio_host}"
@@ -125,6 +126,13 @@ if [[
   -L "${deployment_lease_helper_path}"
 ]]; then
   echo "The committed Studio deployment lease helper is missing or unsafe." >&2
+  exit 1
+fi
+if [[
+  ! -f "${buffered_remote_runner_path}" ||
+  -L "${buffered_remote_runner_path}"
+]]; then
+  echo "The committed buffered remote runner is missing or unsafe." >&2
   exit 1
 fi
 backup_policy_sql_base64="$(base64 <"${backup_policy_sql_path}" | tr -d '\n')"
@@ -768,7 +776,8 @@ exec tar -xf - -C '${studio_release}'"
 git archive --format=tar "${studio_commit}" |
   ssh "${studio_ssh_target}" "${archive_extract_command}"
 unset archive_extract_command
-ssh "${studio_ssh_target}" bash -s -- \
+ssh "${studio_ssh_target}" /bin/bash \
+  "${studio_release}/${buffered_remote_runner_path}" \
   "${studio_root}" \
   "${studio_release}" \
   "${studio_commit}" \
@@ -784,7 +793,8 @@ printf '%s\n' "${commit}" >"${release}/.release-commit"
 REMOTE
 
 echo "[4/8] Installing and building the pinned release"
-ssh "${studio_ssh_target}" bash -s -- \
+ssh "${studio_ssh_target}" /bin/bash \
+  "${studio_release}/${buffered_remote_runner_path}" \
   "${studio_root}" \
   "${studio_release}" \
   "${deployment_lease_token}" <<'REMOTE'
@@ -805,7 +815,8 @@ pnpm --filter @situation-studio/web build
 REMOTE
 
 studio_previous="$(
-  ssh "${studio_ssh_target}" bash -s -- \
+  ssh "${studio_ssh_target}" /bin/bash \
+    "${studio_release}/${buffered_remote_runner_path}" \
     "${studio_root}" \
     "${studio_release}" \
     "${deployment_lease_token}" <<'REMOTE'
@@ -830,7 +841,8 @@ if [[ -n "${studio_previous}" ]]; then
     echo "The current Studio release changed to an unsafe or unrecorded path after preflight." >&2
     exit 1
   fi
-  if ! ssh "${studio_ssh_target}" bash -s -- \
+  if ! ssh "${studio_ssh_target}" /bin/bash \
+    "${studio_release}/${buffered_remote_runner_path}" \
     "${studio_root}" \
     "${studio_release}" \
     "${studio_previous}" \
@@ -864,7 +876,8 @@ studio_previous_argument="${studio_previous:-NO_PREVIOUS_STUDIO_RELEASE}"
 echo "[5-6/8] Quiescing Studio, preserving review state, applying additive migrations, and cutting over"
 deployment_lease_release_safe=false
 set +e
-ssh "${studio_ssh_target}" bash -s -- \
+ssh "${studio_ssh_target}" /bin/bash \
+  "${studio_release}/${buffered_remote_runner_path}" \
   "${studio_root}" \
   "${studio_release}" \
   "${studio_previous_argument}" \
@@ -1064,7 +1077,7 @@ deployment_quiesced_at=""
 if [[ -n "${studio_previous}" ]]; then
   assert_deployment_lease
   deployment_quiesced_at="$(
-    docker exec -i postgres16 psql \
+    docker exec postgres16 psql \
       -v ON_ERROR_STOP=1 \
       -X -qAt \
       -U postgres \
@@ -1347,7 +1360,8 @@ rollback_to_previous_release() {
     echo "No previous Studio release exists; automatic rollback is unavailable." >&2
     return 2
   fi
-  ssh "${studio_ssh_target}" bash -s -- \
+  ssh "${studio_ssh_target}" /bin/bash \
+    "${studio_release}/${buffered_remote_runner_path}" \
     "${studio_root}" \
     "${studio_release}" \
     "${studio_previous}" \
@@ -1418,7 +1432,8 @@ if ((cutover_status != 0)); then
 fi
 
 echo "[7/8] Verifying local application health and release identity"
-if ! ssh "${studio_ssh_target}" bash -s -- \
+if ! ssh "${studio_ssh_target}" /bin/bash \
+  "${studio_release}/${buffered_remote_runner_path}" \
   "${studio_root}" \
   "${studio_release}" \
   "${studio_commit}" \

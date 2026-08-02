@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed restore-drill recording so PostgreSQL's legacy `set_config` result cannot make an otherwise successful, non-empty restore appear malformed; unexpected restore output still fails closed.
 - Fixed proposal assembly so case-only differences in bundle-writer evidence links do not discard an otherwise complete review, and future assembly failures resume from the bundle writer with downstream audits rerun.
 - Fixed repeated bundle-writer failures for plain-text title and description replacements by requiring JSON-encoded metadata and safely canonicalizing only existing string-valued metadata; malformed arrays, objects, and unknown fields still fail closed.
 - Fixed Leadership observation reconciliation so an active or recovery-required publication—and any publication started while an external snapshot is being read—cannot be imported into Studio as verified production state.

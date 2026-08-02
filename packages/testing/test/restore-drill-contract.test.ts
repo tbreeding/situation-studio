@@ -91,6 +91,12 @@ if [[ "\${FAKE_RESTORE_EMPTY:-false}" == "true" ]]; then
   printf '{"database":"situation_studio_restore_drill_contract","migrations":1,"situations":0,"productionVersions":0,"contentBlobs":0,"auditEvents":0}\n'
   exit 0
 fi
+if [[ "\${FAKE_RESTORE_LEGACY_PSQL_NOISE:-false}" == "true" ]]; then
+  printf ' set_config \n------------\n \n(1 row)\n\n'
+fi
+if [[ "\${FAKE_RESTORE_UNEXPECTED_NOISE:-false}" == "true" ]]; then
+  printf 'unexpected restore output\n'
+fi
 printf '{"database":"situation_studio_restore_drill_contract","migrations":1,"situations":2,"productionVersions":3,"contentBlobs":4,"auditEvents":5}\n'
 `,
   );
@@ -284,6 +290,42 @@ describe("restore-drill evidence recorder", () => {
       expect(
         (await readFile(fixture.sshLog, "utf8")).trim().split("\n"),
       ).toHaveLength(2);
+    } finally {
+      await rm(fixture.temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts only the known legacy psql set_config noise before the restore result", async () => {
+    const fixture = await createFixture();
+    try {
+      const result = await executeFile(fixture.recorder, [receiptId], {
+        env: {
+          ...fixture.environment,
+          FAKE_RESTORE_LEGACY_PSQL_NOISE: "true",
+        },
+      });
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        receiptId,
+        restoreDrillResult: "PASSED",
+      });
+      expect(await readFile(fixture.databaseLog, "utf8")).toBe("PASSED\n");
+    } finally {
+      await rm(fixture.temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects unexpected restore output before the result", async () => {
+    const fixture = await createFixture();
+    try {
+      await expect(
+        executeFile(fixture.recorder, [receiptId], {
+          env: {
+            ...fixture.environment,
+            FAKE_RESTORE_UNEXPECTED_NOISE: "true",
+          },
+        }),
+      ).rejects.toThrow();
+      expect(await readFile(fixture.databaseLog, "utf8")).toBe("FAILED\n");
     } finally {
       await rm(fixture.temporaryRoot, { recursive: true, force: true });
     }

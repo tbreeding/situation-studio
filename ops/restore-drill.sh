@@ -50,7 +50,8 @@ gpg --batch --quiet --decrypt "${STUDIO_RESTORE_DRILL_BACKUP}" |
   sed '/^SET transaction_timeout =/d' |
   psql \
     --set=ON_ERROR_STOP=1 \
-    --quiet
+    --quiet \
+    >/dev/null
 
 psql -v ON_ERROR_STOP=1 -qAt <<'SQL'
   DO $restore_dataset$

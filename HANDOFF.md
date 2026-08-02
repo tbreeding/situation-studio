@@ -273,19 +273,24 @@ before/after hashes and expected/actual lane hashes and writes an
 `active-review-state-continuity-v2` receipt only when both match. Migration,
 continuity, local-health, or required public-gate failure restores the exact
 previous release and must prove that its local live and ready checks pass; an
-unverified rollback is a critical deployment failure. This candidate has not
-been pushed or deployed. A fresh 2026-08-01 read-only production inventory
-again found all three Studio processes and both health routes healthy, five
-unchanged active checkouts, no queued/running review, no active or
-recovery-required publication, and no unfinished publication attempt.
-Deployment remains blocked because readiness still reports backup
-state `deferred`: three encrypted-backup receipts remain `QUEUED`, and the host
-has no backup environment, backup operator, scheduler, verified off-host
-receipt, or restore drill. The runbook requires those exact facts and the
-approval packet before cutover. The host also has no PostgreSQL client on its
-current system PATH; the dedicated backup operator must receive the reviewed
-Node/PostgreSQL/GPG/SSH/flock/timeout toolchain and its approved encryption and
-decryption key material before the legacy worker or recorder can run.
+unverified rollback is a critical deployment failure.
+
+On 2026-08-02 the product owner explicitly approved the follow-up backup and
+deployment packet. Preparation provisioned isolated backup accounts on RP1 and
+RP2, the protected RP1 environment and toolchain, source-restricted and
+host-key-pinned replication to `/srv/situation-studio-backups` on RP2, and a
+destination-side 90-day retention timer that preserves the newest encrypted
+object. The three historical queued receipts completed sequentially through
+the exact deployed worker. Receipt `b76cb38a-b635-4beb-b665-fb0f679bc751`
+attests the newest replicated object and has a passed non-empty restore drill.
+The first drill exposed legacy PostgreSQL `set_config` output before the JSON
+result; the recorder failed closed, then passed only after the candidate was
+hardened to accept that exact known noise while rejecting any other prefix.
+The protected web environment is now set to required backup readiness and the
+exact queue and nightly schedules are installed. Five active checkouts remained
+unchanged and no review, publication, or recovery job was active through this
+preparation boundary. Application cutover was still pending when this
+candidate evidence was committed.
 
 The current candidate now enforces that prerequisite rather than relying on
 the runbook alone. Follow-up deployment preflight requires the dedicated backup

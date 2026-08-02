@@ -396,7 +396,18 @@ observed_restore_database="$(
   RESTORE_DRILL_OUTPUT="${restore_output}" node -e '
     const input = process.env.RESTORE_DRILL_OUTPUT ?? "";
     if (Buffer.byteLength(input, "utf8") > 4096) process.exit(2);
-    const value = JSON.parse(input);
+    const lines = input
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const serializedResult = lines.pop();
+    const legacyPsqlNoise = /^(?:set_config|-+|\(1 row\))$/u;
+    if (
+      !serializedResult ||
+      lines.some((line) => !legacyPsqlNoise.test(line))
+    )
+      process.exit(2);
+    const value = JSON.parse(serializedResult);
     if (
       !value ||
       typeof value !== "object" ||

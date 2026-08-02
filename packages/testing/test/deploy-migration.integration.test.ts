@@ -321,6 +321,150 @@ test("the focused-review migration preserves active state and assigns the expect
   }
 });
 
+test("the focused-review continuity projection preserves an empty lane", async () => {
+  const container = await new PostgreSqlContainer("postgres:16-alpine")
+    .withDatabase("situation_studio")
+    .start();
+  const databaseUrl = container
+    .getConnectionUri()
+    .replace(/^postgres:\/\//u, "postgresql://");
+  try {
+    const directories = (await readdir(migrationsRoot))
+      .filter((directory) => directory < targetMigration)
+      .sort();
+    for (const directory of directories)
+      await runSqlFile(
+        databaseUrl,
+        path.join(migrationsRoot, directory, "migration.sql"),
+      );
+
+    const client = new Client({ connectionString: databaseUrl });
+    await client.connect();
+    try {
+      await client.query(`
+        INSERT INTO users (
+          id, username, display_name, password_hash, updated_at
+        ) VALUES (
+          '11000000-0000-4000-8000-000000000001',
+          'empty-lane-editor',
+          'Empty lane editor',
+          'not-used',
+          now()
+        );
+
+        INSERT INTO situations (
+          id, slug, title, visibility, fence, updated_at
+        ) VALUES (
+          '21000000-0000-4000-8000-000000000001',
+          'empty-focused-lane',
+          'Empty focused lane',
+          'PUBLIC',
+          1,
+          now()
+        );
+
+        INSERT INTO drafts (
+          id, situation_id, lineage, state, current_revision_number,
+          current_bundle_hash, updated_at
+        ) VALUES (
+          '31000000-0000-4000-8000-000000000001',
+          '21000000-0000-4000-8000-000000000001',
+          1,
+          'ACTIVE',
+          1,
+          repeat('1', 64),
+          now()
+        );
+
+        INSERT INTO draft_revisions (
+          id, draft_id, revision, bundle_hash, bundle_manifest,
+          contract_version, validation_policy, actor_id
+        ) VALUES (
+          '41000000-0000-4000-8000-000000000001',
+          '31000000-0000-4000-8000-000000000001',
+          1,
+          repeat('1', 64),
+          '{}'::jsonb,
+          '1.0.0',
+          'policy-v1',
+          '11000000-0000-4000-8000-000000000001'
+        );
+
+        INSERT INTO situation_checkouts (
+          id, situation_id, holder_id, draft_id, fence, acquired_at
+        ) VALUES (
+          '51000000-0000-4000-8000-000000000001',
+          '21000000-0000-4000-8000-000000000001',
+          '11000000-0000-4000-8000-000000000001',
+          '31000000-0000-4000-8000-000000000001',
+          1,
+          '2026-01-01T00:00:00Z'
+        );
+
+        INSERT INTO review_jobs (
+          id, situation_id, input_revision_id, checkout_id, checkout_fence,
+          state, context_hash, contract_version, policy_version,
+          queued_at, started_at, finished_at
+        ) VALUES (
+          '61000000-0000-4000-8000-000000000001',
+          '21000000-0000-4000-8000-000000000001',
+          '41000000-0000-4000-8000-000000000001',
+          '51000000-0000-4000-8000-000000000001',
+          1,
+          'FAILED',
+          repeat('a', 64),
+          '1.0.0',
+          'policy-v1',
+          '2026-02-01T00:00:00Z',
+          '2026-02-02T00:00:00Z',
+          '2026-02-03T00:00:00Z'
+        );
+
+        INSERT INTO audit_events (
+          id, actor_id, action, subject_type, subject_id, payload, occurred_at
+        ) VALUES (
+          '71000000-0000-4000-8000-000000000001',
+          '11000000-0000-4000-8000-000000000001',
+          'REVIEW_QUEUED',
+          'REVIEW_JOB',
+          '61000000-0000-4000-8000-000000000001',
+          '{}'::jsonb,
+          '2026-01-02T00:00:00Z'
+        );
+      `);
+    } finally {
+      await client.end();
+    }
+
+    const expectedLane = await runSqlFile(
+      databaseUrl,
+      path.join(root, "ops/expected-review-lane-state.sql"),
+    );
+    await runSqlFile(
+      databaseUrl,
+      path.join(migrationsRoot, targetMigration, "migration.sql"),
+    );
+    const actualLane = await runSqlFile(
+      databaseUrl,
+      path.join(root, "ops/review-lane-state.sql"),
+    );
+
+    expect(actualLane).toBe(expectedLane);
+    expect(JSON.parse(actualLane)).toEqual({
+      jobs: [
+        [
+          "61000000-0000-4000-8000-000000000001",
+          "2026-01-02T00:00:00+00:00",
+          false,
+        ],
+      ],
+      laneOwnerId: null,
+    });
+  } finally {
+    await container.stop();
+  }
+});
+
 test("backup workers transport receipt fences through real psql input", async () => {
   const container = await new PostgreSqlContainer("postgres:16-alpine")
     .withDatabase("situation_studio")

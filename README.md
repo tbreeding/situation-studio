@@ -8,8 +8,13 @@ validated change. Leadership remains the sole public content authority.
 The redesign and guarded production release candidate are implemented through
 checkpoint 7 of
 [SPEC-situation-studio-redesign.md](SPEC-situation-studio-redesign.md).
-Checkpoint 8 production deployment still requires its exact approval packet;
-production content changes require a later, separately named approval.
+Checkpoint 8 follow-up deployment remains incomplete. The additive focused-
+lane migration is applied and compatible with the verified 2026-07-29 release,
+which production still runs after the latest guarded attempt failed closed on
+an equivalent `null` versus `false` continuity representation. The current
+retained-lease boundary is recorded in [HANDOFF.md](HANDOFF.md) and the
+[production migration runbook](docs/runbooks/production-migration.md).
+Production content changes require a later, separately named approval.
 
 ## Runtime
 

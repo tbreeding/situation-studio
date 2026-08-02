@@ -36,7 +36,7 @@ SELECT jsonb_build_object(
     SELECT jsonb_agg(jsonb_build_array(
       job.id,
       job.queued_at,
-      job.id = (SELECT focused.id FROM focused)
+      COALESCE(job.id = (SELECT focused.id FROM focused), false)
     ) ORDER BY job.id)
       FROM normalized_jobs job
   ), '[]'::jsonb),

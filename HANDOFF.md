@@ -340,6 +340,42 @@ The exact token-fenced lease must be released through the candidate helper only
 after explicit operator authorization naming this reconciled state; deployment
 must then restart from preflight rather than resume mid-attempt.
 
+The product owner provided that authorization in the continuation task. The
+lease metadata and exact token hash were re-read, and the candidate helper
+safely released only the two fenced files and lease directory. Full preflight
+then passed against clean pushed commit `ee2ab3a...` and the compatible
+Leadership runtime.
+
+A fourth guarded attempt, release `20260802T095838Z`, completed its clean local
+and remote builds, quiesced Studio, and created verified encrypted off-site
+backup receipt `c634ec70-0d15-45e8-9c89-e1a46cfe31d8`. Its immutable
+pre-migration marker records 746,270 bytes, review hash `649abf47d...`, and
+expected-lane hash `5a4adcf161...`. The focused-lane migration applied
+successfully, but continuity failed closed before candidate start or pointer
+change: with no running review, the pre-migration query represented every
+no-owner Boolean as JSON `null`, while the migrated non-null `lane_owner`
+column correctly represented the same state as `false`. Queue timestamps and
+the null lane owner otherwise matched. The expected and actual lane hashes
+were `5a4adcf161a363be72a662d8ec7ef2c9183bbbd25edabf6d3ac32c734913df82`
+and `48f0eb54c66386b108f3c3174e59e0becbf53751cd961c6f9e9673048d4472a8`.
+
+The remote trap restarted and locally verified the exact previous release.
+Read-only reconciliation found no surviving deployment shell; the current
+pointer and all three processes use `20260729T085659Z`, live and ready return
+200, publication drain is `0|0|0`, and the active-review hash remains exact.
+The candidate has a complete pre-migration backup marker but no continuity
+marker. A complete mode-0700 lease remains for commit `ee2ab3a...`, release
+`20260802T095838Z`, start `2026-08-02T09:58:40Z`, and operator `admin`; its
+token SHA-256 is
+`cb2638b53641196a70dea363c64c421fc283b84af7bc61e2e8020d78da8c6216`.
+Do not release it without fresh explicit authorization naming this newer
+state, and never resume the attempt midway or remove the lease recursively.
+
+This candidate corrects the representation mismatch by coalescing the nullable
+pre-migration focused comparison to Boolean `false` and adds a real-PostgreSQL
+empty-lane continuity scenario. A new exact pushed commit and approval are
+required before another full preflight and deployment.
+
 The current candidate now enforces that prerequisite rather than relying on
 the runbook alone. Follow-up deployment preflight requires the dedicated backup
 user and protected environment, exact queue/nightly schedules, mandatory

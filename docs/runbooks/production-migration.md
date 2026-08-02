@@ -30,6 +30,43 @@ That exception remains valid only for a genuine first release with no current
 Studio pointer. It is not accepted by any follow-up deployment or by the
 publication workflow.
 
+## Current continuity-recovery checkpoint
+
+Production still runs release `20260729T085659Z` at commit `70da5cae...`.
+After explicit authorization, the exact helper safely released the retained
+lease from attempt `20260802T082029Z`, and full preflight passed for clean
+pushed commit `ee2ab3a...`.
+
+Attempt `20260802T095838Z` created verified encrypted off-site receipt
+`c634ec70-0d15-45e8-9c89-e1a46cfe31d8`, recorded its pre-migration marker,
+and successfully applied the focused-lane migration. Continuity then failed
+closed before candidate start or pointer change because the pre-migration
+projection emitted JSON `null` for each no-owner Boolean while the migrated
+non-null column correctly emitted `false`. Queue timestamps and the null lane
+owner otherwise matched. The previous release was restored and verified.
+Active-review, expected-lane, and actual-lane hashes are, respectively,
+`649abf47d2247264917ee51a4c213b8222190bb70a218127d030a547a5f4b269`,
+`5a4adcf161a363be72a662d8ec7ef2c9183bbbd25edabf6d3ac32c734913df82`,
+and `48f0eb54c66386b108f3c3174e59e0becbf53751cd961c6f9e9673048d4472a8`.
+
+The newer complete lease at
+`/home/admin/projects/situation-studio/shared/.deployment-lease` names commit
+`ee2ab3a290fc2daf01619141111097b607843aaa`, release
+`20260802T095838Z`, start `2026-08-02T09:58:40Z`, and operator `admin`; its
+observed token SHA-256 is
+`cb2638b53641196a70dea363c64c421fc283b84af7bc61e2e8020d78da8c6216`.
+Read-only reconciliation found no surviving deployment shell, the current
+pointer and all processes use the prior release, local live and ready pass,
+publication drain is `0|0|0`, and the candidate has a complete backup marker
+but no continuity marker.
+
+Obtain fresh authorization naming that state. Then re-read the exact token and
+use only the helper from release `20260802T095838Z`; never use recursive
+removal. Do not redeploy `ee2ab3a...`. The corrected candidate must coalesce
+the pre-migration nullable focused comparison to Boolean `false`, include a
+real-PostgreSQL empty-lane continuity test, be pushed and exactly approved, and
+restart from complete preflight rather than resuming the abandoned attempt.
+
 ## Read-only preflight
 
 Re-read repository cleanliness, official pointer identity, runtime health,

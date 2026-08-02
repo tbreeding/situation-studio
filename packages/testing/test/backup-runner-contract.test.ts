@@ -142,8 +142,18 @@ fi
 invocation="$((invocation + 1))"
 printf '%s' "\${invocation}" >"\${FAKE_PSQL_STATE}"
 stdin_sql=""
-if [[ "\${invocation}" != "1" ]]; then
-  stdin_sql="$(cat)"
+stdin_sql="$(cat)"
+for argument in "\${@}"; do
+  case "\${argument}" in
+    -c|-[^-]*c|--command|--command=*)
+      echo "fake psql rejects command-string SQL" >&2
+      exit 64
+      ;;
+  esac
+done
+if [[ -z "\${stdin_sql}" ]]; then
+  echo "fake psql requires controlled stdin SQL" >&2
+  exit 65
 fi
 {
   printf '%s\\n' "--- invocation \${invocation} ---"
@@ -337,6 +347,7 @@ describe("production backup runner contract", () => {
       'flock "${lock_arguments[@]}" 9',
       'lock_arguments=(-w "${deployment_lock_wait_seconds}")',
       'export STUDIO_BACKUP_OBJECT_SUFFIX="-${receipt_id}"',
+      "--no-align <<'SQL'",
       "AND state = 'RUNNING'",
       "AND started_at = :'receipt_started_at'::timestamptz",
       "SELECT count(*)::text || E'\\t'",
@@ -344,6 +355,12 @@ describe("production backup runner contract", () => {
       '"${transitioned_receipt_id}" != "${receipt_id}"',
     ])
       position(queue, fragment);
+    expect(queue).not.toContain('--command "');
+    expect(queue).not.toContain(String.raw`E'\\t'`);
+    expect(queue.match(/E'\\t'/gu)).toHaveLength(2);
+    expect(await readFile(deploymentBackupPath, "utf8")).not.toContain(
+      '--command "',
+    );
   });
 
   test("unsafe local and off-site paths and option-like SSH targets fail before backup work", async () => {
@@ -512,6 +529,11 @@ describe("production backup runner contract", () => {
         "2",
       );
       const sql = await readFile(fixture.psqlLog, "utf8");
+      expect(sql).toContain(`--set=receipt_id=${receiptId}`);
+      expect(sql).toContain("--set=receipt_started_at=2026-08-01 20:00:00+00");
+      expect(sql).toContain(
+        "SELECT receipt.id::text, receipt.started_at::text",
+      );
       expect(sql).toContain("SET state = 'VERIFIED'");
       expect(sql).not.toContain("--set=failure_code=DEPLOYMENT_BACKUP_FAILED");
     } finally {

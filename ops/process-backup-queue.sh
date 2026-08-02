@@ -269,8 +269,7 @@ if [[ "${runner_mode}" == "preclaimed" ]]; then
       --quiet \
       --tuples-only \
       --no-align \
-      --field-separator=$'\t' \
-      --command "
+      --field-separator=$'\t' <<'SQL'
         SELECT receipt.id::text, receipt.started_at::text
           FROM backup_receipts AS receipt
          WHERE receipt.id = :'receipt_id'::uuid
@@ -284,7 +283,7 @@ if [[ "${runner_mode}" == "preclaimed" ]]; then
            AND receipt.byte_length IS NULL
            AND receipt.verified_at IS NULL
            AND receipt.failure_code IS NULL;
-      "
+SQL
   )"
 else
   claim="$(
@@ -297,8 +296,7 @@ else
     --set=stale_after_seconds="${stale_after_seconds}" \
     --quiet \
     --tuples-only \
-    --no-align \
-    --command "
+    --no-align <<'SQL'
       WITH recovered AS (
         UPDATE backup_receipts
            SET state = 'FAILED', failure_code = 'BACKUP_RUNNER_STALE'
@@ -328,10 +326,10 @@ else
       ), recovery_summary AS (
         SELECT count(*) AS recovered_count FROM recovered
       )
-      SELECT claimed.id::text || E'\\t' || claimed.started_at::text
+      SELECT claimed.id::text || E'\t' || claimed.started_at::text
         FROM claimed
         CROSS JOIN recovery_summary;
-    "
+SQL
   )"
 fi
 

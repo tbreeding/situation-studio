@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Fixed remote deployment cutover so the complete SSH program is buffered before execution and subprocesses cannot consume unparsed shell source from standard input and falsely report a no-op cutover as successful.
+- Fixed backup workers to send parameterized SQL through standard input, where `psql` performs variable substitution, instead of passing it through `--command` and leaving receipt fences as invalid literal syntax.
 - Fixed restore-drill recording so PostgreSQL's legacy `set_config` result cannot make an otherwise successful, non-empty restore appear malformed; unexpected restore output still fails closed.
 - Fixed proposal assembly so case-only differences in bundle-writer evidence links do not discard an otherwise complete review, and future assembly failures resume from the bundle writer with downstream audits rerun.
 - Fixed repeated bundle-writer failures for plain-text title and description replacements by requiring JSON-encoded metadata and safely canonicalizing only existing string-valued metadata; malformed arrays, objects, and unknown fields still fail closed.

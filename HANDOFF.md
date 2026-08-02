@@ -309,6 +309,37 @@ every subprocess inherits an exhausted input stream; the clock query also no
 longer requests interactive Docker input, and executable contract coverage
 proves both properties.
 
+A third guarded attempt for release `20260802T082029Z` then reached the real
+post-quiescence backup anchor and failed closed because the new preclaimed
+worker passed `psql` variables through `--command`; PostgreSQL received the
+literal `:'receipt_id'` syntax because psql does not interpolate variables in
+command-string mode. The remote trap fenced the new receipt
+`ffc62df5-3784-47d0-918d-95c956a8d593` as
+`FAILED/DEPLOYMENT_BACKUP_FAILED`, restarted the previous release, and verified
+local live and ready health. No migration, pointer change, or candidate start
+occurred, and the active review-state hash remained exact. Parameterized worker
+queries now use controlled standard-input SQL. The fast harness rejects
+command-string SQL and empty input, while a real PostgreSQL integration drives
+both preclaimed and ordinary queue paths through claim, stale recovery, a
+deliberate backup failure, and the exact fenced terminal states.
+
+The outer launcher deliberately retained that attempt's deployment lease
+because a nonzero SSH result is ambiguous even when the remote rollback reports
+success. Read-only recovery reconciliation found no surviving local or remote
+deployment shell; the complete mode-0700 lease names commit `50e486b...`,
+release `20260802T082029Z`, start `2026-08-02T08:20:31Z`, and operator `admin`,
+with token SHA-256
+`99347426b46b476b836f407f5a1b4da2ced3a376a8f037e5c8ebe3b7547e0538`.
+The current pointer and all three online PM2 processes use the prior
+`20260729T085659Z` / `70da5ca...` release; local live and ready probes pass,
+publication drain is `0|0|0`, the candidate has neither backup nor continuity
+marker, and the active and expected-lane hashes remain
+`649abf47d2247264917ee51a4c213b8222190bb70a218127d030a547a5f4b269` and
+`5a4adcf161a363be72a662d8ec7ef2c9183bbbd25edabf6d3ac32c734913df82`.
+The exact token-fenced lease must be released through the candidate helper only
+after explicit operator authorization naming this reconciled state; deployment
+must then restart from preflight rather than resume mid-attempt.
+
 The current candidate now enforces that prerequisite rather than relying on
 the runbook alone. Follow-up deployment preflight requires the dedicated backup
 user and protected environment, exact queue/nightly schedules, mandatory

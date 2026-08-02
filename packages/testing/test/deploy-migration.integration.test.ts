@@ -1,6 +1,14 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -16,6 +24,11 @@ const targetMigration =
 const legacyBackupAttestationPath = path.join(
   root,
   "ops/attest-legacy-offsite-backup.sh",
+);
+const backupQueuePath = path.join(root, "ops/process-backup-queue.sh");
+const backupIdentityVerifierPath = path.join(
+  root,
+  "ops/verify-studio-backup-database-identity.sh",
 );
 
 async function runSqlFile(
@@ -304,6 +317,187 @@ test("the focused-review migration preserves active state and assigns the expect
       await publicationClient.end();
     }
   } finally {
+    await container.stop();
+  }
+});
+
+test("backup workers transport receipt fences through real psql input", async () => {
+  const container = await new PostgreSqlContainer("postgres:16-alpine")
+    .withDatabase("situation_studio")
+    .start();
+  const databaseUrl = container
+    .getConnectionUri()
+    .replace(/^postgres:\/\//u, "postgresql://");
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "studio-real-backup-worker-"),
+  );
+  let client: Client | undefined;
+  try {
+    const directories = (await readdir(migrationsRoot))
+      .filter((entry) => /^\d+_/u.test(entry))
+      .sort();
+    for (const directory of directories)
+      await runSqlFile(
+        databaseUrl,
+        path.join(migrationsRoot, directory, "migration.sql"),
+      );
+
+    const operationsRoot = path.join(temporaryRoot, "ops");
+    const fakeBin = path.join(temporaryRoot, "bin");
+    const backupDestination = path.join(temporaryRoot, "backups");
+    await Promise.all([
+      mkdir(operationsRoot, { recursive: true }),
+      mkdir(fakeBin, { recursive: true }),
+      mkdir(backupDestination, { recursive: true, mode: 0o700 }),
+    ]);
+    await chmod(backupDestination, 0o700);
+    const copiedQueuePath = path.join(
+      operationsRoot,
+      "process-backup-queue.sh",
+    );
+    await Promise.all([
+      copyFile(backupQueuePath, copiedQueuePath),
+      copyFile(
+        backupIdentityVerifierPath,
+        path.join(operationsRoot, "verify-studio-backup-database-identity.sh"),
+      ),
+      writeFile(
+        path.join(operationsRoot, "backup-studio.sh"),
+        "#!/usr/bin/env bash\nexit 42\n",
+        "utf8",
+      ),
+      writeFile(
+        path.join(fakeBin, "flock"),
+        "#!/usr/bin/env bash\nexit 0\n",
+        "utf8",
+      ),
+      writeFile(
+        path.join(fakeBin, "timeout"),
+        `#!/usr/bin/env bash
+set -euo pipefail
+while [[ "\${1:-}" == --* ]]; do shift; done
+if [[ "\${#}" -lt 2 ]]; then exit 64; fi
+shift
+exec "\${@}"
+`,
+        "utf8",
+      ),
+    ]);
+    await Promise.all([
+      chmod(path.join(operationsRoot, "backup-studio.sh"), 0o755),
+      chmod(path.join(fakeBin, "flock"), 0o755),
+      chmod(path.join(fakeBin, "timeout"), 0o755),
+    ]);
+
+    const workerEnvironment = {
+      ...process.env,
+      PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      STUDIO_BACKUP_DATABASE_URL: databaseUrl,
+      STUDIO_BACKUP_QUEUE_DATABASE_URL: databaseUrl,
+      STUDIO_BACKUP_DESTINATION: backupDestination,
+      STUDIO_BACKUP_DATABASE_TIMEOUT_SECONDS: "10",
+      STUDIO_BACKUP_OVERALL_TIMEOUT_SECONDS: "1",
+      STUDIO_BACKUP_TIMEOUT_KILL_AFTER_SECONDS: "1",
+      STUDIO_BACKUP_DEPLOYMENT_LOCK_WAIT_SECONDS: "1",
+      STUDIO_BACKUP_DEPLOYMENT_RESTORE_CHECK_TIMEOUT_SECONDS: "1",
+      STUDIO_BACKUP_STALE_AFTER_SECONDS: "304",
+    };
+    client = new Client({ connectionString: databaseUrl });
+    await client.connect();
+
+    const preclaimedId = "a1000000-0000-4000-8000-000000000001";
+    const preclaimed = await client.query<{ started_at: string }>(
+      `INSERT INTO backup_receipts (
+         id, state, destination_id, encrypted, started_at, created_at
+       ) VALUES (
+         $1, 'RUNNING', 'deployment-quiesced', true,
+         current_timestamp, current_timestamp
+       )
+       RETURNING started_at::text`,
+      [preclaimedId],
+    );
+    const preclaimedStartedAt = preclaimed.rows[0]?.started_at;
+    if (!preclaimedStartedAt)
+      throw new Error("preclaimed receipt did not return a start fence");
+    await expect(
+      executeFile(
+        "bash",
+        [copiedQueuePath, "--preclaimed", preclaimedId, preclaimedStartedAt],
+        {
+          cwd: temporaryRoot,
+          env: workerEnvironment,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 42,
+      stderr: expect.stringContaining("Backup command failed with status 42"),
+    });
+    expect(
+      await client.query(
+        "SELECT state, failure_code FROM backup_receipts WHERE id = $1",
+        [preclaimedId],
+      ),
+    ).toMatchObject({
+      rows: [
+        {
+          state: "FAILED",
+          failure_code: "DEPLOYMENT_BACKUP_FAILED",
+        },
+      ],
+    });
+
+    const staleId = "a1000000-0000-4000-8000-000000000002";
+    const queuedId = "a1000000-0000-4000-8000-000000000003";
+    await client.query(
+      `INSERT INTO backup_receipts (
+         id, state, destination_id, encrypted, started_at, created_at
+       ) VALUES
+         (
+           $1, 'RUNNING', 'configured-encrypted-backup', true,
+           current_timestamp - interval '10 minutes',
+           current_timestamp - interval '10 minutes'
+         ),
+         (
+           $2, 'QUEUED', 'configured-encrypted-backup', true,
+           NULL, current_timestamp
+         )`,
+      [staleId, queuedId],
+    );
+    await expect(
+      executeFile("bash", [copiedQueuePath], {
+        cwd: temporaryRoot,
+        env: workerEnvironment,
+      }),
+    ).rejects.toMatchObject({
+      code: 42,
+      stderr: expect.stringContaining("Backup command failed with status 42"),
+    });
+    const terminalReceipts = await client.query<{
+      id: string;
+      state: string;
+      failure_code: string | null;
+    }>(
+      `SELECT id, state, failure_code
+         FROM backup_receipts
+        WHERE id = ANY($1::uuid[])
+        ORDER BY id`,
+      [[staleId, queuedId]],
+    );
+    expect(terminalReceipts.rows).toEqual([
+      {
+        id: staleId,
+        state: "FAILED",
+        failure_code: "BACKUP_RUNNER_STALE",
+      },
+      {
+        id: queuedId,
+        state: "FAILED",
+        failure_code: "BACKUP_COMMAND_FAILED",
+      },
+    ]);
+  } finally {
+    await client?.end();
+    await rm(temporaryRoot, { recursive: true, force: true });
     await container.stop();
   }
 });

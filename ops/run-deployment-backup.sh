@@ -187,14 +187,13 @@ object_key="$(
     --set=receipt_started_at="${receipt_started_at}" \
     --quiet \
     --tuples-only \
-    --no-align \
-    --command "
+    --no-align <<'SQL'
       SELECT object_key
         FROM backup_receipts
        WHERE id = :'receipt_id'::uuid
          AND state = 'VERIFIED'
          AND started_at = :'receipt_started_at'::timestamptz;
-    "
+SQL
 )"
 if [[
   ! "${object_key}" =~ ^situation-studio-[0-9]{8}T[0-9]{6}Z-${receipt_id}\.dump\.gpg$ ||

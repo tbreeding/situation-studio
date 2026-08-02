@@ -155,7 +155,7 @@ describe("deployment serialization and state backup contract", () => {
 
     const publisherStop = position(
       deploy,
-      "situation-studio-publisher >/dev/null",
+      "situation-studio-publisher </dev/null >/dev/null",
     );
     const quiescence = position(deploy, 'deployment_quiesced_at="$(');
     const projection = position(

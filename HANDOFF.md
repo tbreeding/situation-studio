@@ -289,8 +289,14 @@ hardened to accept that exact known noise while rejecting any other prefix.
 The protected web environment is now set to required backup readiness and the
 exact queue and nightly schedules are installed. Five active checkouts remained
 unchanged and no review, publication, or recovery job was active through this
-preparation boundary. Application cutover was still pending when this
-candidate evidence was committed.
+preparation boundary. The first deployment attempt for release
+`20260802T075418Z` safely restored and verified the previous release before any
+migration, deployment backup anchor, pointer change, or candidate process
+start. The remote `pm2 startup` command had consumed the remaining SSH script
+from standard input and returned success; every process-manager invocation is
+now detached from the script input, with a contract test covering that exact
+boundary. Application cutover was still pending when this candidate evidence
+was committed.
 
 The current candidate now enforces that prerequisite rather than relying on
 the runbook alone. Follow-up deployment preflight requires the dedicated backup

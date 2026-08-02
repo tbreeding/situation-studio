@@ -277,7 +277,7 @@ test "$(
     "USER=${review_user}" \
     "LOGNAME=${review_user}" \
     "PATH=${review_path}" \
-    "${codex_bin}" --version
+    "${codex_bin}" --version </dev/null
 )" = "codex-cli ${required_codex_cli_version}"
 test "$(
   sudo -n -u "${review_user}" env -i \
@@ -285,20 +285,20 @@ test "$(
     "USER=${review_user}" \
     "LOGNAME=${review_user}" \
     "PATH=${review_path}" \
-    "${claude_bin}" --version
+    "${claude_bin}" --version </dev/null
 )" = "${required_claude_cli_version} (Claude Code)"
 sudo -n -u "${review_user}" env -i \
   "HOME=${review_home}" \
   "USER=${review_user}" \
   "LOGNAME=${review_user}" \
   "PATH=${review_path}" \
-  "${codex_bin}" login status >/dev/null
+  "${codex_bin}" login status </dev/null >/dev/null
 sudo -n -u "${review_user}" env -i \
   "HOME=${review_home}" \
   "USER=${review_user}" \
   "LOGNAME=${review_user}" \
   "PATH=${review_path}" \
-  "${claude_bin}" auth status --json |
+  "${claude_bin}" auth status --json </dev/null |
   node -e '
     let input = "";
     process.stdin.on("data", (chunk) => { input += chunk });
@@ -306,7 +306,7 @@ sudo -n -u "${review_user}" env -i \
       if (JSON.parse(input).loggedIn !== true) process.exit(1);
     });
   '
-sudo -n env "PATH=${PATH}" "${pm2_bin}" --version >/dev/null
+sudo -n env "PATH=${PATH}" "${pm2_bin}" --version </dev/null >/dev/null
 
 has_current_release=false
 if [[ -L "${studio_root}/current" ]]; then
@@ -920,6 +920,7 @@ source ~/.nvm/nvm.sh
 pm2_bin="$(command -v pm2)"
 assert_deployment_lease
 sudo -n env "PATH=${PATH}" "${pm2_bin}" startup systemd -u root --hp /root \
+  </dev/null \
   >/dev/null
 
 start_release() {
@@ -932,6 +933,7 @@ start_release() {
     situation-studio-review-worker \
     situation-studio-publisher; do
     sudo -n env "PATH=${PATH}" "${pm2_bin}" delete "${process_name}" \
+      </dev/null \
       >/dev/null 2>&1 || true
   done
   sudo -n env \
@@ -945,8 +947,8 @@ start_release() {
     "SITUATION_STUDIO_PUBLISHER_ENV_FILE=${publisher_environment}" \
     "${pm2_bin}" start \
     "${release}/ops/situation-studio-processes.config.cjs" \
-    --update-env
-  sudo -n env "PATH=${PATH}" "${pm2_bin}" save
+    --update-env </dev/null
+  sudo -n env "PATH=${PATH}" "${pm2_bin}" save </dev/null
 }
 
 verify_local_health() {
@@ -1009,8 +1011,10 @@ trap restore_previous_on_failure EXIT
 assert_deployment_lease
 for process_name in situation-studio-web situation-studio-review-worker; do
   if sudo -n env "PATH=${PATH}" "${pm2_bin}" describe "${process_name}" \
+    </dev/null \
     >/dev/null 2>&1; then
     sudo -n env "PATH=${PATH}" "${pm2_bin}" stop "${process_name}" \
+      </dev/null \
       >/dev/null
   fi
 done
@@ -1050,10 +1054,10 @@ for attempt in $(seq 1 96); do
 done
 
 if sudo -n env "PATH=${PATH}" "${pm2_bin}" describe \
-  situation-studio-publisher >/dev/null 2>&1; then
+  situation-studio-publisher </dev/null >/dev/null 2>&1; then
   assert_deployment_lease
   sudo -n env "PATH=${PATH}" "${pm2_bin}" stop \
-    situation-studio-publisher >/dev/null
+    situation-studio-publisher </dev/null >/dev/null
 fi
 
 deployment_quiesced_at=""
@@ -1378,6 +1382,7 @@ for process_name in \
   situation-studio-review-worker \
   situation-studio-publisher; do
   sudo -n env "PATH=${PATH}" "${pm2_bin}" delete "${process_name}" \
+    </dev/null \
     >/dev/null 2>&1 || true
 done
 sudo -n env \
@@ -1391,8 +1396,8 @@ sudo -n env \
   "SITUATION_STUDIO_PUBLISHER_ENV_FILE=${publisher_environment}" \
   "${pm2_bin}" start \
   "${studio_previous}/ops/situation-studio-processes.config.cjs" \
-  --update-env
-sudo -n env "PATH=${PATH}" "${pm2_bin}" save
+  --update-env </dev/null
+sudo -n env "PATH=${PATH}" "${pm2_bin}" save </dev/null
 test "$(readlink -f "${studio_root}/current")" = \
   "$(readlink -f "${studio_previous}")"
 for attempt in $(seq 1 45); do

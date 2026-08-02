@@ -541,7 +541,7 @@ describe("production deployment contract", () => {
       position(source, '"${pm2_bin}" stop "${process_name}"'),
     ).toBeLessThan(position(source, "publication_drain_state()"));
     expect(position(source, '<<<"$(publication_drain_state)"')).toBeLessThan(
-      position(source, "situation-studio-publisher >/dev/null"),
+      position(source, "situation-studio-publisher </dev/null >/dev/null"),
     );
     expect(position(source, "if ((unfinished_attempts > 0))")).toBeLessThan(
       position(source, "if ((recovery_required > 0))"),
@@ -550,7 +550,7 @@ describe("production deployment contract", () => {
       position(source, "if ((active_publications == 0))"),
     );
     expect(
-      position(source, "situation-studio-publisher >/dev/null"),
+      position(source, "situation-studio-publisher </dev/null >/dev/null"),
     ).toBeLessThan(position(source, "capture_active_review_state"));
     expect(position(source, "capture_active_review_state")).toBeLessThan(
       position(
@@ -570,6 +570,13 @@ describe("production deployment contract", () => {
     expect(source.lastIndexOf("rollback_to_previous_release")).toBeGreaterThan(
       position(source, "ops/verify-public-gate.sh"),
     );
+    const logicalCommands = source.replace(/\\\n[\t ]*/gu, " ").split("\n");
+    const processManagerCommands = logicalCommands.filter((command) =>
+      command.includes('"${pm2_bin}"'),
+    );
+    expect(processManagerCommands).toHaveLength(12);
+    for (const command of processManagerCommands)
+      expect(command).toContain("</dev/null");
   });
 
   test("stateful cutover retains the deployment lease until success or verified rollback", async () => {
@@ -597,6 +604,9 @@ describe("production deployment contract", () => {
     expect(cutoverSsh).toBeLessThan(cutoverStatus);
     expect(cutoverStatus).toBeLessThan(ambiguousCutover);
     expect(ambiguousCutover).toBeLessThan(localGate);
+    expect(source).toContain(
+      '"${pm2_bin}" startup systemd -u root --hp /root \\\n  </dev/null \\\n  >/dev/null',
+    );
 
     const ambiguousBlock = source.slice(ambiguousCutover, localGate);
     expect(ambiguousBlock).toContain(

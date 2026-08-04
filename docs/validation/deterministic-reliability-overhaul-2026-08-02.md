@@ -60,9 +60,29 @@ truthful readiness classification. Complete gates passed on 2026-08-04:
 Leadership passed 27 contract tests, 87 unit tests, 14 disposable-database
 integration tests, and 74 executed browser/database scenarios with 18
 intentional platform-scope skips; Studio passed formatting, lint, all
-typechecks, 470 unit tests, secret scanning, production build, all 82
+typechecks, 471 unit tests, secret scanning, production build, all 82
 disposable-database integration tests, and 16 browser tests with 8 intentional
 project-scope skips against disposable Studio and Leadership databases.
+
+The first production preflight for exact candidate `16e6050...` stopped before
+release creation because the old deployed readiness route necessarily reaches
+the fixed consumer only after cutover. The successor launcher therefore adds a
+one-time, exact-old-commit capability transition rather than a general bypass.
+Its contract tests prove that normal deployment still rejects every non-200
+current readiness response; the transition additionally requires direct
+read-only web-role database proof, the exact diagnosed private/no-store 503,
+and an isolated candidate 200/`ready` proof on loopback port 3016 before any
+quiescence or migration. Candidate background reconciliation is disabled for
+that bounded probe so the readiness proof performs no synchronization write.
+The typed probe evidence is retained in the immutable candidate release.
+
+After this transition implementation, the complete Studio source gate passed
+48 files/471 unit tests, formatting, lint, every workspace typecheck, secret
+scanning, and the production build. All 82 integration tests passed against
+disposable Studio and Leadership databases, followed by 16 executed browser
+passes and 8 intentional project-scope skips at 1280px, 1440px, and 390px.
+The exact transition-state helper also passed read-only against production as
+the protected web user before commit or deployment.
 
 ## Architecture accepted
 
@@ -156,7 +176,7 @@ the explicit forward-only **Set public intent** action.
 ### Situation Studio
 
 - `pnpm verify`: contract archive/digest verification, Prisma generation,
-  formatting, lint, all workspace typechecks, 48 unit-test files/470 tests,
+  formatting, lint, all workspace typechecks, 48 unit-test files/471 tests,
   secret scanning, and production build passed.
 - `pnpm test:integration`: 5 files/82 tests passed against disposable
   PostgreSQL, including fresh migration, upgrade/backfill compatibility,
@@ -171,7 +191,7 @@ the explicit forward-only **Set public intent** action.
   project-scope cases were skipped. Playwright built the production web app,
   ran it behind a local HTTPS proxy, and covered desktop 1280, desktop 1440,
   and mobile 390 projects with captured console/page-error failure gates.
-- `pnpm contracts:verify`, the focused 21-test deployment contract,
+- `pnpm contracts:verify`, the focused 22-test deployment contract,
   `bash -n deploy.sh`, formatting, and `git diff --check` passed in the final
   evidence pass.
 

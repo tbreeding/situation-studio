@@ -4,6 +4,8 @@ declare global {
 
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  if (process.env.SITUATION_STUDIO_DISABLE_BACKGROUND_RECONCILIATION === "true")
+    return;
   const { reconcileLeadershipRelease } =
     await import("@/server/leadership-sync");
   if (!globalThis.situationStudioObservationTimer) {

@@ -16,6 +16,10 @@ studio_release="${studio_root}/releases/${studio_release_id}"
 studio_commit="$(git rev-parse HEAD)"
 studio_archive_limit_bytes=$((50 * 1024 * 1024))
 public_gate_mode="${SITUATION_STUDIO_PUBLIC_GATE_MODE:-required}"
+readiness_transition_mode="${SITUATION_STUDIO_READINESS_TRANSITION_MODE:-none}"
+capability_readiness_transition_mode="capability-digest-schema-v1"
+capability_readiness_transition_from_commit="328f9a8416f0b5ec1ad4d2a8e3c5e6336a2766d9"
+candidate_readiness_port="3016"
 required_codex_cli_version="0.145.0"
 required_claude_cli_version="2.1.218"
 web_user="${SITUATION_STUDIO_WEB_USER:-situation-studio-web}"
@@ -33,6 +37,8 @@ backup_database_identity_verifier_path="ops/verify-studio-backup-database-identi
 backup_environment_reader_path="ops/read-studio-backup-environment.sh"
 deployment_lease_helper_path="ops/manage-studio-deployment-lease.sh"
 buffered_remote_runner_path="ops/run-buffered-remote-script.sh"
+transition_state_verifier_path="ops/verify-capability-readiness-transition.sh"
+candidate_readiness_verifier_path="ops/verify-candidate-readiness.sh"
 
 if [[ -n "${studio_ssh_user}" ]]; then
   studio_ssh_target="${studio_ssh_user}@${studio_host}"
@@ -59,6 +65,20 @@ if [[
 fi
 if [[ "${public_gate_mode}" != "required" && "${public_gate_mode}" != "first-deploy-deferred" ]]; then
   echo "SITUATION_STUDIO_PUBLIC_GATE_MODE must be required or first-deploy-deferred." >&2
+  exit 1
+fi
+if [[
+  "${readiness_transition_mode}" != "none" &&
+  "${readiness_transition_mode}" != "${capability_readiness_transition_mode}"
+]]; then
+  echo "SITUATION_STUDIO_READINESS_TRANSITION_MODE is unsupported." >&2
+  exit 1
+fi
+if [[
+  "${readiness_transition_mode}" != "none" &&
+  "${public_gate_mode}" != "required"
+]]; then
+  echo "A readiness transition requires the protected public gate." >&2
   exit 1
 fi
 if [[
@@ -135,6 +155,14 @@ if [[
   echo "The committed buffered remote runner is missing or unsafe." >&2
   exit 1
 fi
+for readiness_verifier_path in \
+  "${transition_state_verifier_path}" \
+  "${candidate_readiness_verifier_path}"; do
+  if [[ ! -f "${readiness_verifier_path}" || -L "${readiness_verifier_path}" ]]; then
+    echo "A committed readiness-transition verifier is missing or unsafe." >&2
+    exit 1
+  fi
+done
 backup_policy_sql_base64="$(base64 <"${backup_policy_sql_path}" | tr -d '\n')"
 backup_mode_verifier_base64="$(
   base64 <"${backup_mode_verifier_path}" | tr -d '\n'
@@ -147,6 +175,9 @@ backup_environment_reader_base64="$(
 )"
 deployment_lease_helper_base64="$(
   base64 <"${deployment_lease_helper_path}" | tr -d '\n'
+)"
+transition_state_verifier_base64="$(
+  base64 <"${transition_state_verifier_path}" | tr -d '\n'
 )"
 
 echo "[1/8] Acquiring the deployment lease and preflighting the approved production host"
@@ -223,7 +254,10 @@ ssh "${studio_ssh_target}" bash -s -- \
   "${backup_database_identity_verifier_base64}" \
   "${backup_environment_reader_base64}" \
   "${deployment_lease_helper_base64}" \
-  "${deployment_lease_token}" <<'REMOTE' >"${studio_preflight_output_file}"
+  "${deployment_lease_token}" \
+  "${readiness_transition_mode}" \
+  "${capability_readiness_transition_from_commit}" \
+  "${transition_state_verifier_base64}" <<'REMOTE' >"${studio_preflight_output_file}"
 set -euo pipefail
 studio_root="${1}"
 web_environment="${2}"
@@ -244,6 +278,9 @@ backup_database_identity_verifier_base64="${16}"
 backup_environment_reader_base64="${17}"
 deployment_lease_helper_base64="${18}"
 deployment_lease_token="${19}"
+readiness_transition_mode="${20}"
+capability_readiness_transition_from_commit="${21}"
+transition_state_verifier_base64="${22}"
 printf '%s' "${deployment_lease_helper_base64}" |
   base64 --decode |
   /bin/bash -s -- assert "${studio_root}" "${deployment_lease_token}"
@@ -317,6 +354,7 @@ sudo -n -u "${review_user}" env -i \
 sudo -n env "PATH=${PATH}" "${pm2_bin}" --version </dev/null >/dev/null
 
 has_current_release=false
+current_release_commit=""
 if [[ -L "${studio_root}/current" ]]; then
   if [[ ! -e "${studio_root}/current" ]]; then
     echo "The current Studio release pointer is dangling." >&2
@@ -328,6 +366,11 @@ if [[ -L "${studio_root}/current" ]]; then
     ! -f "${current_release}/.release-commit"
   ]]; then
     echo "The current Studio pointer does not identify an immutable recorded release." >&2
+    exit 1
+  fi
+  current_release_commit="$(cat "${current_release}/.release-commit")"
+  if [[ ! "${current_release_commit}" =~ ^[a-f0-9]{40}$ ]]; then
+    echo "The current Studio release commit marker is invalid." >&2
     exit 1
   fi
   has_current_release=true
@@ -350,6 +393,13 @@ if [[ "${has_current_release}" == "true" && "${public_gate_mode}" == "first-depl
 fi
 if [[ "${has_current_release}" == "false" && "${public_gate_mode}" != "first-deploy-deferred" ]]; then
   echo "A first Studio release must use the publication-locked first-deploy-deferred mode." >&2
+  exit 1
+fi
+if [[ "${readiness_transition_mode}" == "capability-digest-schema-v1" && (
+  "${has_current_release}" != "true" ||
+  "${current_release_commit}" != "${capability_readiness_transition_from_commit}"
+) ]]; then
+  echo "The capability-readiness transition is not authorized from this release." >&2
   exit 1
 fi
 
@@ -671,6 +721,43 @@ if ! grep -Fqx -- "${backup_nightly_schedule}" <<<"${backup_crontab}"; then
   exit 1
 fi
 
+transition_state_verified=false
+if [[ "${readiness_transition_mode}" == "capability-digest-schema-v1" ]]; then
+  transition_state_verifier_source="$(
+    printf '%s' "${transition_state_verifier_base64}" | base64 --decode
+  )"
+  transition_state_evidence="$(
+    sudo -n -u "${web_user}" env -i \
+      "HOME=${web_home}" \
+      "USER=${web_user}" \
+      "LOGNAME=${web_user}" \
+      "PATH=${PATH}" \
+      "STUDIO_TRANSITION_RELEASE=${current_release}" \
+      "STUDIO_TRANSITION_WEB_ENVIRONMENT=${web_environment}" \
+      "STUDIO_TRANSITION_EXPECTED_COMMIT=${capability_readiness_transition_from_commit}" \
+      "STUDIO_TRANSITION_READINESS_URL=http://127.0.0.1:3015/health/ready" \
+      /bin/bash -c "${transition_state_verifier_source}" </dev/null
+  )"
+  TRANSITION_STATE_EVIDENCE="${transition_state_evidence}" \
+  EXPECTED_COMMIT="${capability_readiness_transition_from_commit}" node -e '
+    let evidence;
+    try {
+      evidence = JSON.parse(process.env.TRANSITION_STATE_EVIDENCE ?? "");
+    } catch {
+      process.exit(1);
+    }
+    if (
+      evidence?.schemaVersion !== "capability-readiness-transition-v1" ||
+      evidence?.currentCommit !== process.env.EXPECTED_COMMIT ||
+      evidence?.database !== "reachable" ||
+      evidence?.readinessStatus !== 503 ||
+      !/^[a-f0-9]{64}$/u.test(evidence?.readinessBodySha256 ?? "")
+    ) process.exit(1);
+  '
+  unset transition_state_verifier_source transition_state_evidence
+  transition_state_verified=true
+fi
+
 readiness_response="$(
   curl --silent --show-error --max-time 10 --write-out $'\n%{http_code}' \
     http://127.0.0.1:3015/health/ready
@@ -678,7 +765,9 @@ readiness_response="$(
 readiness_http_status="${readiness_response##*$'\n'}"
 readiness_json="${readiness_response%$'\n'*}"
 READINESS_HTTP_STATUS="${readiness_http_status}" \
-READINESS_JSON="${readiness_json}" node -e '
+READINESS_JSON="${readiness_json}" \
+READINESS_TRANSITION_MODE="${readiness_transition_mode}" \
+TRANSITION_STATE_VERIFIED="${transition_state_verified}" node -e '
   let readiness;
   try {
     readiness = JSON.parse(process.env.READINESS_JSON ?? "");
@@ -689,7 +778,17 @@ READINESS_JSON="${readiness_json}" node -e '
   const currentServiceReady =
     process.env.READINESS_HTTP_STATUS === "200" &&
     readiness?.status === "ready";
-  if (!currentServiceReady) {
+  const exactTransitionState =
+    process.env.READINESS_TRANSITION_MODE === "capability-digest-schema-v1" &&
+    process.env.TRANSITION_STATE_VERIFIED === "true" &&
+    process.env.READINESS_HTTP_STATUS === "503" &&
+    readiness &&
+    typeof readiness === "object" &&
+    !Array.isArray(readiness) &&
+    Object.keys(readiness).length === 2 &&
+    readiness.status === "not-ready" &&
+    readiness.database === "unreachable";
+  if (!currentServiceReady && !exactTransitionState) {
     console.error("The current Studio service is not ready for deployment.");
     process.exit(1);
   }
@@ -729,7 +828,11 @@ if [[
 fi
 
 if [[ "${SITUATION_STUDIO_PREFLIGHT_ONLY:-}" == "1" ]]; then
-  echo "Studio production preflight passed; no release was created."
+  if [[ "${readiness_transition_mode}" == "capability-digest-schema-v1" ]]; then
+    echo "Studio production capability-transition preflight passed; no release was created."
+  else
+    echo "Studio production preflight passed; no release was created."
+  fi
   exit 0
 fi
 
@@ -872,6 +975,79 @@ if [[ "${public_gate_mode}" == "required" && -z "${studio_previous}" ]]; then
   echo "The current Studio release disappeared after preflight; refusing an unprotected cutover." >&2
   exit 1
 fi
+if [[ "${readiness_transition_mode}" == "${capability_readiness_transition_mode}" ]]; then
+  echo "[4b/8] Proving isolated candidate readiness before stateful cutover"
+  ssh "${studio_ssh_target}" /bin/bash \
+    "${studio_release}/${buffered_remote_runner_path}" \
+    "${studio_root}" \
+    "${studio_release}" \
+    "${studio_previous}" \
+    "${web_user}" \
+    "${web_environment}" \
+    "${deployment_lease_token}" \
+    "${studio_commit}" \
+    "${capability_readiness_transition_from_commit}" \
+    "${candidate_readiness_port}" <<'REMOTE'
+set -euo pipefail
+studio_root="${1}"
+studio_release="${2}"
+studio_previous="${3}"
+web_user="${4}"
+web_environment="${5}"
+deployment_lease_token="${6}"
+studio_commit="${7}"
+expected_previous_commit="${8}"
+candidate_readiness_port="${9}"
+/bin/bash "${studio_release}/ops/manage-studio-deployment-lease.sh" \
+  assert "${studio_root}" "${deployment_lease_token}"
+test -L "${studio_root}/current"
+test -e "${studio_root}/current"
+test "$(readlink -f "${studio_root}/current")" = "${studio_previous}"
+test "$(cat "${studio_previous}/.release-commit")" = "${expected_previous_commit}"
+source ~/.nvm/nvm.sh
+web_home="$(getent passwd "${web_user}" | cut -d: -f6)"
+test -d "${web_home}"
+candidate_readiness_evidence="$(
+  sudo -n -u "${web_user}" env -i \
+    "HOME=${web_home}" \
+    "USER=${web_user}" \
+    "LOGNAME=${web_user}" \
+    "PATH=${PATH}" \
+    "STUDIO_CANDIDATE_RELEASE=${studio_release}" \
+    "STUDIO_CANDIDATE_WEB_ENVIRONMENT=${web_environment}" \
+    "STUDIO_CANDIDATE_COMMIT=${studio_commit}" \
+    "STUDIO_CANDIDATE_PREVIOUS_COMMIT=${expected_previous_commit}" \
+    "STUDIO_CANDIDATE_READINESS_PORT=${candidate_readiness_port}" \
+    /bin/bash "${studio_release}/ops/verify-candidate-readiness.sh" </dev/null
+)"
+CANDIDATE_READINESS_EVIDENCE="${candidate_readiness_evidence}" \
+CANDIDATE_COMMIT="${studio_commit}" \
+PREVIOUS_COMMIT="${expected_previous_commit}" \
+CANDIDATE_PORT="${candidate_readiness_port}" node -e '
+  let evidence;
+  try {
+    evidence = JSON.parse(process.env.CANDIDATE_READINESS_EVIDENCE ?? "");
+  } catch {
+    process.exit(1);
+  }
+  if (
+    evidence?.schemaVersion !== "candidate-readiness-transition-v1" ||
+    evidence?.candidateCommit !== process.env.CANDIDATE_COMMIT ||
+    evidence?.previousCommit !== process.env.PREVIOUS_COMMIT ||
+    String(evidence?.port) !== process.env.CANDIDATE_PORT ||
+    evidence?.liveStatus !== 200 ||
+    evidence?.readinessStatus !== 200 ||
+    !/^[a-f0-9]{64}$/u.test(evidence?.readinessBodySha256 ?? "") ||
+    Number.isNaN(Date.parse(evidence?.observedAt ?? ""))
+  ) process.exit(1);
+'
+/bin/bash "${studio_release}/ops/manage-studio-deployment-lease.sh" \
+  assert "${studio_root}" "${deployment_lease_token}"
+printf '%s\n' "${candidate_readiness_evidence}" \
+  >"${studio_release}/.candidate-readiness-transition.json"
+printf '%s\n' "${candidate_readiness_evidence}"
+REMOTE
+fi
 studio_previous_argument="${studio_previous:-NO_PREVIOUS_STUDIO_RELEASE}"
 echo "[5-6/8] Quiescing Studio, preserving review state, applying additive migrations, and cutting over"
 deployment_lease_release_safe=false
@@ -893,7 +1069,9 @@ ssh "${studio_ssh_target}" /bin/bash \
   "${backup_environment}" \
   "${studio_commit}" \
   "${studio_release_id}" \
-  "${backup_offsite_configuration_id:-NO_FOLLOWUP_BACKUP_CONFIG}" <<'REMOTE'
+  "${backup_offsite_configuration_id:-NO_FOLLOWUP_BACKUP_CONFIG}" \
+  "${readiness_transition_mode}" \
+  "${capability_readiness_transition_from_commit}" <<'REMOTE'
 set -euo pipefail
 studio_root="${1}"
 studio_release="${2}"
@@ -911,6 +1089,8 @@ backup_environment="${13}"
 studio_commit="${14}"
 studio_release_id="${15}"
 backup_offsite_configuration_id="${16}"
+readiness_transition_mode="${17}"
+capability_readiness_transition_from_commit="${18}"
 assert_deployment_lease() {
   /bin/bash "${studio_release}/ops/manage-studio-deployment-lease.sh" \
     assert "${studio_root}" "${deployment_lease_token}"
@@ -975,6 +1155,53 @@ verify_local_health() {
   return 1
 }
 
+verify_previous_recovery() {
+  if [[ "${readiness_transition_mode}" != "capability-digest-schema-v1" ]]; then
+    verify_local_health
+    return
+  fi
+  if [[
+    -z "${studio_previous}" ||
+    "$(cat "${studio_previous}/.release-commit")" != "${capability_readiness_transition_from_commit}"
+  ]]; then
+    return 1
+  fi
+  local web_home
+  local transition_evidence
+  web_home="$(getent passwd "${web_user}" | cut -d: -f6)"
+  test -d "${web_home}"
+  for attempt in $(seq 1 45); do
+    if curl -fsS http://127.0.0.1:3015/health/live >/dev/null; then
+      if transition_evidence="$(
+        sudo -n -u "${web_user}" env -i \
+          "HOME=${web_home}" \
+          "USER=${web_user}" \
+          "LOGNAME=${web_user}" \
+          "PATH=${PATH}" \
+          "STUDIO_TRANSITION_RELEASE=${studio_previous}" \
+          "STUDIO_TRANSITION_WEB_ENVIRONMENT=${web_environment}" \
+          "STUDIO_TRANSITION_EXPECTED_COMMIT=${capability_readiness_transition_from_commit}" \
+          "STUDIO_TRANSITION_READINESS_URL=http://127.0.0.1:3015/health/ready" \
+          /bin/bash "${studio_release}/ops/verify-capability-readiness-transition.sh" \
+          </dev/null
+      )"; then
+        TRANSITION_EVIDENCE="${transition_evidence}" \
+        EXPECTED_COMMIT="${capability_readiness_transition_from_commit}" node -e '
+          const evidence = JSON.parse(process.env.TRANSITION_EVIDENCE ?? "");
+          if (
+            evidence?.schemaVersion !== "capability-readiness-transition-v1" ||
+            evidence?.currentCommit !== process.env.EXPECTED_COMMIT ||
+            evidence?.database !== "reachable" ||
+            evidence?.readinessStatus !== 503
+          ) process.exit(1);
+        ' && return 0
+      fi
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 deployment_backup_receipt_id=""
 deployment_backup_receipt_started_at=""
 restore_previous_on_failure() {
@@ -1007,11 +1234,11 @@ SQL
     if ! start_release "${studio_previous}"; then
       echo "CRITICAL: the previous Studio release could not be restarted." >&2
       rollback_status=70
-    elif ! verify_local_health; then
-      echo "CRITICAL: the previous Studio release restarted but did not become healthy." >&2
+    elif ! verify_previous_recovery; then
+      echo "CRITICAL: the previous Studio release restarted but did not return to its exact verified recovery state." >&2
       rollback_status=71
     else
-      echo "Previous Studio release restored and locally verified." >&2
+      echo "Previous Studio release restored to its exact locally verified recovery state." >&2
     fi
   fi
   if ((rollback_status != 0)); then
@@ -1371,7 +1598,9 @@ rollback_to_previous_release() {
     "${web_environment}" \
     "${review_environment}" \
     "${publisher_environment}" \
-    "${deployment_lease_token}" <<'REMOTE'
+    "${deployment_lease_token}" \
+    "${readiness_transition_mode}" \
+    "${capability_readiness_transition_from_commit}" <<'REMOTE'
 set -euo pipefail
 studio_root="${1}"
 studio_release="${2}"
@@ -1383,6 +1612,8 @@ web_environment="${7}"
 review_environment="${8}"
 publisher_environment="${9}"
 deployment_lease_token="${10}"
+readiness_transition_mode="${11}"
+capability_readiness_transition_from_commit="${12}"
 /bin/bash "${studio_release}/ops/manage-studio-deployment-lease.sh" \
   assert "${studio_root}" "${deployment_lease_token}"
 test -d "${studio_previous}"
@@ -1414,14 +1645,46 @@ sudo -n env \
 sudo -n env "PATH=${PATH}" "${pm2_bin}" save </dev/null
 test "$(readlink -f "${studio_root}/current")" = \
   "$(readlink -f "${studio_previous}")"
+web_home="$(getent passwd "${web_user}" | cut -d: -f6)"
+test -d "${web_home}"
 for attempt in $(seq 1 45); do
   if curl -fsS http://127.0.0.1:3015/health/live >/dev/null &&
     curl -fsS http://127.0.0.1:3015/health/ready >/dev/null; then
     exit 0
   fi
+  if [[
+    "${readiness_transition_mode}" == "capability-digest-schema-v1" &&
+    "$(cat "${studio_previous}/.release-commit")" == "${capability_readiness_transition_from_commit}" &&
+    "$(readlink -f "${studio_root}/current")" == "$(readlink -f "${studio_previous}")"
+  ]]; then
+    if transition_evidence="$(
+      sudo -n -u "${web_user}" env -i \
+        "HOME=${web_home}" \
+        "USER=${web_user}" \
+        "LOGNAME=${web_user}" \
+        "PATH=${PATH}" \
+        "STUDIO_TRANSITION_RELEASE=${studio_previous}" \
+        "STUDIO_TRANSITION_WEB_ENVIRONMENT=${web_environment}" \
+        "STUDIO_TRANSITION_EXPECTED_COMMIT=${capability_readiness_transition_from_commit}" \
+        "STUDIO_TRANSITION_READINESS_URL=http://127.0.0.1:3015/health/ready" \
+        /bin/bash "${studio_release}/ops/verify-capability-readiness-transition.sh" \
+        </dev/null
+    )"; then
+      TRANSITION_EVIDENCE="${transition_evidence}" \
+      EXPECTED_COMMIT="${capability_readiness_transition_from_commit}" node -e '
+        const evidence = JSON.parse(process.env.TRANSITION_EVIDENCE ?? "");
+        if (
+          evidence?.schemaVersion !== "capability-readiness-transition-v1" ||
+          evidence?.currentCommit !== process.env.EXPECTED_COMMIT ||
+          evidence?.database !== "reachable" ||
+          evidence?.readinessStatus !== 503
+        ) process.exit(1);
+      ' && exit 0
+    fi
+  fi
   sleep 2
 done
-echo "The previous Studio release did not become locally healthy." >&2
+echo "The previous Studio release did not return to its exact verified recovery state." >&2
 exit 1
 REMOTE
 }

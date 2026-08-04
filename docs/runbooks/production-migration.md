@@ -387,6 +387,40 @@ allow-listed Leadership incompatibility from a Studio database outage while
 remaining HTTP 503. Do not reinterpret either state as ready or bypass the
 launcher's required 200/`ready` preflight.
 
+The single diagnosed deployment from Studio commit
+`328f9a8416f0b5ec1ad4d2a8e3c5e6336a2766d9` may use the separately fenced
+`SITUATION_STUDIO_READINESS_TRANSITION_MODE=capability-digest-schema-v1` path.
+This is not a general readiness override. The candidate-owned transition
+verifier requires the current immutable commit to match exactly, connects as
+the protected Studio web role in a read-only transaction to prove the exact
+`situation_studio` database is reachable, and accepts only HTTP 503 with the
+exact legacy body `{"status":"not-ready","database":"unreachable"}` plus
+JSON/private/no-store headers. The ordinary raw Leadership capability verifier,
+backup/restore policy, roles, schedules, public gate, and every other preflight
+remain mandatory.
+
+Run preflight-only with that explicit transition mode first. A full transition
+then creates and builds the immutable candidate, starts only its web process on
+loopback port 3016 with background Leadership reconciliation disabled, and
+requires both live and ready to return HTTP 200, with readiness reporting
+`status: ready` and `database: reachable`. The probe is terminated and its
+typed evidence is written to `.candidate-readiness-transition.json` before any
+process is quiesced. Migration and cutover cannot begin without that evidence.
+The mode cannot be used for a first release, another prior commit, another
+failure body, an unreachable web database, or a candidate that is merely live
+or degraded. Normal subsequent deployments omit the variable and retain the
+unconditional current-release 200/`ready` gate.
+
+If the transition candidate later fails local or public verification, rollback
+still restores the exact prior release. Because that release has the diagnosed
+digest-schema defect, recovery is verified against its exact immutable commit,
+direct read-only web-database access, local live 200, and the same exact
+private/no-store 503 response rather than misrepresenting it as healthy. No
+Leadership content restoration is attempted. This recovery returns production
+only to its fully identified pre-deployment state; it is not a successful
+deployment and the lease/recovery evidence must be handled exactly as reported
+by the launcher.
+
 Migration or cutover failure restarts the prior processes and restores the
 prior release pointer where applicable. Once this migration has committed, an
 old-release rollback remains usable for editing and review but is intentionally

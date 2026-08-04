@@ -186,11 +186,17 @@ describe("deployment serialization and state backup contract", () => {
     expect(synchronousBackup).toBeLessThan(exactGate);
     expect(exactGate).toBeLessThan(projectionRecheck);
     expect(projectionRecheck).toBeLessThan(migration);
+    const candidateReadiness = position(
+      deploy,
+      '"${studio_release}/ops/verify-candidate-readiness.sh"',
+    );
+    expect(candidateReadiness).toBeLessThan(publisherStop);
+    expect(candidateReadiness).toBeLessThan(migration);
     expect(
       deploy.match(
         /"\$\{studio_release\}\/\$\{buffered_remote_runner_path\}"/gu,
       ),
-    ).toHaveLength(7);
+    ).toHaveLength(8);
     const postExtraction = deploy.slice(
       position(deploy, "unset archive_extract_command"),
     );

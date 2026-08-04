@@ -43,6 +43,14 @@ const bufferedRemoteRunnerPath = path.join(
   root,
   "ops/run-buffered-remote-script.sh",
 );
+const capabilityTransitionVerifierPath = path.join(
+  root,
+  "ops/verify-capability-readiness-transition.sh",
+);
+const candidateReadinessVerifierPath = path.join(
+  root,
+  "ops/verify-candidate-readiness.sh",
+);
 const provisionDatabasePath = path.join(
   root,
   "ops/provision-studio-database.sql",
@@ -75,7 +83,8 @@ function position(source: string, fragment: string) {
 }
 
 function currentReadinessVerifier(source: string) {
-  const marker = 'READINESS_JSON="${readiness_json}" node -e \'\n';
+  const marker =
+    'TRANSITION_STATE_VERIFIED="${transition_state_verified}" node -e \'\n';
   const start = position(source, marker) + marker.length;
   const end = source.indexOf("\n'\nfi\nREMOTE", start);
   expect(end, "missing current-readiness verifier terminator").toBeGreaterThan(
@@ -178,6 +187,7 @@ printf 'status:%s\\n' "\${status}"
       "SITUATION_STUDIO_PUBLIC_ORIGIN",
       "SITUATION_STUDIO_PUBLIC_HOST",
       "SITUATION_STUDIO_PUBLIC_GATE_MODE",
+      "SITUATION_STUDIO_READINESS_TRANSITION_MODE",
       "SITUATION_STUDIO_DEPLOY_USER",
       "SITUATION_STUDIO_WEB_USER",
       "SITUATION_STUDIO_REVIEW_USER",
@@ -185,6 +195,8 @@ printf 'status:%s\\n' "\${status}"
       "LEADERSHIP_RUNTIME_CAPABILITIES_URL",
       "ops/verify-leadership-runtime-capabilities.mjs",
       "ops/run-buffered-remote-script.sh",
+      "ops/verify-capability-readiness-transition.sh",
+      "ops/verify-candidate-readiness.sh",
     ])
       expect(position(source, guard)).toBeLessThan(firstSsh);
   });
@@ -530,13 +542,20 @@ printf 'status:%s\\n' "\${status}"
       status: "ready",
       backup: { state: "deferred" },
     };
-    const runVerifier = (httpStatus: string, value: unknown) =>
+    const runVerifier = (
+      httpStatus: string,
+      value: unknown,
+      transitionMode = "none",
+      transitionVerified = "false",
+    ) =>
       executeFile("node", ["-e", verifier], {
         env: {
           ...process.env,
           READINESS_HTTP_STATUS: httpStatus,
           READINESS_JSON:
             typeof value === "string" ? value : JSON.stringify(value),
+          READINESS_TRANSITION_MODE: transitionMode,
+          TRANSITION_STATE_VERIFIED: transitionVerified,
         },
       });
 
@@ -558,6 +577,113 @@ printf 'status:%s\\n' "\${status}"
         "Studio readiness did not return valid JSON.",
       ),
     });
+    await expect(
+      runVerifier(
+        "503",
+        { status: "not-ready", database: "unreachable" },
+        "capability-digest-schema-v1",
+        "true",
+      ),
+    ).resolves.toMatchObject({ stderr: "" });
+    for (const [value, transitionVerified] of [
+      [{ status: "not-ready", database: "unreachable" }, "false"],
+      [
+        {
+          status: "not-ready",
+          database: "unreachable",
+          unexpected: true,
+        },
+        "true",
+      ],
+    ] as const) {
+      await expect(
+        runVerifier(
+          "503",
+          value,
+          "capability-digest-schema-v1",
+          transitionVerified,
+        ),
+      ).rejects.toMatchObject({
+        stderr: expect.stringContaining(
+          "The current Studio service is not ready for deployment.",
+        ),
+      });
+    }
+  });
+
+  test("the one-time capability transition is exact, candidate-first, and recoverable", async () => {
+    const [source, transitionVerifier, candidateVerifier, instrumentation] =
+      await Promise.all([
+        readFile(deployPath, "utf8"),
+        readFile(capabilityTransitionVerifierPath, "utf8"),
+        readFile(candidateReadinessVerifierPath, "utf8"),
+        readFile(path.join(root, "apps/web/src/instrumentation.ts"), "utf8"),
+      ]);
+    await expect(
+      Promise.all([
+        executeFile("bash", ["-n", capabilityTransitionVerifierPath]),
+        executeFile("bash", ["-n", candidateReadinessVerifierPath]),
+      ]),
+    ).resolves.toEqual([
+      expect.objectContaining({ stderr: "" }),
+      expect.objectContaining({ stderr: "" }),
+    ]);
+
+    const preflightOnly = position(
+      source,
+      'if [[ "${SITUATION_STUDIO_PREFLIGHT_ONLY:-}" == "1" ]]',
+    );
+    const releaseBuild = position(
+      source,
+      "pnpm --filter @situation-studio/web build",
+    );
+    const candidateProbe = position(
+      source,
+      '"${studio_release}/ops/verify-candidate-readiness.sh"',
+    );
+    const cutover = position(
+      source,
+      'echo "[5-6/8] Quiescing Studio, preserving review state, applying additive migrations, and cutting over"',
+    );
+    for (const fragment of [
+      'capability_readiness_transition_mode="capability-digest-schema-v1"',
+      'capability_readiness_transition_from_commit="328f9a8416f0b5ec1ad4d2a8e3c5e6336a2766d9"',
+      '"${current_release_commit}" != "${capability_readiness_transition_from_commit}"',
+      "transition_state_verified=false",
+      '"STUDIO_TRANSITION_EXPECTED_COMMIT=${capability_readiness_transition_from_commit}"',
+      "transition_state_verified=true",
+    ])
+      expect(position(source, fragment)).toBeLessThan(preflightOnly);
+    expect(releaseBuild).toBeLessThan(candidateProbe);
+    expect(candidateProbe).toBeLessThan(cutover);
+    position(source, ".candidate-readiness-transition.json");
+    expect(
+      source.match(/verify-capability-readiness-transition\.sh/gu)?.length,
+    ).toBeGreaterThanOrEqual(3);
+
+    for (const fragment of [
+      "BEGIN TRANSACTION READ ONLY",
+      "current_database() = 'situation_studio'",
+      'process.env.READINESS_STATUS !== "503"',
+      'body.status === "not-ready"',
+      'body.database === "unreachable"',
+      "Object.keys(body).length === 2",
+      '"capability-readiness-transition-v1"',
+    ])
+      position(transitionVerifier, fragment);
+    for (const fragment of [
+      '"${readiness_port}" != "3016"',
+      "SITUATION_STUDIO_DISABLE_BACKGROUND_RECONCILIATION=true",
+      'body?.status !== "ready"',
+      'body?.database !== "reachable"',
+      '"candidate-readiness-transition-v1"',
+      'kill -TERM "${candidate_pid}"',
+    ])
+      position(candidateVerifier, fragment);
+    position(
+      instrumentation,
+      'process.env.SITUATION_STUDIO_DISABLE_BACKGROUND_RECONCILIATION === "true"',
+    );
   });
 
   test("the launcher uses immutable releases, isolated processes, health checks, and rollback", async () => {

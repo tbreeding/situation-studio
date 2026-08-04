@@ -25,7 +25,7 @@ promotion/restoration.
   The exact 71-path Studio release candidate was forward-ported from the dirty
   source worktree onto current `origin/main`; the unrelated inventory feature
   and Leadership `docs/AUTHORING.md` overlap are excluded.
-- Final local Studio gates passed 48 unit-test files/457 tests, 5 integration
+- Final local Studio gates passed 48 unit-test files/471 tests, 5 integration
   files/82 tests, and the 24-case browser matrix with 16 executed passes and 8
   intentional project-scope skips across 1280px, 1440px, and 390px layouts.
   The browser gate included console/page-error, accessibility, overflow, and
@@ -110,7 +110,27 @@ not deployed. Production remains on `20260802T114927Z`, the deterministic
 preflight migration remains unapplied, and no content, review, proposal,
 checkout, publication, or official Leadership pointer was mutated. A Studio
 cutover remains prohibited until the full runbook preflight returns genuine
-HTTP 200/`ready`; the known 503 must not be bypassed.
+HTTP 200/`ready` or the exact transition below independently proves the
+candidate is genuinely ready; the known 503 alone must not be bypassed.
+
+On 2026-08-04 the product owner authorized fixing the deployment transition.
+The successor launcher now contains one exact
+`capability-digest-schema-v1` path locked to deployed commit `328f9a8...`.
+Before it treats that diagnosed legacy 503 as a transition input, it proves the
+web role can read the exact production database and matches the complete
+response contract. After building the candidate, it starts only the candidate
+web process on loopback port 3016 with background reconciliation disabled and
+requires genuine 200/`ready` before quiescence, migration, or cutover. The
+normal current-release readiness gate is unchanged. Complete source gates and
+production preflight/deployment evidence must be recorded before this path is
+described as deployed.
+
+The transition candidate's complete local gate passed 48 files/471 unit tests,
+all 82 disposable-database integration tests, and the 24-case browser matrix
+with 16 executed passes and 8 intentional project-scope skips. The exact
+transition-state helper also ran successfully as the protected production web
+user, proving direct read-only database access and the diagnosed legacy 503
+without changing production state.
 
 ## Current production and recovery boundary
 

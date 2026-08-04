@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Added an exact one-time capability-readiness deployment transition from Studio commit `328f9a8...`: the launcher independently proves the protected web role can read the production database, matches the diagnosed legacy 503 byte contract, and requires the isolated candidate to return genuine 200/`ready` before quiescence, migration, or cutover. Normal deployments still require the current release to be ready.
 - Replaced new 24-stage reviews with four bounded phases: context mapping, integrated critical review, server-owned candidate construction, and a typed blocking audit with at most one repair pass. Retained 22/24-stage jobs remain readable for rolling compatibility.
 - Changed Studio revisions to a complete v2 publishable snapshot and made the Leadership-owned pure validator/compiler the shared save, review, proposal, preflight, and publisher contract.
 - Fenced saves, reviews, proposal decisions, preflight, and publication to exact revision and bundle identities; proposal decisions now return the authoritative resulting revision for immediate editor adoption.

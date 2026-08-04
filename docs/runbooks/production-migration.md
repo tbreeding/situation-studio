@@ -32,6 +32,64 @@ Studio pointer. It is not accepted by a follow-up deployment or publication.
 
 ## Current deployed follow-up checkpoint
 
+The deterministic reliability follow-up deployed on 2026-08-04. Production
+points to immutable release `20260804T181727Z` at exact commit
+`b43edd4f5b00183e1ae1f0617937aa5a08ed7539`. Migration
+`20260802120000_deterministic_publication_preflight` is applied without
+rollback; all eight integrity triggers are enabled and every release-schema
+grant guard is true.
+
+The successful cutover backup receipt is
+`ac3531c5-2820-4c6c-83d2-bc0ae2cee055`, object
+`situation-studio-20260804T181856Z-ac3531c5-2820-4c6c-83d2-bc0ae2cee055.dump.gpg`,
+checksum
+`4fd9cb568e47d1747f7e5d3a4d58dd80927ac79c1dd72aa4ffb6c24fcde36af0`,
+and byte length 821,318. It is encrypted, verified, and off-site. The immutable
+backup marker records active-review hash
+`517820e7c9502c99a31d2031f8316ac57210900c5cb37dfc9932eebdff974e9e`
+and expected-lane hash
+`21806f654e0f906f3f7a512112646c1a1f0bd044a6fcb14769c5cb352e7e7e36`.
+The continuity marker records identical before/after and expected/actual
+hashes, `matched: true`, and `laneMatched: true`.
+
+The current pointer and all three PM2 working directories name the immutable
+release. Web, review worker, and publisher are online with zero restarts. Local
+live and ready return 200; readiness reports the exact compatible Leadership
+commit/digest, fresh worker heartbeats, no publisher recovery, and backup
+evidence `READY` with a passed non-empty restore drill. The unauthenticated
+public probe returns 403 with `private, no-store`. No deployment shell or lease
+remains.
+
+Four active checkouts remain with the same IDs, fences, revision numbers, and
+bundle hashes. Review, publication, unfinished-attempt, and recovery-required
+drains are all zero. No preflight receipt or candidate artifact was created,
+and no content/review/proposal/publication action was performed.
+
+Leadership remains on application release `20260802T185408Z`, and its official
+pointer, manifest, generation, complete artifact/edge sets, total bytes, API
+inventory, sitemap, feed, and unaffected-route bytes are identical to the
+pre-migration baseline. The typed verification route remains 200/no-store.
+
+Authenticated validation of this exact release is pending. The in-app browser
+reached the production sign-in page but had no signed-in session and no
+approved credential was available. Do not bypass authentication or reset an
+account for evidence; complete the 1440px and 390px Inventory, Operations,
+read-only workspace, and browser warn/error checks after an authorized sign-in.
+
+Attempt `20260804T180816Z` stopped safely before quiescence because its
+candidate helper used the wrong pnpm workspace path. It created only an
+immutable built release. Commit `b43edd4...` corrected the helper and the
+successor deployment passed the isolated 200/`ready` gate. Preserve that
+failed release and the earlier 2026-08-02 failed-attempt evidence; do not
+delete or rewrite receipts or immutable release directories.
+
+This completed deployment does not authorize another review or a content
+publication. Future deployment work must begin with the full read-only
+preflight and a newly named exact commit approval; never reuse an old lease or
+resume an abandoned attempt midway.
+
+## Superseded 2026-08-02 follow-up checkpoint
+
 The focused-review follow-up deployment completed on 2026-08-02. Production
 points to immutable release `20260802T114927Z` at exact commit
 `328f9a8416f0b5ec1ad4d2a8e3c5e6336a2766d9`. The release grants only `SELECT`

@@ -1,22 +1,26 @@
 # Deterministic review-to-publication reliability overhaul
 
 Date: 2026-08-02
-Status: Leadership release commit `d15a92b8e91967f85a8b78ee7c2146a2154a56c0`
-is pushed; the exact 71-path Studio release candidate is accepted locally but
-not yet committed, pushed, deployed, or used against production
+Status: deployed on 2026-08-04 as immutable Situation Studio release
+`20260804T181727Z` at commit
+`b43edd4f5b00183e1ae1f0617937aa5a08ed7539`; authenticated in-app browser
+validation remains pending an approved sign-in session
 
 ## Acceptance statement
 
-The local implementation now uses one complete publishable snapshot and one
+The deployed implementation now uses one complete publishable snapshot and one
 Leadership-owned deterministic compiler/validator from save through review,
 proposal decisions, publication preflight, publisher promotion, and runtime
 verification. The release-like journey proved that the candidate previewed by
 the editor, adopted revision, sealed preflight, publisher input, Leadership
 release artifacts, and typed runtime response have identical identities.
 
-No production database, official Leadership pointer, deployed Studio release,
-or real situation was changed. All database and runtime acceptance used
-disposable local services.
+The approved additive Studio migration and application cutover changed the
+production schema/runtime only. No real situation, review, proposal decision,
+publication, or official Leadership pointer was changed. Pre-release database
+and runtime acceptance used disposable local services; the production evidence
+below is read-only except for the reviewed migration, grants, backup, process
+restart, and immutable cutover sequence.
 
 ## 2026-08-04 live capability-digest diagnosis
 
@@ -83,6 +87,58 @@ disposable Studio and Leadership databases, followed by 16 executed browser
 passes and 8 intentional project-scope skips at 1280px, 1440px, and 390px.
 The exact transition-state helper also passed read-only against production as
 the protected web user before commit or deployment.
+
+## 2026-08-04 production deployment evidence
+
+Exact preflight against commit `b43edd4f5b00183e1ae1f0617937aa5a08ed7539`
+passed with four active checkouts, no queued/running review, no active
+publication, no unfinished publication attempt, no recovery-required job, the
+verified encrypted off-site backup and passed restore receipt, and the exact
+Leadership runtime/content identities. The public gate remained 403 with
+`private, no-store`.
+
+Attempt `20260804T180816Z` created and built an immutable candidate but stopped
+before quiescence, backup, migration, or pointer change because the isolated
+candidate helper looked for the pnpm-installed Next.js binary at the workspace
+root. Commit `b43edd4...` corrected both the binary path and working directory
+to `apps/web`, added line-specific failure diagnostics and a contract test,
+then passed all 471 unit tests, formatting, lint, typechecks, secret scan, and
+production build. The corrected helper ran directly against the built failed
+attempt and proved `live=200` and `ready=200` before the successor deployment.
+
+Release `20260804T181727Z` recorded candidate receipt
+`candidate-readiness-transition-v1` with 200/200 status, quiesced the old
+runtime, created verified encrypted off-site backup receipt
+`ac3531c5-2820-4c6c-83d2-bc0ae2cee055` (821,318 bytes, checksum
+`4fd9cb568e47d1747f7e5d3a4d58dd80927ac79c1dd72aa4ffb6c24fcde36af0`),
+applied migration `20260802120000_deterministic_publication_preflight`, applied
+the reviewed grants, and cut over all three processes. The current pointer,
+release marker, and process working directories are exact; all processes are
+online with zero restarts, live/ready are 200, backup evidence is `READY`, and
+the public gate is still 403/private/no-store.
+
+All eight migration triggers are enabled and every required post-grant
+privilege check is true. The continuity receipt has identical before/after
+review hash
+`517820e7c9502c99a31d2031f8316ac57210900c5cb37dfc9932eebdff974e9e`
+and matching lane hash
+`21806f654e0f906f3f7a512112646c1a1f0bd044a6fcb14769c5cb352e7e7e36`.
+The same four checkout IDs, fences, revision numbers, and bundle hashes remain;
+all active-work and recovery counts are zero. New preflight/candidate tables
+remain empty.
+
+Post-cutover Leadership verification proved the application release, official
+release ID, manifest, generation, 33-artifact/99-edge inventory, 361,396-byte
+total, artifact-set hash, edge-set hash, API inventory, sitemap, feed, and
+unaffected-route bytes are unchanged. The typed verification proof is 200,
+`application/json`, and `no-store`.
+
+Authenticated in-app browser validation is not yet recorded for this release.
+The in-app browser reached the production login page but had no signed-in
+session and no approved credential was available. Wide/mobile Inventory,
+Operations, read-only workspace, and console validation must be completed
+after an authorized sign-in; no authentication bypass or account reset is an
+acceptable substitute.
 
 ## Architecture accepted
 

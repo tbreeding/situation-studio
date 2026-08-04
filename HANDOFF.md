@@ -1,24 +1,69 @@
 # Situation Studio handoff
 
-Last updated: 2026-08-02
+Last updated: 2026-08-04
 
 ## Outcome
 
-Situation Studio is deployed on `rpi1` from the immutable release at
-`/home/admin/projects/situation-studio/releases/20260802T114927Z`. The deployed
-source is commit `328f9a8416f0b5ec1ad4d2a8e3c5e6336a2766d9` on `main`. The
-authenticated production workspace is
+Situation Studio is deployed on `rpi1` from immutable release
+`/home/admin/projects/situation-studio/releases/20260804T181727Z` at exact
+commit `b43edd4f5b00183e1ae1f0617937aa5a08ed7539`. The deterministic
+review-to-publication migration is applied, local live and ready return 200,
+and the authenticated production workspace remains
 `https://situation-studio.timsprototypes.com`.
 
-## Unreleased deterministic review-to-publication overhaul
+## Current production and recovery boundary
 
-An isolated release worktree contains a local, not-yet-deployed reliability overhaul
-for **Run agent review → proposal decisions → Submit to production**. It has not
-changed production data, the deployed Studio release, or the official
-Leadership pointer. The product owner authorized the compatible production
-code/schema deployment on 2026-08-02; that authority does not include any real
-content publication, review decision, retry/resume, or Leadership pointer
-promotion/restoration.
+The 2026-08-04 cutover used the one-time exact
+`capability-digest-schema-v1` transition from commit `328f9a8...`. The
+candidate-first receipt proves isolated `live=200` and `ready=200` before
+quiescence. The current pointer, immutable `.release-commit`, and all three
+PM2 process working directories name `20260804T181727Z`; web, review worker,
+and publisher are online with zero restarts. No deployment lease remains. The
+unauthenticated public gate still returns 403 with `private, no-store`.
+
+Migration `20260802120000_deterministic_publication_preflight` completed once
+without rollback. All eight new review/publication integrity triggers are
+enabled, and the post-grant checks for web, review-worker, and publisher access
+are true. New preflight and candidate-artifact tables are empty; no real
+publication was submitted. Active reviews, active publications, unfinished
+attempts, and recovery-required jobs are all zero.
+
+The quiesced deployment backup is verified, encrypted, and off-site: receipt
+`ac3531c5-2820-4c6c-83d2-bc0ae2cee055`, object
+`situation-studio-20260804T181856Z-ac3531c5-2820-4c6c-83d2-bc0ae2cee055.dump.gpg`,
+checksum
+`4fd9cb568e47d1747f7e5d3a4d58dd80927ac79c1dd72aa4ffb6c24fcde36af0`,
+and 821,318 bytes. The immutable continuity marker has identical before/after
+review hash
+`517820e7c9502c99a31d2031f8316ac57210900c5cb37dfc9932eebdff974e9e`
+and matching expected/actual lane hash
+`21806f654e0f906f3f7a512112646c1a1f0bd044a6fcb14769c5cb352e7e7e36`.
+All four active checkout IDs, fences, revision numbers, and bundle hashes are
+unchanged.
+
+Leadership remains on application release `20260802T185408Z`, commit
+`d15a92b8e91967f85a8b78ee7c2146a2154a56c0`. Its official content pointer is
+still release `fd80ab6f-9325-42a9-873d-b2156727c0b8`, manifest
+`46a444df28e45016e9ca9571f2b7172c94997193734b091808e03e6774cb5fb9`,
+generation 23, with 33 artifacts, 99 edges, and 361,396 bytes. The exact
+artifact-set and edge-set hashes remain
+`8a1ded42045ad595fd3651b5f0291ab2f4c72aefd606857312e7ea665e9069b8`
+and `2940c876752486b18021f53756cd0da05794f3cad47c9e853b58bd29d35cf81b`.
+API inventory, sitemap, feed, and unaffected-route byte hashes are unchanged;
+the typed route proof remains 200 and `no-store`.
+
+Authenticated in-app production validation is still pending. The in-app
+browser reached the production sign-in page but had no authenticated session,
+and no approved credential was available. Do not treat the earlier 2026-08-02
+wide/mobile evidence as verification of this release, and do not bypass
+authentication or reset the administrator merely to complete validation.
+
+## Deployed deterministic review-to-publication overhaul
+
+The reliability overhaul for **Run agent review → proposal decisions → Submit
+to production** is deployed. The product owner's code/schema deployment
+authority did not include any real content publication, review decision,
+retry/resume, or Leadership pointer promotion/restoration; none occurred.
 
 - The compatible Leadership release commit
   `d15a92b8e91967f85a8b78ee7c2146a2154a56c0` is pushed to `origin/main`.
@@ -75,11 +120,8 @@ promotion/restoration.
   before a new review is queued. Direct v1 review API and worker ingress fail
   closed; only already-persisted legacy stage graphs with v2 input may finish.
 
-The implementation and migration evidence is recorded separately in
-`docs/validation/deterministic-reliability-overhaul-2026-08-02.md` because
-checkpoint 8 already names the historical production-deployment phase. Do not
-describe this work as deployed until a later authorized release updates the
-current production boundary below.
+The implementation, migration, and deployment evidence is recorded separately
+in `docs/validation/deterministic-reliability-overhaul-2026-08-02.md`.
 
 ### 2026-08-04 capability-digest deployment diagnosis
 
@@ -89,10 +131,11 @@ is 1,524 UTF-8 bytes with no trailing newline. After excluding
 order, serializing with `JSON.stringify`, and appending one newline, the
 canonical payload is 1,439 bytes and hashes to the reported
 `202d13e3a5996f6b827b558db3cf5556eac4ba89bc052ce8a35a3ec93e74ab22`.
-Leadership's producer and the pushed `3da97f9...` Studio candidate both
-reproduce and accept that identity.
+Leadership's producer and deployed Studio commit `b43edd4...` both reproduce
+and accept that identity.
 
-The operator error comes from the still-deployed Studio commit `328f9a8...`.
+The original operator error came from the then-deployed Studio commit
+`328f9a8...`.
 Its Zod schema predates `contracts.publicationCompiler`; default object parsing
 removes that valid digest-covered field before the consumer recomputes the
 digest. The resulting truncated canonical payload hashes to
@@ -102,16 +145,12 @@ recomputation matches. The same compatibility exception is collapsed by that
 release's readiness route into the inaccurate body
 `{"status":"not-ready","database":"unreachable"}`.
 
-The successor candidate preserves additive fields at every capability-schema
+The deployed successor preserves additive fields at every capability-schema
 object boundary, keeps exact digest and contract checks, includes byte-exact
 producer/consumer fixtures from the live response, and reports capability
-incompatibility separately from a real database query failure. This work is
-not deployed. Production remains on `20260802T114927Z`, the deterministic
-preflight migration remains unapplied, and no content, review, proposal,
-checkout, publication, or official Leadership pointer was mutated. A Studio
-cutover remains prohibited until the full runbook preflight returns genuine
-HTTP 200/`ready` or the exact transition below independently proves the
-candidate is genuinely ready; the known 503 alone must not be bypassed.
+incompatibility separately from a real database query failure. The migration
+and runtime are now deployed; no content, review, proposal, checkout,
+publication, or official Leadership pointer was mutated.
 
 On 2026-08-04 the product owner authorized fixing the deployment transition.
 The successor launcher now contains one exact
@@ -122,17 +161,23 @@ response contract. After building the candidate, it starts only the candidate
 web process on loopback port 3016 with background reconciliation disabled and
 requires genuine 200/`ready` before quiescence, migration, or cutover. The
 normal current-release readiness gate is unchanged. Complete source gates and
-production preflight/deployment evidence must be recorded before this path is
-described as deployed.
+production preflight/deployment evidence were recorded before this path was
+used.
 
 The transition candidate's complete local gate passed 48 files/471 unit tests,
 all 82 disposable-database integration tests, and the 24-case browser matrix
 with 16 executed passes and 8 intentional project-scope skips. The exact
 transition-state helper also ran successfully as the protected production web
 user, proving direct read-only database access and the diagnosed legacy 503
-without changing production state.
+without changing production state. Initial release attempt
+`20260804T180816Z` then stopped before quiescence because the candidate helper
+looked for pnpm's Next.js binary at the workspace root. Commit `b43edd4...`
+corrected the binary and `.next` working directory to `apps/web`, added
+line-specific diagnostics and a deployment-contract regression, repeated all
+471 tests and the production build, and produced the successful immutable
+release recorded above.
 
-## Current production and recovery boundary
+## Superseded 2026-08-02 production and recovery boundary
 
 The focused-review follow-up deployment completed successfully on 2026-08-02.
 The deployment candidate was verified equal to `origin/main` before cutover;

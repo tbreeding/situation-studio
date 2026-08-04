@@ -70,11 +70,18 @@ pointer, manifest, generation, complete artifact/edge sets, total bytes, API
 inventory, sitemap, feed, and unaffected-route bytes are identical to the
 pre-migration baseline. The typed verification route remains 200/no-store.
 
-Authenticated validation of this exact release is pending. The in-app browser
-reached the production sign-in page but had no signed-in session and no
-approved credential was available. Do not bypass authentication or reset an
-account for evidence; complete the 1440px and 390px Inventory, Operations,
-read-only workspace, and browser warn/error checks after an authorized sign-in.
+Authenticated validation of this exact release completed on 2026-08-04 using
+the product owner's signed-in administrator session. At 1440×1000 and 390×844,
+Inventory retained 15 situations, four checkouts, and zero drafts waiting;
+Operations showed queue 0, publication recovery 0 active, current Leadership
+observation, ready backup evidence, and the verified deployment receipt; and
+the read-only `defensive-about-feedback` Review workspace retained its stopped
+18-of-24-stage review, exact zero-section comparison, matching rendered
+content, and saved state. There was no page-level horizontal overflow and no
+browser warn/error log. No state-changing control was activated. The
+post-browser read-only database check again returned `4|0|0|0|0|0|0` for
+active checkouts, active reviews, active publications, unfinished attempts,
+recovery-required jobs, preflight receipts, and candidate artifacts.
 
 Attempt `20260804T180816Z` stopped safely before quiescence because its
 candidate helper used the wrong pnpm workspace path. It created only an

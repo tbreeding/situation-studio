@@ -52,11 +52,19 @@ and `2940c876752486b18021f53756cd0da05794f3cad47c9e853b58bd29d35cf81b`.
 API inventory, sitemap, feed, and unaffected-route byte hashes are unchanged;
 the typed route proof remains 200 and `no-store`.
 
-Authenticated in-app production validation is still pending. The in-app
-browser reached the production sign-in page but had no authenticated session,
-and no approved credential was available. Do not treat the earlier 2026-08-02
-wide/mobile evidence as verification of this release, and do not bypass
-authentication or reset the administrator merely to complete validation.
+Authenticated in-app production validation completed on 2026-08-04 with the
+product owner's signed-in administrator session. Inventory, Operations, and
+the existing `defensive-about-feedback` Review workspace were inspected at
+1440×1000 and 390×844 without page-level horizontal overflow or browser
+warn/error logs. Inventory retained 15 situations, four active checkouts, and
+zero drafts waiting. Operations reported review queue 0, publication recovery
+0 active, Leadership observation current, backup readiness ready, and the
+deployment backup receipt verified. The workspace retained its stopped review
+at 18 of 24 stages, `0 changed sections`, `Rendered content matches`, and `All
+changes saved`. No state-changing control was activated. The post-browser
+read-only check again proved four checkouts and zero active reviews,
+publications, unfinished attempts, recovery jobs, preflight receipts, or
+candidate artifacts.
 
 ## Deployed deterministic review-to-publication overhaul
 

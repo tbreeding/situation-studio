@@ -4,7 +4,7 @@ Date: 2026-08-02
 Status: deployed on 2026-08-04 as immutable Situation Studio release
 `20260804T181727Z` at commit
 `b43edd4f5b00183e1ae1f0617937aa5a08ed7539`; authenticated in-app browser
-validation remains pending an approved sign-in session
+validation completed on 2026-08-04
 
 ## Acceptance statement
 
@@ -133,12 +133,25 @@ total, artifact-set hash, edge-set hash, API inventory, sitemap, feed, and
 unaffected-route bytes are unchanged. The typed verification proof is 200,
 `application/json`, and `no-store`.
 
-Authenticated in-app browser validation is not yet recorded for this release.
-The in-app browser reached the production login page but had no signed-in
-session and no approved credential was available. Wide/mobile Inventory,
-Operations, read-only workspace, and console validation must be completed
-after an authorized sign-in; no authentication bypass or account reset is an
-acceptable substitute.
+Authenticated in-app browser validation completed with the product owner's
+signed-in administrator session. The 1440×1000 and 390×844 checks covered
+Inventory, Operations, and the existing `defensive-about-feedback` Review
+workspace without page-level horizontal overflow or browser warn/error logs.
+Inventory showed 15 situations, four checked out, and zero drafts waiting.
+Operations showed review queue 0, publication recovery 0 active, current
+Leadership observation, ready backup evidence, the verified deployment backup
+receipt, and four held checkouts. The read-only workspace retained `All changes
+saved`, its stopped review at 18 of 24 stages, `0 changed sections`, and
+`Rendered content matches`. No content, review, proposal, publication, account,
+checkout, or other state-changing control was activated.
+
+After browser validation, the immutable current pointer and release commit
+remained exact, no deployment lease existed, all three PM2 processes were
+online with zero restarts from the exact release directory, live and ready
+remained healthy, and the public gate remained 403 with `private, no-store`.
+The final read-only database tuple was `4|0|0|0|0|0|0` for active checkouts,
+active reviews, active publications, unfinished attempts, recovery-required
+jobs, preflight receipts, and candidate artifacts.
 
 ## Architecture accepted
 

@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+report_error() {
+  local status="${?}"
+  echo "Candidate readiness verification failed at line ${BASH_LINENO[0]} (status ${status})." >&2
+  exit "${status}"
+}
+trap report_error ERR
+
 : "${STUDIO_CANDIDATE_RELEASE:?missing candidate release}"
 : "${STUDIO_CANDIDATE_WEB_ENVIRONMENT:?missing web environment}"
 : "${STUDIO_CANDIDATE_COMMIT:?missing candidate commit}"
@@ -74,9 +81,11 @@ set +a
 export PATH="${trusted_path}"
 export NODE_ENV=production
 export SITUATION_STUDIO_DISABLE_BACKGROUND_RECONCILIATION=true
-next_binary="${candidate_release}/node_modules/next/dist/bin/next"
+web_release="${candidate_release}/apps/web"
+next_binary="${web_release}/node_modules/next/dist/bin/next"
 test -f "${next_binary}"
-cd "${candidate_release}"
+test -d "${web_release}/.next"
+cd "${web_release}"
 node "${next_binary}" start \
   --hostname 127.0.0.1 \
   --port "${readiness_port}" \

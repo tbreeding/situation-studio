@@ -674,6 +674,10 @@ printf 'status:%s\\n' "\${status}"
     for (const fragment of [
       '"${readiness_port}" != "3016"',
       "SITUATION_STUDIO_DISABLE_BACKGROUND_RECONCILIATION=true",
+      'web_release="${candidate_release}/apps/web"',
+      'next_binary="${web_release}/node_modules/next/dist/bin/next"',
+      'test -d "${web_release}/.next"',
+      'cd "${web_release}"',
       'body?.status !== "ready"',
       'body?.database !== "reachable"',
       '"candidate-readiness-transition-v1"',

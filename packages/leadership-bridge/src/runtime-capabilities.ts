@@ -40,34 +40,50 @@ export const requiredSituationContractIdentity = {
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 
-export const leadershipRuntimeCapabilitiesSchema = z.object({
-  schemaVersion: z.literal(leadershipCapabilitySchemaVersion),
-  deployment: z.object({
-    commit: z.string().regex(/^[a-f0-9]{40}$/u),
-    releaseId: z.string().min(1).max(100),
-    archiveSha256: sha256Schema,
-  }),
-  contracts: z.object({
-    content: z.object({
-      version: z.string().min(1).max(100),
-      packageSha256: sha256Schema,
-      validationPolicyHash: sha256Schema,
-    }),
-    publicationCompiler: z.object({
-      identity: z.record(z.string(), z.unknown()),
-      digest: sha256Schema,
-    }),
-    situation: z.object({
-      version: z.string().min(1).max(100),
-      packageSha256: sha256Schema,
-    }),
-  }),
-  database: z.object({
-    predicate: z.string().min(1).max(100),
-  }),
-  features: z.array(z.string().min(1).max(100)),
-  capabilityDigest: sha256Schema,
-});
+// The producer digest covers the complete JSON object. Preserve additive
+// fields at every object boundary so schema parsing cannot change its input.
+export const leadershipRuntimeCapabilitiesSchema = z
+  .object({
+    schemaVersion: z.literal(leadershipCapabilitySchemaVersion),
+    deployment: z
+      .object({
+        commit: z.string().regex(/^[a-f0-9]{40}$/u),
+        releaseId: z.string().min(1).max(100),
+        archiveSha256: sha256Schema,
+      })
+      .passthrough(),
+    contracts: z
+      .object({
+        content: z
+          .object({
+            version: z.string().min(1).max(100),
+            packageSha256: sha256Schema,
+            validationPolicyHash: sha256Schema,
+          })
+          .passthrough(),
+        publicationCompiler: z
+          .object({
+            identity: z.record(z.string(), z.unknown()),
+            digest: sha256Schema,
+          })
+          .passthrough(),
+        situation: z
+          .object({
+            version: z.string().min(1).max(100),
+            packageSha256: sha256Schema,
+          })
+          .passthrough(),
+      })
+      .passthrough(),
+    database: z
+      .object({
+        predicate: z.string().min(1).max(100),
+      })
+      .passthrough(),
+    features: z.array(z.string().min(1).max(100)),
+    capabilityDigest: sha256Schema,
+  })
+  .passthrough();
 
 export type LeadershipRuntimeCapabilities = z.infer<
   typeof leadershipRuntimeCapabilitiesSchema

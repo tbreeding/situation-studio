@@ -378,6 +378,15 @@ archive SHA-256
 Recheck those exact capabilities and the no-store verification route before
 cutting Studio over.
 
+The capability digest is calculated over the complete producer JSON object,
+excluding only `capabilityDigest`, before compatibility is decided. A Studio
+consumer must preserve additive response fields through schema validation;
+otherwise it can remove a valid digest-covered field and falsely report a
+digest mismatch. The corrected readiness response distinguishes this
+allow-listed Leadership incompatibility from a Studio database outage while
+remaining HTTP 503. Do not reinterpret either state as ready or bypass the
+launcher's required 200/`ready` preflight.
+
 Migration or cutover failure restarts the prior processes and restores the
 prior release pointer where applicable. Once this migration has committed, an
 old-release rollback remains usable for editing and review but is intentionally

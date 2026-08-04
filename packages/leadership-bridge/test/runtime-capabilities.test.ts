@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { canonicalJson, sha256 } from "@situation-studio/domain";
+import liveCapabilities from "./fixtures/leadership-runtime-capabilities-20260802.json";
 import {
   LeadershipCapabilityError,
   assertLeadershipRuntimeCompatible,
   leadershipCapabilitySchemaVersion,
+  leadershipRuntimeCapabilitiesSchema,
   leadershipTypedParityPredicate,
   requiredContentContractIdentity,
   requiredLeadershipFeatures,
@@ -48,6 +50,70 @@ function withValidDigest(
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Leadership runtime compatibility", () => {
+  it("accepts the exact deployed Leadership capability payload", async () => {
+    const serialized = JSON.stringify(liveCapabilities);
+    const { capabilityDigest, ...capabilitySet } = liveCapabilities;
+
+    expect(Buffer.byteLength(serialized, "utf8")).toBe(1524);
+    expect(sha256(serialized)).toBe(
+      "a9679dd4b1e42bf4c6836fbd9dcd249c581cd66cf56ca1650faedd0bb5e74866",
+    );
+    expect(serialized.endsWith("\n")).toBe(false);
+    expect(Buffer.byteLength(canonicalJson(capabilitySet), "utf8")).toBe(1439);
+    expect(canonicalJson(capabilitySet).endsWith("\n")).toBe(true);
+    expect(sha256(canonicalJson(capabilitySet))).toBe(capabilityDigest);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(serialized, {
+            status: 200,
+            headers: {
+              "cache-control": "no-store",
+              "content-type": "application/json",
+            },
+          }),
+      ),
+    );
+
+    await expect(
+      runtimeCapabilitiesFromHealth("https://leadership.example/health"),
+    ).resolves.toEqual(liveCapabilities);
+  });
+
+  it("preserves additive digest-covered fields during schema validation", () => {
+    const { capabilityDigest: _digest, ...capabilitySet } = compatible();
+    const extendedCapabilitySet = {
+      ...capabilitySet,
+      deployment: {
+        ...capabilitySet.deployment,
+        runtime: "nodejs",
+      },
+      contracts: {
+        ...capabilitySet.contracts,
+        extension: {
+          nullable: null,
+          unicode: "Příliš žluťoučký kůň",
+        },
+      },
+      extension: { enabled: true },
+    };
+    const candidate = {
+      ...extendedCapabilitySet,
+      capabilityDigest: sha256(canonicalJson(extendedCapabilitySet)),
+    };
+    const parsed = leadershipRuntimeCapabilitiesSchema.parse(candidate);
+
+    expect(parsed.deployment.runtime).toBe("nodejs");
+    expect(parsed.contracts.extension).toEqual({
+      nullable: null,
+      unicode: "Příliš žluťoučký kůň",
+    });
+    expect(parsed.extension).toEqual({ enabled: true });
+    expect(assertLeadershipRuntimeCompatible(parsed)).toEqual(candidate);
+  });
+
   it("accepts only the exact contract identities and required features", () => {
     expect(assertLeadershipRuntimeCompatible(compatible())).toEqual(
       compatible(),

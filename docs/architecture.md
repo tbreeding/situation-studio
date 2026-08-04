@@ -76,6 +76,23 @@ compiler, which invokes that validator. Managed `PracticeEmbed` and
 with the structured snapshot before an invalid candidate can become
 actionable.
 
+### Runtime capability integrity
+
+Leadership's capability digest covers the complete JSON capability object
+except `capabilityDigest` itself. Both repositories recursively sort object
+keys with the shared canonical JSON helper, preserve array order, serialize
+with `JSON.stringify`, append one canonical newline, and hash the resulting
+UTF-8 bytes. The HTTP response body is ordinary compact JSON without that
+canonical newline; transport headers and chunk framing are not digest inputs.
+
+Studio's response schema preserves additive fields at every object boundary
+before recomputing the digest. Required contract identities and features are
+still checked independently and exactly. This prevents schema coercion from
+misreporting a valid producer digest while continuing to reject missing,
+malformed, incompatible, or genuinely mismatched capability data. Readiness
+reports an allow-listed Leadership incompatibility separately from a failed
+Studio database query, and both conditions remain fail-closed with HTTP 503.
+
 ## Review
 
 The review worker claims one global job with `FOR UPDATE SKIP LOCKED` and

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "leadership-studio-capabilities-v1",
+  "deployment": {
+    "commit": "d15a92b8e91967f85a8b78ee7c2146a2154a56c0",
+    "releaseId": "20260802T185408Z",
+    "archiveSha256": "deb6ce25ec567d4e27c98d2b61202c798d3008adc27a4176d4a2880b17f91715"
+  },
+  "contracts": {
+    "content": {
+      "version": "0.3.0",
+      "packageSha256": "ef9a723608977b3f9ea3c25bd1a7cd5f323871854937c0e462a21ca057ee9f7f",
+      "validationPolicyHash": "9131270fbc6a2e579ee10752fddf3f1f133b257a554666ea946bb76439deceee"
+    },
+    "situation": {
+      "version": "1.0.0",
+      "packageSha256": "9cd3aeebb384edb2c1fb70647b55d0bbed147910216293fea2979d8eec7b17f4"
+    },
+    "publicationCompiler": {
+      "identity": {
+        "schemaVersion": "leadership-publication-compiler-v1",
+        "contentContractVersion": "0.3.0",
+        "validationPolicyHash": "9131270fbc6a2e579ee10752fddf3f1f133b257a554666ea946bb76439deceee",
+        "snapshotContract": "publishable-situation-snapshot-v1",
+        "managedComponentContract": "managed-situation-components-ast-v1",
+        "candidateContract": "leadership-publication-candidate-v1",
+        "affectedRouteContract": "affected-route-proof-json-v1",
+        "intrinsicValidatorDigest": "0104cd5e4f02ed5172ca5b7c14e31a694e11319e703cbeb3eec4d226518fc53a",
+        "canonicalEncoding": "utf8-canonical-newline-v1"
+      },
+      "digest": "5a0b47948760e9134eaac1727bc658de56c87e52bcc9e03db424bb80ea2d4c95"
+    }
+  },
+  "database": {
+    "predicate": "typed-projection-parity-v1"
+  },
+  "features": [
+    "authored-physical-id-v1",
+    "scoped-renderer-context-v1",
+    "typed-projection-parity-v1",
+    "affected-route-proof-v2",
+    "affected-route-proof-json-v1"
+  ],
+  "capabilityDigest": "202d13e3a5996f6b827b558db3cf5556eac4ba89bc052ce8a35a3ec93e74ab22"
+}

@@ -81,6 +81,37 @@ checkpoint 8 already names the historical production-deployment phase. Do not
 describe this work as deployed until a later authorized release updates the
 current production boundary below.
 
+### 2026-08-04 capability-digest deployment diagnosis
+
+The deployed Leadership capability response is valid. Its compact JSON entity
+is 1,524 UTF-8 bytes with no trailing newline. After excluding
+`capabilityDigest`, recursively sorting object keys, preserving feature-array
+order, serializing with `JSON.stringify`, and appending one newline, the
+canonical payload is 1,439 bytes and hashes to the reported
+`202d13e3a5996f6b827b558db3cf5556eac4ba89bc052ce8a35a3ec93e74ab22`.
+Leadership's producer and the pushed `3da97f9...` Studio candidate both
+reproduce and accept that identity.
+
+The operator error comes from the still-deployed Studio commit `328f9a8...`.
+Its Zod schema predates `contracts.publicationCompiler`; default object parsing
+removes that valid digest-covered field before the consumer recomputes the
+digest. The resulting truncated canonical payload hashes to
+`6476a9e22f9281ea66fac878458c0b6f5beb85f47335e3fba1b256f55532024e`,
+so the old consumer reports the producer digest as invalid even though raw
+recomputation matches. The same compatibility exception is collapsed by that
+release's readiness route into the inaccurate body
+`{"status":"not-ready","database":"unreachable"}`.
+
+The successor candidate preserves additive fields at every capability-schema
+object boundary, keeps exact digest and contract checks, includes byte-exact
+producer/consumer fixtures from the live response, and reports capability
+incompatibility separately from a real database query failure. This work is
+not deployed. Production remains on `20260802T114927Z`, the deterministic
+preflight migration remains unapplied, and no content, review, proposal,
+checkout, publication, or official Leadership pointer was mutated. A Studio
+cutover remains prohibited until the full runbook preflight returns genuine
+HTTP 200/`ready`; the known 503 must not be bypassed.
+
 ## Current production and recovery boundary
 
 The focused-review follow-up deployment completed successfully on 2026-08-02.

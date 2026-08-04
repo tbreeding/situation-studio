@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LeadershipCapabilityError } from "@situation-studio/leadership-bridge";
 
 const mocks = vi.hoisted(() => ({
   backupReceiptFindFirst: vi.fn(),
@@ -251,5 +252,61 @@ describe("readiness backup and restore-drill evidence", () => {
       restoreDrill: "not-yet-passed",
       restoreDrillAgeSeconds: 120,
     });
+  });
+
+  it("distinguishes an incompatible Leadership runtime from a database outage", async () => {
+    mocks.requireCompatibleLeadershipRuntime.mockRejectedValue(
+      new LeadershipCapabilityError(
+        "The deployed Leadership capability digest is invalid.",
+        "UNSUPPORTED_VERSION_PAIR",
+        false,
+      ),
+    );
+
+    const response = await GET();
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      status: "not-ready",
+      database: "reachable",
+      leadershipRuntime: {
+        state: "incompatible",
+        code: "UNSUPPORTED_VERSION_PAIR",
+      },
+    });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(mocks.backupReceiptFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("classifies an unexpected Leadership probe failure as unavailable", async () => {
+    mocks.requireCompatibleLeadershipRuntime.mockRejectedValue(
+      new Error("unexpected probe failure"),
+    );
+
+    const response = await GET();
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      status: "not-ready",
+      database: "reachable",
+      leadershipRuntime: {
+        state: "unavailable",
+        code: "RUNTIME_CAPABILITY_UNAVAILABLE",
+      },
+    });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("reports a database outage before probing Leadership", async () => {
+    mocks.queryRaw.mockRejectedValue(new Error("database unavailable"));
+
+    const response = await GET();
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      status: "not-ready",
+      database: "unreachable",
+    });
+    expect(mocks.requireCompatibleLeadershipRuntime).not.toHaveBeenCalled();
   });
 });

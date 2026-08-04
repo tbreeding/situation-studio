@@ -18,6 +18,52 @@ No production database, official Leadership pointer, deployed Studio release,
 or real situation was changed. All database and runtime acceptance used
 disposable local services.
 
+## 2026-08-04 live capability-digest diagnosis
+
+Read-only capture from the deployed Leadership origin returned HTTP 200,
+`Content-Type: application/json`, `Cache-Control: no-store`, chunked transfer,
+and a 1,524-byte JSON entity with SHA-256
+`a9679dd4b1e42bf4c6836fbd9dcd249c581cd66cf56ca1650faedd0bb5e74866`.
+The entity has no trailing newline. Every leaf value in the live payload is a
+string; `features` is the only array and its five entries are strings. There
+are no numbers, booleans, nulls, undefined values, or non-ASCII strings in the
+live response.
+
+Leadership excludes only `capabilityDigest`, recursively sorts object keys
+with `localeCompare`, preserves array order, serializes with `JSON.stringify`,
+appends exactly one newline, and passes the resulting JavaScript string to
+Node's SHA-256 implementation, which encodes it as UTF-8. The live canonical
+payload is 1,439 bytes and hashes exactly to the reported
+`202d13e3a5996f6b827b558db3cf5556eac4ba89bc052ce8a35a3ec93e74ab22`.
+The HTTP headers, compact response-key order, transfer chunk framing, and lack
+of a response newline are not digest inputs. JSON cannot carry `undefined`;
+the helper would serialize object-valued `undefined` like `JSON.stringify`
+(omitted), array-valued `undefined` as `null`, and explicit `null` as `null`.
+
+The deployed Studio commit `328f9a8...` parses before hashing with a Zod schema
+that does not name `contracts.publicationCompiler`. Default object coercion
+strips that complete live object, and the truncated 0.2-era projection hashes
+to `6476a9e22f9281ea66fac878458c0b6f5beb85f47335e3fba1b256f55532024e`.
+That field-selection change—not Leadership serialization, encoding, or key or
+array ordering—causes the operator-facing invalid-digest error. The pushed
+`3da97f9...` candidate names the field and accepts the live response; the
+successor additionally preserves future additive digest-covered fields at all
+object boundaries and retains exact identity checks.
+
+Producer and consumer fixtures contain the same complete live JSON object and
+have matching fixture-file SHA-256
+`b7859b9bffa8d2e2112a54fba53376e98fb2f829087ee9fa24e3d320c1722ee1`.
+Focused producer tests pass 4/4. Focused Studio capability and readiness tests
+pass 12/12, including additive top-level, deployment, and contracts fields,
+explicit null and Unicode values, exact response/canonical byte lengths, and
+truthful readiness classification. Complete gates passed on 2026-08-04:
+Leadership passed 27 contract tests, 87 unit tests, 14 disposable-database
+integration tests, and 74 executed browser/database scenarios with 18
+intentional platform-scope skips; Studio passed formatting, lint, all
+typechecks, 470 unit tests, secret scanning, production build, all 82
+disposable-database integration tests, and 16 browser tests with 8 intentional
+project-scope skips against disposable Studio and Leadership databases.
+
 ## Architecture accepted
 
 - `situation-bundle-v2` is the canonical Studio revision. Its hash covers all
@@ -110,7 +156,7 @@ the explicit forward-only **Set public intent** action.
 ### Situation Studio
 
 - `pnpm verify`: contract archive/digest verification, Prisma generation,
-  formatting, lint, all workspace typechecks, 48 unit-test files/457 tests,
+  formatting, lint, all workspace typechecks, 48 unit-test files/470 tests,
   secret scanning, and production build passed.
 - `pnpm test:integration`: 5 files/82 tests passed against disposable
   PostgreSQL, including fresh migration, upgrade/backfill compatibility,
@@ -141,7 +187,7 @@ must synchronize to v2 before review.
 
 ### Leadership
 
-- Full `pnpm verify` passed: 27 contract tests, 86 unit tests, 14 disposable-
+- Full `pnpm verify` passed: 27 contract tests, 87 unit tests, 14 disposable-
   database integration tests, and 74 executed database/browser scenarios with
   18 intentional platform-scope skips, plus Prisma validation, lint,
   typecheck, content validation, and production build.

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { LeadershipCapabilityError } from "@situation-studio/leadership-bridge";
 import { database } from "@/server/database";
 import {
   backupReadiness,
@@ -12,7 +13,38 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     await database().$queryRaw`SELECT 1`;
-    const runtimeCapabilities = await requireCompatibleLeadershipRuntime();
+  } catch {
+    return NextResponse.json(
+      { status: "not-ready", database: "unreachable" },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
+  let runtimeCapabilities: Awaited<
+    ReturnType<typeof requireCompatibleLeadershipRuntime>
+  >;
+  try {
+    runtimeCapabilities = await requireCompatibleLeadershipRuntime();
+  } catch (error) {
+    const capabilityError =
+      error instanceof LeadershipCapabilityError ? error : null;
+    return NextResponse.json(
+      {
+        status: "not-ready",
+        database: "reachable",
+        leadershipRuntime: {
+          state:
+            !capabilityError || capabilityError.retryable
+              ? "unavailable"
+              : "incompatible",
+          code: capabilityError?.code ?? "RUNTIME_CAPABILITY_UNAVAILABLE",
+        },
+      },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
+  try {
     const [cursor, heartbeats, backup, restoreDrillReceipt, recoveryRequired] =
       await Promise.all([
         database().leadershipSyncCursor.findUnique({

@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed Review comparisons so untouched retained MDX bytes remain exact—including leading newlines—and metadata-only saves cannot synthesize a source change; retained failed-review announcements now also report the released review lane accurately.
 - Fixed the one-time isolated candidate-readiness probe to launch Next.js from the pnpm workspace's actual `apps/web` package and built `.next` directory, with line-specific failure diagnostics before any production quiescence or migration.
 - Fixed Leadership capability verification so digest-covered additive fields survive response-schema validation instead of being stripped before recomputation, and made readiness distinguish a Leadership incompatibility from an actual Studio database outage without weakening the 503 gate.
 - Fixed retained legacy drafts so starting review first records and adopts a fenced, validated v2 action checkpoint; direct v1 review requests and v1 worker candidates now fail closed.

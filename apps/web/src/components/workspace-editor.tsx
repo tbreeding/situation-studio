@@ -57,6 +57,11 @@ import {
   serverRevisionAdoptionDecision,
   type EditorRevisionIdentity,
 } from "@/editor-revision-state";
+import {
+  changedWorkspaceSections,
+  currentWorkspaceBody,
+  parseWorkspaceSections,
+} from "@/workspace-source-state";
 
 type Metadata = {
   slug: string;
@@ -206,35 +211,6 @@ async function sha256(value: string) {
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
-}
-
-function canonicalText(value: string) {
-  return `${value.replace(/\r\n?/gu, "\n").replace(/\n+$/u, "")}\n`;
-}
-
-function serializeSections(names: string[], sections: Record<string, string>) {
-  return canonicalText(
-    names
-      .map((name) => `## ${name}\n\n${(sections[name] ?? "").trim()}`)
-      .join("\n\n"),
-  );
-}
-
-function parseSections(names: string[], body: string) {
-  const normalized = canonicalText(body);
-  const matches = [...normalized.matchAll(/^##[ \t]+(.+?)[ \t]*$/gmu)];
-  const parsed: Record<string, string> = {};
-  matches.forEach((match, index) => {
-    const name = match[1]?.trim() ?? "";
-    const start = (match.index ?? 0) + match[0].length;
-    const end = matches[index + 1]?.index ?? normalized.length;
-    parsed[name] = normalized.slice(start, end).trim();
-  });
-  if (names.some((name) => !(name in parsed)))
-    throw new Error(
-      "Raw MDX is missing one or more required section headings.",
-    );
-  return Object.fromEntries(names.map((name) => [name, parsed[name] ?? ""]));
 }
 
 function shortHash(value: string | null) {
@@ -423,6 +399,8 @@ export function WorkspaceEditor({
   const [bundle, setBundle] = useState(initialBundle);
   const [sections, setSections] = useState(initialSections);
   const [rawBody, setRawBody] = useState(initialBody);
+  const [savedBody, setSavedBody] = useState(initialBody);
+  const [bodyTouched, setBodyTouched] = useState(false);
   const [currentRevision, setCurrentRevision] = useState(initialRevision);
   const [rawMode, setRawMode] = useState(false);
   const [saveState, setSaveState] = useState<
@@ -494,8 +472,10 @@ export function WorkspaceEditor({
       setCurrentRevision(revisionRef.current);
       setBundle(authoritative.bundle);
       setRawBody(authoritative.body);
+      setSavedBody(authoritative.body);
+      setBodyTouched(false);
       try {
-        setSections(parseSections(sectionNames, authoritative.body));
+        setSections(parseWorkspaceSections(sectionNames, authoritative.body));
         setRawMode(false);
       } catch {
         setRawMode(true);
@@ -683,10 +663,14 @@ export function WorkspaceEditor({
 
   const body = useMemo(
     () =>
-      rawMode
-        ? canonicalText(rawBody)
-        : serializeSections(sectionNames, sections),
-    [rawBody, rawMode, sectionNames, sections],
+      currentWorkspaceBody({
+        bodyTouched,
+        rawMode,
+        rawBody,
+        sectionNames,
+        sections,
+      }),
+    [bodyTouched, rawBody, rawMode, sectionNames, sections],
   );
 
   function markDirty() {
@@ -750,11 +734,13 @@ export function WorkspaceEditor({
         };
         setCurrentRevision(revisionRef.current);
         savedVersion.current = Math.max(savedVersion.current, version);
+        setSavedBody(payload.body);
         if (version === dirtyVersion.current) {
           setBundle(payload.bundle);
           setRawBody(payload.body);
+          setBodyTouched(false);
           try {
-            setSections(parseSections(sectionNames, payload.body));
+            setSections(parseWorkspaceSections(sectionNames, payload.body));
           } catch {
             setRawMode(true);
           }
@@ -983,6 +969,7 @@ export function WorkspaceEditor({
     attribute: string,
     value: string,
   ) {
+    setBodyTouched(true);
     if (rawMode) {
       setRawBody((current) =>
         replaceManagedAttribute(current, component, attribute, value),
@@ -1111,13 +1098,11 @@ export function WorkspaceEditor({
     );
   }
 
-  const changedSections = sectionNames.filter((name) => {
-    const marker = `## ${name}`;
-    const current = body.split(marker)[1]?.split(/^## /mu)[0]?.trim() ?? "";
-    const production =
-      productionBody.split(marker)[1]?.split(/^## /mu)[0]?.trim() ?? "";
-    return current !== production;
-  });
+  const changedSections = changedWorkspaceSections(
+    sectionNames,
+    productionBody,
+    savedBody,
+  );
 
   return (
     <main className="workspacePage">
@@ -1977,7 +1962,9 @@ export function WorkspaceEditor({
                       return;
                     }
                     try {
-                      setSections(parseSections(sectionNames, rawBody));
+                      setSections(
+                        parseWorkspaceSections(sectionNames, rawBody),
+                      );
                       setRawMode(false);
                       setMessage(null);
                     } catch (error) {
@@ -2002,6 +1989,7 @@ export function WorkspaceEditor({
                     onBlur={() => void save()}
                     onChange={(event) => {
                       setRawBody(event.target.value);
+                      setBodyTouched(true);
                       markDirty();
                     }}
                   />
@@ -2029,6 +2017,7 @@ export function WorkspaceEditor({
                               ...current,
                               [name]: event.target.value,
                             }));
+                            setBodyTouched(true);
                             markDirty();
                           }}
                         />
@@ -2334,12 +2323,15 @@ export function WorkspaceEditor({
                 </summary>
                 <RenderedComparison
                   production={productionBody}
-                  draft={body}
+                  draft={savedBody}
                   productionRevision={shortHash(situation.productionBundleHash)}
                 />
                 <details className="diffDisclosure">
                   <summary>Production source diff</summary>
-                  <SynchronizedDiff production={productionBody} draft={body} />
+                  <SynchronizedDiff
+                    production={productionBody}
+                    draft={savedBody}
+                  />
                 </details>
               </details>
             </>
@@ -2347,12 +2339,15 @@ export function WorkspaceEditor({
             <>
               <RenderedComparison
                 production={productionBody}
-                draft={body}
+                draft={savedBody}
                 productionRevision={shortHash(situation.productionBundleHash)}
               />
               <details className="diffDisclosure" open>
                 <summary>Exact source diff</summary>
-                <SynchronizedDiff production={productionBody} draft={body} />
+                <SynchronizedDiff
+                  production={productionBody}
+                  draft={savedBody}
+                />
               </details>
             </>
           )}

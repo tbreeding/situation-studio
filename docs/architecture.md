@@ -44,6 +44,13 @@ checkout ID and monotonically increasing fence. Checkouts never time out.
 Force-check-in releases ownership, records the resulting draft hash, cancels
 review work, and makes late results fail their fence.
 
+The workspace keeps the authoritative saved MDX bytes separate from its parsed
+section-editor state. An untouched body—including its exact leading and
+trailing newline bytes—passes through metadata-only saves unchanged. Section or
+raw-MDX normalization begins only after the editor changes body content, and
+the Review tab compares production with the last server-confirmed saved body,
+not a parse-and-reserialize projection.
+
 The visible status is derived from facts (`Available`, `Draft saved`, `Checked
 out by …`, or `Retired`) plus temporary activity. There is no editorial state
 machine, approval queue, staging site, or candidate runtime.
@@ -172,6 +179,11 @@ worker continues independently. Terminal state schedules exactly one server
 refresh, after a short reduced-motion-aware completion transition, to load the
 full proposal and authoritative controls. Heartbeats and countdown ticks do not
 enter the polite live region.
+
+Retained 22- and 24-stage failures use the same terminal lane projection as new
+reviews. Their visible status and polite announcement both describe the
+projected lane state; a released terminal review is never announced as still
+pausing the queue.
 
 ## Revision, proposal, and publication fencing
 

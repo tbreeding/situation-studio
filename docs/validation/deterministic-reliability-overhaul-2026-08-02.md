@@ -153,6 +153,76 @@ The final read-only database tuple was `4|0|0|0|0|0|0` for active checkouts,
 active reviews, active publications, unfinished attempts, recovery-required
 jobs, preflight receipts, and candidate artifacts.
 
+## 2026-08-04 exact-source comparison follow-up
+
+Status: local corrective candidate verified; not deployed.
+
+Authenticated read-only production inspection reproduced the Review anomaly on
+`stop-taking-delegated-work-back`. The RSC payload referenced four independently
+serialized source values:
+
+| Value                 | RSC reference | UTF-16 length | UTF-8 bytes | Boundary bytes          |
+| --------------------- | ------------- | ------------: | ----------: | ----------------------- |
+| Current draft         | `$13`         |         3,131 |       3,185 | leading LF, trailing LF |
+| Production            | `$14`         |         3,131 |       3,185 | leading LF, trailing LF |
+| Retained review input | `$15`         |         3,131 |       3,185 | leading LF, trailing LF |
+| Production history    | `$16`         |         3,131 |       3,185 | leading LF, trailing LF |
+
+All four values were byte-identical with SHA-256
+`321df3ee13ec100f1bb85a14c6028b100d8781305f2710100db07a152b8230ac`.
+No source value was null or empty. The active review had `proposal: null` and
+the latest publication was null, both expected for the retained failed job.
+Its compatibility projection was valid `review-status-v4`: 24 total stages,
+18 succeeded, Bundle Writer ordinal 19 failed on attempt 3,
+`REVIEW_JOB_DEADLINE_EXCEEDED`, no retry, no proposal, and
+`laneState: RELEASED`.
+
+The browser diff contained two siblings: one `diffRemoved` block whose complete
+value was a single LF, then one unchanged 3,130-character block. It contained no
+addition. The section parser deliberately ignores the leading blank line, so
+the section count stayed zero and both rendered panes looked identical. The
+accessibility snapshot flattened the one-byte removal marker and the following
+unchanged block, making the complete source appear removed. The defect was the
+client comparison input: it passed an immediate parse-and-reserialize projection
+instead of the exact saved body. The diff library, server response, database
+content, and retained legacy-review coercion were correct. A second client
+presentation defect hard-coded “lane is paused” in the terminal announcement
+despite the valid released-lane projection. Direct and clicked Review tabs had
+correct URL, focus, `aria-selected`, roving `tabindex`, `aria-controls`, and
+tabpanel labelling.
+
+The candidate now retains the exact server-confirmed body separately from the
+section editor, preserves it until body content is actually edited, and compares
+production against that saved value. Successful saves/adoptions advance the
+saved value; a metadata-only save leaves MDX bytes unchanged. Terminal review
+announcements describe the released lane. Production data, review evidence,
+schemas, and Leadership remain unchanged.
+
+Verification performed:
+
+- Focused source-state, rendered-comparison, and review-status tests passed 18
+  of 18.
+- `pnpm verify` passed contract and review-policy verification, Prisma
+  generation, formatting, lint, every workspace typecheck, 49 unit-test
+  files/474 tests, secret scanning, and the optimized production build.
+- `pnpm test:integration` passed all 5 files/82 tests against disposable
+  PostgreSQL 16 databases and a disposable clone of exact compatible Leadership
+  commit `d15a92b...`.
+- `pnpm test:browser` rebuilt the production web bundle and passed 19 executed
+  tests with 8 intentional duplicate-mutation skips across 1280px, 1440px, and
+  390px. The new regression proves an untouched leading-LF fixture has no
+  synthetic source change, and the existing metadata-save journey now proves
+  the authoritative body bytes remain unchanged.
+- Separate in-app browser inspection used the same compiled local build at
+  1440×1000, 735×900, and 390×844. Every layout had equal document client and
+  scroll widths, zero source additions/removals, `Rendered content matches`,
+  correct selected/focused Review semantics, and no browser warn/error logs.
+
+The disposable server, databases, containers, and Leadership fixture were
+removed after acceptance. The primary dirty Leadership checkout was only
+inspected read-only and retained exactly its pre-existing changes. No production
+mutation or deployment was attempted.
+
 ## Architecture accepted
 
 - `situation-bundle-v2` is the canonical Studio revision. Its hash covers all

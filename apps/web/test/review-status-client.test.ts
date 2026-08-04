@@ -327,7 +327,59 @@ describe("review timing and accessibility presentation", () => {
       11_500,
     );
     expect(terminal.message).toBe(
-      `Review stopped after 1 of ${REVIEW_STAGE_TOTAL} stages complete. The review provider was interrupted. The review lane is paused; retry or stop the review.`,
+      `Review stopped after 1 of ${REVIEW_STAGE_TOTAL} stages complete. The review provider was interrupted. The review lane was released; retry this review when you are ready.`,
+    );
+  });
+
+  it("describes a retained 24-stage deadline failure without reviving its released lane", () => {
+    const retained = reviewStatusSnapshotSchema.parse({
+      schemaVersion: REVIEW_STATUS_SCHEMA_VERSION,
+      reviewJobId: firstJobId,
+      state: "FAILED",
+      completedStages: 18,
+      totalStages: 24,
+      stages: Array.from({ length: 24 }, (_, index) => ({
+        ordinal: index + 1,
+        state: index < 18 ? "SUCCEEDED" : index === 18 ? "FAILED" : "PENDING",
+      })),
+      currentStage: {
+        ordinal: 19,
+        code: "bundle-writer",
+        displayName: "Writing the proposal bundle",
+        state: "FAILED",
+        attempt: 3,
+      },
+      laneState: "RELEASED",
+      retry: null,
+      terminal: { state: "FAILED", failureClass: "OUTPUT_INVALID" },
+      failure: {
+        failureClass: "OUTPUT_INVALID",
+        reasonCode: "REVIEW_JOB_DEADLINE_EXCEEDED",
+        title: "The review exceeded its time budget",
+        explanation:
+          "The bounded review did not finish within its total processing deadline.",
+        stage: {
+          ordinal: 19,
+          code: "bundle-writer",
+          displayName: "Writing the proposal bundle",
+        },
+      },
+      proposalReady: false,
+      snapshotId: "a".repeat(64),
+    });
+    const announcement = nextReviewAnnouncement(
+      {
+        message: "",
+        lastAnnouncedAt: Number.NEGATIVE_INFINITY,
+        snapshotId: null,
+      },
+      null,
+      retained,
+      10_000,
+    );
+
+    expect(announcement.message).toBe(
+      "Review stopped after 18 of 24 stages complete. The review exceeded its time budget. The review lane was released; retry this review when you are ready.",
     );
   });
 

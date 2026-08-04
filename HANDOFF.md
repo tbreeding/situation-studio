@@ -66,6 +66,53 @@ read-only check again proved four checkouts and zero active reviews,
 publications, unfinished attempts, recovery jobs, preflight receipts, or
 candidate artifacts.
 
+## Local exact-source comparison follow-up — not deployed
+
+Read-only authenticated production diagnosis on 2026-08-04 reproduced the
+`stop-taking-delegated-work-back` Review anomaly without activating any
+state-changing control. The server-rendered workspace carried four separate
+source values—current draft, production, retained review input, and production
+history—with identical 3,185-byte UTF-8 bodies and SHA-256
+`321df3ee13ec100f1bb85a14c6028b100d8781305f2710100db07a152b8230ac`.
+Each body has one leading LF and one trailing LF. The retained review correctly
+projected `review-status-v4`, 24 stages, 18 complete, failed Bundle Writer
+attempt 3, `REVIEW_JOB_DEADLINE_EXCEEDED`, `proposal: null`, `retry: null`, and
+`laneState: RELEASED`.
+
+The apparent whole-source removal was not a database, RSC, legacy-schema, or
+`diffLines` corruption. The section editor parsed the exact 3,185-byte saved
+body and immediately reserialized it to 3,184 bytes, dropping only the leading
+LF. The source diff therefore contained one removed one-byte blank line followed
+by one unchanged 3,184-byte block; the accessibility snapshot flattened those
+siblings into a misleading removal marker plus the complete source. The same
+client path could also rewrite otherwise untouched MDX during a metadata-only
+save. Separately, the terminal live-region announcement ignored the projected
+released lane and claimed the review lane was paused. Review-tab selection,
+focus, URL persistence, `aria-selected`, roving `tabindex`, and tabpanel
+labelling were correct.
+
+The local candidate keeps the last server-confirmed saved body separate from
+parsed editor state, preserves untouched bytes through metadata-only saves,
+normalizes only after a body edit, and uses the saved body for production
+comparisons. It also makes terminal failure announcements report that the lane
+was released. No review evidence, proposal, schema, publication state, or
+Leadership code changed.
+
+Verification passed 49 unit-test files/474 tests, all 5 integration files/82
+disposable-PostgreSQL tests, and the 27-case production-build browser matrix
+with 19 executed passes and 8 intentional duplicate-mutation skips at 1280px,
+1440px, and 390px. Separate in-app inspection of the compiled local build at
+1440×1000, 735×900, and 390×844 found no page-level overflow, no warn/error
+logs, zero added/removed source blocks for the byte-identical fixture, matching
+rendered content, and correct tab keyboard semantics. Disposable databases,
+containers, server, and the temporary Leadership fixture were removed. The
+primary Leadership checkout retained exactly its pre-existing modified
+`docs/AUTHORING.md` and two named untracked files.
+
+Production remains on release `20260804T181727Z` / commit `b43edd4...`. This
+candidate has not been deployed and does not authorize deployment, review
+retry/stop, checkout, proposal, publication, or any other production mutation.
+
 ## Deployed deterministic review-to-publication overhaul
 
 The reliability overhaul for **Run agent review → proposal decisions → Submit

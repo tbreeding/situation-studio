@@ -521,6 +521,24 @@ test("inventory, operations, and new-situation surfaces remain accessible", asyn
   await expectNoPageOverflow(page);
 });
 
+test("an untouched retained source does not show a synthetic exact diff", async ({
+  page,
+}) => {
+  await signIn(page, "/situations/stop-taking-delegated-work-back?tab=review");
+  await expect(page.getByRole("tab", { name: "Review" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("heading", { name: "0 changed sections" }),
+  ).toBeVisible();
+  await expect(page.getByText("Rendered content matches")).toBeVisible();
+  await expect(page.locator(".sourceDiff .diffRemoved")).toHaveCount(0);
+  await expect(page.locator(".sourceDiff .diffAdded")).toHaveCount(0);
+  await expectNoCriticalAccessibilityViolations(page);
+  await expectNoPageOverflow(page);
+});
+
 test("agent revisions render as accessible diffs with fenced decisions and honest no-change findings", async ({
   page,
 }, testInfo) => {
@@ -910,6 +928,31 @@ test("durable checkout, autosave, preview, dialog focus, and check-in work end t
   await expect(page).toHaveURL(/\/situations\/defensive-about-feedback$/u);
   await expect(page.getByText("Checked out to you")).toBeVisible();
 
+  const readLatestDraftBody = async () => {
+    const result = await database.query<{ text_body: string | null }>(
+      `SELECT content.text_body
+         FROM situation_checkouts checkout
+         JOIN drafts draft ON draft.id = checkout.draft_id
+         JOIN LATERAL (
+           SELECT *
+             FROM draft_revisions candidate
+            WHERE candidate.draft_id = draft.id
+            ORDER BY candidate.revision DESC
+            LIMIT 1
+         ) revision ON true
+         JOIN draft_revision_artifacts artifact
+           ON artifact.revision_id = revision.id
+          AND artifact.kind = 'SITUATION'
+         JOIN content_blobs content ON content.hash = artifact.content_hash
+        WHERE checkout.situation_id = $1
+          AND checkout.released_at IS NULL`,
+      [situation.id],
+    );
+    return result.rows[0]?.text_body;
+  };
+  const bodyBeforeMetadataSave = await readLatestDraftBody();
+  expect(bodyBeforeMetadataSave).toBeTruthy();
+
   const title = page.getByLabel("Title");
   const originalTitle = await title.inputValue();
   const changedTitle = `${originalTitle.replace(
@@ -921,6 +964,7 @@ test("durable checkout, autosave, preview, dialog focus, and check-in work end t
   await expect(page.getByRole("status")).toContainText("All changes saved", {
     timeout: 15_000,
   });
+  expect(await readLatestDraftBody()).toBe(bodyBeforeMetadataSave);
   await page.reload();
   await expect(page.getByLabel("Title")).toHaveValue(changedTitle);
   await expect(
@@ -932,6 +976,8 @@ test("durable checkout, autosave, preview, dialog focus, and check-in work end t
   await expect(reviewTab).toBeFocused();
   await expect(page).toHaveURL(/[?&]tab=review(?:&|$)/u);
   await expect(page.getByText("Exact source diff")).toBeVisible();
+  await expect(page.locator(".sourceDiff .diffRemoved")).toHaveCount(0);
+  await expect(page.locator(".sourceDiff .diffAdded")).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("tab", { name: "Review" })).toHaveAttribute(
     "aria-selected",

@@ -155,7 +155,8 @@ jobs, preflight receipts, and candidate artifacts.
 
 ## 2026-08-04 exact-source comparison follow-up
 
-Status: local corrective candidate verified; not deployed.
+Status: deployed on 2026-08-05 as immutable release `20260805T061524Z` at
+commit `2a72025241df0664b052d534bcb55c5cebb120f8`.
 
 Authenticated read-only production inspection reproduced the Review anomaly on
 `stop-taking-delegated-work-back`. The RSC payload referenced four independently
@@ -220,8 +221,50 @@ Verification performed:
 
 The disposable server, databases, containers, and Leadership fixture were
 removed after acceptance. The primary dirty Leadership checkout was only
-inspected read-only and retained exactly its pre-existing changes. No production
-mutation or deployment was attempted.
+inspected read-only and retained exactly its pre-existing changes.
+
+## 2026-08-05 exact-source deployment evidence
+
+The product owner authorized exact commit
+`2a72025241df0664b052d534bcb55c5cebb120f8`. It was pushed to `origin/main`,
+and the guarded preflight passed against the unchanged Leadership application
+release `20260802T185408Z` / commit `d15a92b8e91967f85a8b78ee7c2146a2154a56c0`,
+verified backup/restore boundary, application roles, process configuration,
+host capacity, and protected public gate. The full launcher repeated the
+complete source gate: 49 unit-test files/474 tests, formatting, lint, every
+workspace typecheck, secret scanning, and the optimized production build.
+
+Immutable release `20260805T061524Z` built successfully on `rpi1`, quiesced the
+three Studio processes, and created verified encrypted off-site backup receipt
+`edf57af3-33ee-4985-a6e3-08f45009ce9f`. Its object is
+`situation-studio-20260805T061656Z-edf57af3-33ee-4985-a6e3-08f45009ce9f.dump.gpg`,
+SHA-256 `71266262cf84a62dcb858fbf20161c49157d28c992b6dc651ce3a78f71d74904`,
+and 828,180 bytes. The active-review projection remained exact at
+`a010a22b39a80745d6ae74bff47d7f9469bc848bedda1fa261aa20908316fa88`;
+the expected and actual lane hashes both remained
+`21806f654e0f906f3f7a512112646c1a1f0bd044a6fcb14769c5cb352e7e7e36`.
+No migration was pending. The launcher reapplied the reviewed grants and cut
+over successfully.
+
+The current pointer, `.release-commit`, and all three PM2 working directories
+name the exact new release. Web, review worker, and publisher are online with
+zero restarts. Local live and ready return 200; readiness reports the exact
+Leadership commit and digest, fresh worker heartbeats, zero publisher recovery,
+and `READY` backup evidence with a passed restore drill. The unauthenticated
+public probe returns 403 with `private, no-store`, and no deployment lease
+remains.
+
+Authenticated in-app validation of the retained
+`stop-taking-delegated-work-back` workspace passed at 1440×1000, 735×900, and
+390×844. Every viewport had zero page-level horizontal overflow, zero
+`diffRemoved` nodes, zero `diffAdded` nodes, `0 changed sections`, and
+`Rendered content matches`. The live region said the review lane was released.
+Clicked and ArrowLeft/ArrowRight-selected tabs kept correct URL, focus,
+`aria-selected`, roving `tabindex`, `aria-controls`, and tabpanel labelling.
+The browser warn/error log was empty. No state-changing control was activated.
+The final read-only database tuple was `4|0|0|0|0|0|0` for active checkouts,
+active reviews, active publications, unfinished attempts, recovery-required
+jobs, preflight receipts, and candidate artifacts.
 
 ## Architecture accepted
 

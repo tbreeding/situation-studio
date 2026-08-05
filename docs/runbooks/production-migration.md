@@ -32,21 +32,21 @@ Studio pointer. It is not accepted by a follow-up deployment or publication.
 
 ## Current deployed follow-up checkpoint
 
-The deterministic reliability follow-up deployed on 2026-08-04. Production
-points to immutable release `20260804T181727Z` at exact commit
-`b43edd4f5b00183e1ae1f0617937aa5a08ed7539`. Migration
+The exact-source comparison follow-up deployed on 2026-08-05. Production
+points to immutable release `20260805T061524Z` at exact commit
+`2a72025241df0664b052d534bcb55c5cebb120f8`. Migration
 `20260802120000_deterministic_publication_preflight` is applied without
 rollback; all eight integrity triggers are enabled and every release-schema
 grant guard is true.
 
 The successful cutover backup receipt is
-`ac3531c5-2820-4c6c-83d2-bc0ae2cee055`, object
-`situation-studio-20260804T181856Z-ac3531c5-2820-4c6c-83d2-bc0ae2cee055.dump.gpg`,
+`edf57af3-33ee-4985-a6e3-08f45009ce9f`, object
+`situation-studio-20260805T061656Z-edf57af3-33ee-4985-a6e3-08f45009ce9f.dump.gpg`,
 checksum
-`4fd9cb568e47d1747f7e5d3a4d58dd80927ac79c1dd72aa4ffb6c24fcde36af0`,
-and byte length 821,318. It is encrypted, verified, and off-site. The immutable
+`71266262cf84a62dcb858fbf20161c49157d28c992b6dc651ce3a78f71d74904`,
+and byte length 828,180. It is encrypted, verified, and off-site. The immutable
 backup marker records active-review hash
-`517820e7c9502c99a31d2031f8316ac57210900c5cb37dfc9932eebdff974e9e`
+`a010a22b39a80745d6ae74bff47d7f9469bc848bedda1fa261aa20908316fa88`
 and expected-lane hash
 `21806f654e0f906f3f7a512112646c1a1f0bd044a6fcb14769c5cb352e7e7e36`.
 The continuity marker records identical before/after and expected/actual
@@ -70,25 +70,23 @@ pointer, manifest, generation, complete artifact/edge sets, total bytes, API
 inventory, sitemap, feed, and unaffected-route bytes are identical to the
 pre-migration baseline. The typed verification route remains 200/no-store.
 
-Authenticated validation of this exact release completed on 2026-08-04 using
-the product owner's signed-in administrator session. At 1440×1000 and 390×844,
-Inventory retained 15 situations, four checkouts, and zero drafts waiting;
-Operations showed queue 0, publication recovery 0 active, current Leadership
-observation, ready backup evidence, and the verified deployment receipt; and
-the read-only `defensive-about-feedback` Review workspace retained its stopped
-18-of-24-stage review, exact zero-section comparison, matching rendered
-content, and saved state. There was no page-level horizontal overflow and no
-browser warn/error log. No state-changing control was activated. The
-post-browser read-only database check again returned `4|0|0|0|0|0|0` for
-active checkouts, active reviews, active publications, unfinished attempts,
-recovery-required jobs, preflight receipts, and candidate artifacts.
+Authenticated validation of this exact release completed on 2026-08-05 using
+the product owner's signed-in administrator session. At 1440×1000, 735×900,
+and 390×844, the read-only `stop-taking-delegated-work-back` Review workspace
+retained its stopped 18-of-24-stage review, exact zero-section comparison,
+matching rendered content, and saved state. The exact source diff contained
+zero removed and zero added segments, the live announcement truthfully said
+the lane was released, and Review selection/focus semantics remained correct.
+There was no page-level horizontal overflow and no browser warn/error log. No
+state-changing control was activated. The post-browser read-only database check
+again returned `4|0|0|0|0|0|0` for active checkouts, active reviews, active
+publications, unfinished attempts, recovery-required jobs, preflight receipts,
+and candidate artifacts.
 
-Attempt `20260804T180816Z` stopped safely before quiescence because its
-candidate helper used the wrong pnpm workspace path. It created only an
-immutable built release. Commit `b43edd4...` corrected the helper and the
-successor deployment passed the isolated 200/`ready` gate. Preserve that
-failed release and the earlier 2026-08-02 failed-attempt evidence; do not
-delete or rewrite receipts or immutable release directories.
+The launcher reported no pending migrations, reapplied the reviewed runtime
+grants, and completed local and protected-origin health verification. Preserve
+the prior successful and failed release evidence; do not delete or rewrite
+receipts or immutable release directories.
 
 This completed deployment does not authorize another review or a content
 publication. Future deployment work must begin with the full read-only

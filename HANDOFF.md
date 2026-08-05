@@ -1,25 +1,25 @@
 # Situation Studio handoff
 
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
 ## Outcome
 
 Situation Studio is deployed on `rpi1` from immutable release
-`/home/admin/projects/situation-studio/releases/20260804T181727Z` at exact
-commit `b43edd4f5b00183e1ae1f0617937aa5a08ed7539`. The deterministic
+`/home/admin/projects/situation-studio/releases/20260805T061524Z` at exact
+commit `2a72025241df0664b052d534bcb55c5cebb120f8`. The deterministic
 review-to-publication migration is applied, local live and ready return 200,
 and the authenticated production workspace remains
 `https://situation-studio.timsprototypes.com`.
 
 ## Current production and recovery boundary
 
-The 2026-08-04 cutover used the one-time exact
-`capability-digest-schema-v1` transition from commit `328f9a8...`. The
-candidate-first receipt proves isolated `live=200` and `ready=200` before
-quiescence. The current pointer, immutable `.release-commit`, and all three
-PM2 process working directories name `20260804T181727Z`; web, review worker,
-and publisher are online with zero restarts. No deployment lease remains. The
-unauthenticated public gate still returns 403 with `private, no-store`.
+The product owner authorized the exact-source comparison follow-up at commit
+`2a72025241df0664b052d534bcb55c5cebb120f8`. Full guarded preflight passed,
+then immutable release `20260805T061524Z` completed without rollback. The
+current pointer, immutable `.release-commit`, and all three PM2 process working
+directories name that release; web, review worker, and publisher are online
+with zero restarts. No deployment lease remains. The unauthenticated public
+gate still returns 403 with `private, no-store`.
 
 Migration `20260802120000_deterministic_publication_preflight` completed once
 without rollback. All eight new review/publication integrity triggers are
@@ -29,13 +29,13 @@ publication was submitted. Active reviews, active publications, unfinished
 attempts, and recovery-required jobs are all zero.
 
 The quiesced deployment backup is verified, encrypted, and off-site: receipt
-`ac3531c5-2820-4c6c-83d2-bc0ae2cee055`, object
-`situation-studio-20260804T181856Z-ac3531c5-2820-4c6c-83d2-bc0ae2cee055.dump.gpg`,
+`edf57af3-33ee-4985-a6e3-08f45009ce9f`, object
+`situation-studio-20260805T061656Z-edf57af3-33ee-4985-a6e3-08f45009ce9f.dump.gpg`,
 checksum
-`4fd9cb568e47d1747f7e5d3a4d58dd80927ac79c1dd72aa4ffb6c24fcde36af0`,
-and 821,318 bytes. The immutable continuity marker has identical before/after
+`71266262cf84a62dcb858fbf20161c49157d28c992b6dc651ce3a78f71d74904`,
+and 828,180 bytes. The immutable continuity marker has identical before/after
 review hash
-`517820e7c9502c99a31d2031f8316ac57210900c5cb37dfc9932eebdff974e9e`
+`a010a22b39a80745d6ae74bff47d7f9469bc848bedda1fa261aa20908316fa88`
 and matching expected/actual lane hash
 `21806f654e0f906f3f7a512112646c1a1f0bd044a6fcb14769c5cb352e7e7e36`.
 All four active checkout IDs, fences, revision numbers, and bundle hashes are
@@ -52,21 +52,22 @@ and `2940c876752486b18021f53756cd0da05794f3cad47c9e853b58bd29d35cf81b`.
 API inventory, sitemap, feed, and unaffected-route byte hashes are unchanged;
 the typed route proof remains 200 and `no-store`.
 
-Authenticated in-app production validation completed on 2026-08-04 with the
-product owner's signed-in administrator session. Inventory, Operations, and
-the existing `defensive-about-feedback` Review workspace were inspected at
-1440×1000 and 390×844 without page-level horizontal overflow or browser
-warn/error logs. Inventory retained 15 situations, four active checkouts, and
-zero drafts waiting. Operations reported review queue 0, publication recovery
-0 active, Leadership observation current, backup readiness ready, and the
-deployment backup receipt verified. The workspace retained its stopped review
-at 18 of 24 stages, `0 changed sections`, `Rendered content matches`, and `All
-changes saved`. No state-changing control was activated. The post-browser
-read-only check again proved four checkouts and zero active reviews,
-publications, unfinished attempts, recovery jobs, preflight receipts, or
-candidate artifacts.
+Authenticated in-app production validation completed on 2026-08-05 with the
+product owner's signed-in administrator session. The
+`stop-taking-delegated-work-back` Review workspace was inspected at 1440×1000,
+735×900, and 390×844 without page-level horizontal overflow or browser
+warn/error logs. It retained `All changes saved`, the failed 18-of-24-stage
+legacy review, `0 changed sections`, and matching production/draft rendering.
+The exact source diff contained zero removed and zero added segments. The
+terminal announcement correctly reported that the review lane was released.
+Clicked and keyboard-selected tabs kept correct URL, focus, `aria-selected`,
+roving `tabindex`, `aria-controls`, and tabpanel labelling. No state-changing
+control was activated. The post-browser read-only database tuple was
+`4|0|0|0|0|0|0` for active checkouts, active reviews, active publications,
+unfinished attempts, recovery-required jobs, preflight receipts, and candidate
+artifacts.
 
-## Local exact-source comparison follow-up — not deployed
+## Deployed exact-source comparison follow-up
 
 Read-only authenticated production diagnosis on 2026-08-04 reproduced the
 `stop-taking-delegated-work-back` Review anomaly without activating any
@@ -109,9 +110,11 @@ containers, server, and the temporary Leadership fixture were removed. The
 primary Leadership checkout retained exactly its pre-existing modified
 `docs/AUTHORING.md` and two named untracked files.
 
-Production remains on release `20260804T181727Z` / commit `b43edd4...`. This
-candidate has not been deployed and does not authorize deployment, review
-retry/stop, checkout, proposal, publication, or any other production mutation.
+The exact candidate is deployed as release `20260805T061524Z` / commit
+`2a72025241df0664b052d534bcb55c5cebb120f8`. The deployment created only its
+guarded backup, continuity, migration/grant verification, process, and audit
+evidence. It did not retry or stop a review, change a checkout, decide a
+proposal, submit content, or alter Leadership.
 
 ## Deployed deterministic review-to-publication overhaul
 
